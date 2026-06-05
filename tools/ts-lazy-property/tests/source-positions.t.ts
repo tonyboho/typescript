@@ -105,7 +105,7 @@ function collectGeneratedLazyMemberRanges(sourceFile: ts.SourceFile): SourceSpan
 
     const visit = (node: ts.Node): void => {
         if (isGeneratedLazyClassMember(node)) {
-            ranges.push(nodeSpan(node, sourceFile))
+            ranges.push(expandRangeToLeadingDecorators(sourceFile, nodeSpan(node, sourceFile)))
             return
         }
 
@@ -114,7 +114,7 @@ function collectGeneratedLazyMemberRanges(sourceFile: ts.SourceFile): SourceSpan
 
     visit(sourceFile)
 
-    return deduplicateRanges(ranges)
+    return mergeRanges(sourceFile, deduplicateRanges(ranges))
 }
 
 function isGeneratedLazyClassMember(node: ts.Node): node is ts.ClassElement {
@@ -215,6 +215,79 @@ function deduplicateRanges(ranges: SourceSpan[]): SourceSpan[] {
 
         return true
     })
+}
+
+function mergeRanges(sourceFile: ts.SourceFile, ranges: SourceSpan[]): SourceSpan[] {
+    const sorted = [ ...ranges ].sort((left, right) => {
+        return left.pos - right.pos || left.end - right.end
+    })
+    const result: SourceSpan[] = []
+
+    for (const range of sorted) {
+        const previous = result.at(-1)
+
+        if (previous === undefined || range.pos > previous.end) {
+            result.push({ ...range })
+            continue
+        }
+
+        previous.pos    = Math.min(previous.pos, range.pos)
+        previous.end    = Math.max(previous.end, range.end)
+        previous.start  = Math.min(previous.start, range.start)
+        previous.finish = Math.max(previous.finish, range.finish)
+        previous.text   = sourceFile.text.slice(previous.start, previous.finish).replaceAll("\n", "\\n")
+    }
+
+    return result
+}
+
+function expandRangeToLeadingDecorators(sourceFile: ts.SourceFile, range: SourceSpan): SourceSpan {
+    const decoratorStart = findLeadingDecoratorStart(sourceFile.text, range.start)
+
+    if (decoratorStart === undefined) {
+        return range
+    }
+
+    const pos = findTriviaStartBefore(sourceFile.text, decoratorStart)
+
+    return {
+        ...range,
+        pos,
+        start : decoratorStart,
+        text  : sourceFile.text.slice(decoratorStart, range.finish).replaceAll("\n", "\\n")
+    }
+}
+
+function findLeadingDecoratorStart(text: string, position: number): number | undefined {
+    let lineStart      = text.lastIndexOf("\n", position - 1) + 1
+    let decoratorStart : number | undefined = undefined
+
+    while (lineStart > 0) {
+        const previousLineEnd   = lineStart - 1
+        const previousLineStart = text.lastIndexOf("\n", previousLineEnd - 1) + 1
+        const previousLine      = text.slice(previousLineStart, previousLineEnd)
+        const indentLength      = previousLine.match(/^\s*/)?.[0].length ?? 0
+        const firstToken        = previousLineStart + indentLength
+
+        if (previousLine.trim() === "" || text[firstToken] !== "@") {
+            break
+        }
+
+        decoratorStart = firstToken
+        lineStart      = previousLineStart
+    }
+
+    return decoratorStart
+}
+
+function findTriviaStartBefore(text: string, position: number): number {
+    let triviaStart = position
+
+    while (triviaStart > 0 && /\s/.test(text[triviaStart - 1])) {
+        triviaStart -= 1
+    }
+
+    return triviaStart
 }
 
 function nodeSignature(node: ts.Node, sourceFile: ts.SourceFile): string {

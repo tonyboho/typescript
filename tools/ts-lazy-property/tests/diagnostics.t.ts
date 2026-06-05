@@ -25,10 +25,13 @@ it("reports lazy initializer diagnostics at the original source property positio
     }
 
     const position = sourceFile.getLineAndCharacterOfPosition(typeError.start)
+    const highlightedText = sourceFile.text.slice(typeError.start, typeError.start + (typeError.length ?? 0))
 
     t.equal(ts.flattenDiagnosticMessageText(typeError.messageText, "\n"), "Type 'number' is not assignable to type 'string'.")
     t.equal(position.line + 1, 5, "Diagnostic points at the original lazy property line")
     t.equal(position.character + 1, 5, "Diagnostic points at the original lazy property declaration start")
+    t.true(highlightedText.startsWith("lazyProperty"), "Diagnostic highlight starts at the lazy property declaration")
+    t.false(highlightedText.startsWith("@"), "Diagnostic highlight does not start at the lazy decorator")
 })
 
 function getSemanticDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diagnostic[] {
