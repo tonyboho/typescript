@@ -117,7 +117,7 @@ it("prints the transformed AST for emit", async (t: Test) => {
 
     t.true(text.includes("$lazyProperty: Map<number, string> | undefined = undefined"), "Prints backing property")
     t.true(text.includes("get lazyProperty(): Map<number, string>"), "Prints getter")
-    t.true(text.includes("set lazyProperty(value: Map<number, string> | undefined)"), "Prints setter")
+    t.true(text.includes("set lazyProperty(value: Map<number, string>)"), "Prints setter")
     t.false(text.includes("@lazy"), "Decorator is removed from emitted source")
 })
 

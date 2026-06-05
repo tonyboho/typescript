@@ -225,7 +225,7 @@ function createLazyMembers(
         undefined,
         preserveNodeNameLocation(tsInstance, factory.createIdentifier("value"), sourceFile, property.name),
         undefined,
-        createOptionalLazyValueType(tsInstance, property.type)
+        property.type
     ), property)
 
     const backingProperty = preserveNodeLocation(tsInstance, factory.createPropertyDeclaration(

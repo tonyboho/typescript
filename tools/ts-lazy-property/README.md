@@ -29,7 +29,7 @@ class SourceClass {
         return this.$lazyProperty = 'init_expression'
     }
 
-    set lazyProperty(value: string | undefined) {
+    set lazyProperty(value: string) {
         this.$lazyProperty = value
     }
 }
@@ -66,7 +66,7 @@ class SourceClass {
         return this.$lazyProperty = this.buildLazyProperty()
     }
 
-    set lazyProperty(value: string | undefined) {
+    set lazyProperty(value: string) {
         this.$lazyProperty = value
     }
 
@@ -76,7 +76,7 @@ class SourceClass {
 }
 ```
 
-To refresh the value of the lazy property and re-evaluate its initializer, assign `undefined` to the property. The next access to the property will run the initializer again. If you need to check whether the property already has a value without triggering the initializer, access `$lazyProperty` directly.
+To refresh the value of the lazy property and re-evaluate its initializer, assign `undefined` to the backing `$lazyProperty` member. The next access to the property will run the initializer again. If you need to check whether the property already has a value without triggering the initializer, access `$lazyProperty` directly.
 
 ```ts
 import { lazy } from "ts-lazy-property"
@@ -90,7 +90,7 @@ class SourceClass {
     }
 
     refreshLazyProperty() {
-        this.lazyProperty = undefined
+        this.$lazyProperty = undefined
 
         // Will trigger `this.buildLazyProperty()`.
         this.lazyProperty
