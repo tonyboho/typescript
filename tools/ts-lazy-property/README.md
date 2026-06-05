@@ -51,10 +51,6 @@ class SourceClass {
     buildLazyProperty() : string {
         return 'init_expression'
     }
-
-    clearLazyProperty() {
-        this.lazyProperty = undefined
-    }
 }
 ```
 
@@ -80,7 +76,7 @@ class SourceClass {
 }
 ```
 
-When you need to refresh the value of the lazy property and re-evaluate its initializing expression, simply assign `undefined` to it. The next access to the property will trigger an initializer. If you need to check, whether the property has value or not, without triggering an initializer access the `$lazyProperty` directly.
+When you need to refresh the value of the lazy property and re-evaluate its initializing expression, simply assign `undefined` to it. The next access to the property will trigger an initializer. If you need to check, whether the property has value or not without triggering an initializer, access the `$lazyProperty` directly.
 
 ```ts
 import { lazy } from "ts-lazy-property"
@@ -95,13 +91,16 @@ class SourceClass {
 
     refreshLazyProperty() {
         this.lazyProperty = undefined
+
+        // will trigger a `this.buildLazyProperty()` expression
+        this.lazyProperty
     }
 
     processing() {
         if (this.$lazyProperty) {
-            // do something with `this.lazyProperty` w/o triggering initializer
+            // property has value
         } else {
-            // ...
+            // property does not have value
         }
     }
 }
@@ -134,6 +133,7 @@ Include as a compiler plugin in the `tsconfig.json`:
 ```
 
 Add a `prepare` script to your `package.json`
+
 ```json
 {
     "scripts": {
@@ -157,5 +157,3 @@ The extra getter and setter are created in the "virtual" intermediate sources an
 ## License
 
 MIT License
-
-Copyright (c) 2020-2025 Nickolay Platonov

@@ -1,18 +1,18 @@
 import { lazy } from "ts-lazy-property"
 
 
-// class SourceClass {
-//     @lazy
-//     lazyProperty: Map<number, string> = new Map()
-//     regularProperty: string = "ok"
-// }
+class SourceClass {
+    @lazy
+    lazyProperty: Map<number, string> = new Map()
+}
 
-// const instance = new SourceClass()
+const instance = new SourceClass()
 
-// instance.lazyProperty.set(2, "ok")
+console.log(instance.$lazyProperty)
 
-// console.log(instance.$lazyProperty)
-// console.log(instance.regularProperty)
+instance.lazyProperty.set(2, "ok")
+
+console.log(instance.$lazyProperty)
 
 
 class SourceClass2 {
