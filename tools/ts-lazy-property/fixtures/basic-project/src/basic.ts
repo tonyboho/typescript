@@ -2,7 +2,7 @@ import { lazy } from "ts-lazy-property"
 
 class SourceClass {
     @lazy()
-    lazyProperty: Map<numbhjkgkgexr, string> = new Map()
+    lazyProperty: Map<number, string> = new Map()
 
     regularProperty: string = "ok"
 }
