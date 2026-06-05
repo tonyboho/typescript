@@ -84,6 +84,44 @@ it("tsserver can rename a regular property declaration", async (t: Test) => {
     }
 })
 
+it("tsserver can rename a regular property usage", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : sourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            sourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(sourceText, propertyAccessPosition(sourceText, "regularProperty"))
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, sourceText, "regularProperty", "renamedRegularProperty")
+
+        t.true(renamedText.includes('renamedRegularProperty: string = "ok"'), "Renames regular property declaration")
+        t.true(renamedText.includes("instance.renamedRegularProperty"), "Renames regular property usage")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
 it("tsserver rename request does not crash on a lazy property declaration", async (t: Test) => {
     const fixture = await createTypeScriptFixture({
         experimentalDecorators : false,
@@ -161,6 +199,45 @@ it("tsserver can rename a lazy property declaration", async (t: Test) => {
     }
 })
 
+it("tsserver can rename a lazy property usage", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : sourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            sourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(sourceText, propertyAccessPosition(sourceText, "lazyProperty"))
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, sourceText, "lazyProperty", "renamedLazyProperty")
+
+        t.true(renamedText.includes("renamedLazyProperty: Map<number, string> = new Map()"), "Renames lazy property declaration")
+        t.true(renamedText.includes("instance.renamedLazyProperty"), "Renames lazy property usage")
+        t.true(renamedText.includes("instance.$lazyProperty"), "Leaves backing property usage unchanged")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
 function assertRenameAllowed(
     t: Test,
     response: TsServerResponse,
@@ -213,6 +290,12 @@ function positionToIndex(source: string, position: TextPosition): number {
         .reduce((sum, line) => sum + line.length + 1, 0)
 
     return beforeLine + position.offset - 1
+}
+
+function propertyAccessPosition(source: string, propertyName: string): number {
+    const accessText = `instance.${propertyName}`
+
+    return source.indexOf(accessText) + "instance.".length + 1
 }
 
 function trimIndent(text: string): string {

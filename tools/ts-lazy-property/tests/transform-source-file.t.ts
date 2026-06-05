@@ -104,6 +104,50 @@ it("supports aliased and namespace decorator imports", async (t: Test) => {
     ])
 })
 
+it("expands lazy properties in class expressions", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { lazy } from "ts-lazy-property"
+
+        const SourceClass = class {
+            @lazy()
+            lazyProperty: Map<number, string> = new Map()
+        }
+    `))
+    const sourceClass     = findFirst(transformedFile, (node): node is ts.ClassExpression => {
+        return ts.isClassExpression(node)
+    })
+
+    if (sourceClass === undefined) {
+        t.fail("Cannot find class expression")
+        return
+    }
+
+    t.expect(memberSummary(sourceClass)).toEqual([
+        "PropertyDeclaration:$lazyProperty",
+        "GetAccessor:lazyProperty",
+        "SetAccessor:lazyProperty"
+    ])
+})
+
+it("preserves static modifiers on generated lazy members", async (t: Test) => {
+    const sourceClass = transformAndFindClass(`
+        import { lazy } from "ts-lazy-property"
+
+        class SourceClass {
+            @lazy()
+            static lazyProperty: Map<number, string> = new Map()
+        }
+    `)
+
+    t.expect(sourceClass.members.map((member) => {
+        return hasStaticModifier(member)
+    })).toEqual([
+        true,
+        true,
+        true
+    ])
+})
+
 it("prints the transformed AST for emit", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { lazy } from "ts-lazy-property"
@@ -139,6 +183,15 @@ it("reports unsupported lazy properties early", async (t: Test) => {
             lazyProperty: Map<number, string>
         }
     `)), /must have an initializer/, "Requires an initializer")
+
+    await t.throws(() => transformSourceFile(ts, createSourceFile(`
+        import { lazy } from "ts-lazy-property"
+
+        class SourceClass {
+            @lazy()
+            ["lazyProperty"]: Map<number, string> = new Map()
+        }
+    `)), /only supports identifier property names/, "Requires an identifier property name")
 })
 
 function createSourceFile(text: string): ts.SourceFile {
@@ -167,7 +220,7 @@ function findClass(sourceFile: ts.SourceFile, className: string): ts.ClassDeclar
     return found
 }
 
-function memberSummary(classDeclaration: ts.ClassDeclaration): string[] {
+function memberSummary(classDeclaration: ts.ClassDeclaration | ts.ClassExpression): string[] {
     return classDeclaration.members.map((member) => {
         return `${ts.SyntaxKind[member.kind]}:${memberNameText(member)}`
     })
@@ -183,6 +236,16 @@ function memberNameText(member: ts.ClassElement): string {
     }
 
     return member.name.getText()
+}
+
+function hasStaticModifier(member: ts.ClassElement): boolean {
+    if (!ts.canHaveModifiers(member)) {
+        return false
+    }
+
+    return ts.getModifiers(member)?.some((modifier) => {
+        return modifier.kind === ts.SyntaxKind.StaticKeyword
+    }) ?? false
 }
 
 function findFirst<Node extends ts.Node>(
