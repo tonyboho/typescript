@@ -17,8 +17,6 @@
     ],
     "scripts": {
         "build": "tsc -p tsconfig.json",
-        "inspect": "node scripts/inspect-positions.mjs",
-        "probe:tsserver": "node scripts/run-tsserver-probe.mjs",
         "pretest": "pnpm run build",
         "test": "siesta dist/tests",
         "typecheck": "tsc -p tsconfig.json --noEmit",
