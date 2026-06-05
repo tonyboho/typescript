@@ -1,0 +1,44 @@
+{
+    "name": "ts-lazy-property",
+    "version": "0.1.0",
+    "description": "TypeScript program transformer that expands @lazy class properties before type checking.",
+    "type": "module",
+    "main": "dist/src/index.js",
+    "types": "dist/src/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/src/index.d.ts",
+            "default": "./dist/src/index.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "inspect": "node scripts/inspect-positions.mjs",
+        "probe:tsserver": "node scripts/run-tsserver-probe.mjs",
+        "pretest": "pnpm run build",
+        "test": "siesta dist/tests",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "fixture": "pnpm run build && pnpm --dir fixtures/basic-project run typecheck",
+        "prepare": "ts-patch install"
+    },
+    "keywords": [
+        "typescript",
+        "transformer",
+        "ts-patch",
+        "lazy"
+    ],
+    "license": "MIT",
+    "private": true,
+    "peerDependencies": {
+        "typescript": "6.0.3"
+    },
+    "devDependencies": {
+        "ts-patch": "4.0.1",
+        "typescript": "6.0.3",
+        "@bryntum/siesta": "6.0.0-beta-1"
+    }
+}
