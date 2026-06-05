@@ -11,36 +11,53 @@ import type { TypeScriptFixtureCommandResult } from "./util.js"
 const packageRoot      = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const fixturesDirectory = path.join(packageRoot, "tests", "fixture")
 
+const decoratorModes = [
+    {
+        name                   : "legacy decorators",
+        experimentalDecorators : true
+    },
+    {
+        name                   : "standard decorators",
+        experimentalDecorators : false
+    }
+]
+
 it("runs fixture tests", async (t: Test) => {
     const fixtureNames = (await readdir(fixturesDirectory))
         .filter((fileName) => fileName.endsWith(".ts"))
         .sort()
-
-    const fixture = await createTypeScriptFixture({
-        sourceFiles : await Promise.all(fixtureNames.map(async (fixtureName) => {
-            return {
-                fileName : fixtureName,
-                text     : await readFile(path.join(fixturesDirectory, fixtureName), "utf8")
-            }
-        }))
-    })
-
-    try {
-        const buildResult = await fixture.build()
-
-        assertSuccessfulCommand(t, buildResult, "Build fixtures")
-
-        if (buildResult.exitCode !== 0) {
-            return
+    const sourceFiles  = await Promise.all(fixtureNames.map(async (fixtureName) => {
+        return {
+            fileName : fixtureName,
+            text     : await readFile(path.join(fixturesDirectory, fixtureName), "utf8")
         }
+    }))
 
-        for (const fixtureName of fixtureNames) {
-            await t.subTest(fixtureName, async (t: Test) => {
-                assertSuccessfulCommand(t, await fixture.runSiesta(fixtureName), "Run fixture tests")
+    for (const decoratorMode of decoratorModes) {
+        await t.subTest(decoratorMode.name, async (t: Test) => {
+            const fixture = await createTypeScriptFixture({
+                experimentalDecorators : decoratorMode.experimentalDecorators,
+                sourceFiles
             })
-        }
-    } finally {
-        await fixture.dispose()
+
+            try {
+                const buildResult = await fixture.build()
+
+                assertSuccessfulCommand(t, buildResult, "Build fixtures")
+
+                if (buildResult.exitCode !== 0) {
+                    return
+                }
+
+                for (const fixtureName of fixtureNames) {
+                    await t.subTest(fixtureName, async (t: Test) => {
+                        assertSuccessfulCommand(t, await fixture.runSiesta(fixtureName), "Run fixture tests")
+                    })
+                }
+            } finally {
+                await fixture.dispose()
+            }
+        })
     }
 })
 

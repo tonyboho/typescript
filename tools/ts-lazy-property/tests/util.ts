@@ -11,6 +11,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 
 export type TypeScriptFixtureOptions = {
     sourceFiles : TypeScriptFixtureSourceFile[],
+    experimentalDecorators : boolean,
     compilerOptions? : Record<string, unknown>,
     keep? : boolean
 }
@@ -52,7 +53,11 @@ export async function createTypeScriptFixture(options: TypeScriptFixtureOptions)
     const outputFiles     = new Map(options.sourceFiles.map(({ fileName }) => [ fileName, outputFileName(directory, fileName) ]))
 
     await writeJson(packageJsonFile, createPackageJson())
-    await writeJson(tsconfigFile, createTsconfig(options.sourceFiles.map(({ fileName }) => fileName), options.compilerOptions))
+    await writeJson(tsconfigFile, createTsconfig(
+        options.sourceFiles.map(({ fileName }) => fileName),
+        options.experimentalDecorators,
+        options.compilerOptions
+    ))
 
     for (const { fileName, text } of options.sourceFiles) {
         const sourceFilePath = path.join(directory, fileName)
@@ -157,7 +162,11 @@ async function runCommand(
     }
 }
 
-function createTsconfig(sourceFileNames: string[], compilerOptions: Record<string, unknown> | undefined): unknown {
+function createTsconfig(
+    sourceFileNames: string[],
+    experimentalDecorators: boolean,
+    compilerOptions: Record<string, unknown> | undefined
+): unknown {
     return {
         compilerOptions : {
             target                  : "ES2022",
@@ -165,7 +174,6 @@ function createTsconfig(sourceFileNames: string[], compilerOptions: Record<strin
             moduleResolution        : "Bundler",
             lib                     : [ "ES2022", "DOM" ],
             strict                  : true,
-            experimentalDecorators  : true,
             useDefineForClassFields : false,
             skipLibCheck            : true,
             outDir                  : "dist",
@@ -175,7 +183,8 @@ function createTsconfig(sourceFileNames: string[], compilerOptions: Record<strin
                     transformProgram : true
                 }
             ],
-            ...compilerOptions
+            ...compilerOptions,
+            experimentalDecorators
         },
         files : sourceFileNames
     }
