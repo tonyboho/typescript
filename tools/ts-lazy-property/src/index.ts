@@ -271,6 +271,7 @@ function createLazyMembers(
     ), zeroWidthRange(nameEnd))
     const getterParameters = preserveTextRange(tsInstance, factory.createNodeArray([]), zeroWidthRange(nameEnd))
     const setterParameters = preserveTextRange(tsInstance, factory.createNodeArray([ valueParameter ]), zeroWidthRange(nameEnd))
+    const isReadonly  = hasReadonlyModifier(tsInstance, property)
     const backingType = options.preserveLazyDecorator
         ? preserveTextRange(tsInstance, createOptionalLazyValueType(tsInstance, property.type), zeroWidthRange(nameStart))
         : createOptionalLazyValueType(tsInstance, property.type)
@@ -310,31 +311,28 @@ function createLazyMembers(
         ]), bodyRange), true), bodyRange)
     ), memberRange)
 
-    const setter = preserveTextRange(tsInstance, factory.createSetAccessorDeclaration(
-        removeReadonlyModifier(tsInstance, removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)),
-        preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
-        setterParameters,
-        preserveTextRange(tsInstance, factory.createBlock(preserveTextRange(tsInstance, factory.createNodeArray([
-            preserveTextRange(tsInstance, factory.createExpressionStatement(
-                factory.createAssignment(
-                    backingAccess(),
-                    factory.createIdentifier("value")
-                )
-            ), generatedMemberRange)
-        ]), bodyRange), true), bodyRange)
-    ), setterMemberRange)
+    const result: ts.ClassElement[] = [
+        backingProperty,
+        getter
+    ]
 
-    const result = options.preserveLazyDecorator
-        ? [
-            backingProperty,
-            getter,
-            setter
-        ]
-        : [
-            backingProperty,
-            getter,
-            setter
-        ]
+    if (!isReadonly) {
+        const setter = preserveTextRange(tsInstance, factory.createSetAccessorDeclaration(
+            removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options),
+            preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
+            setterParameters,
+            preserveTextRange(tsInstance, factory.createBlock(preserveTextRange(tsInstance, factory.createNodeArray([
+                preserveTextRange(tsInstance, factory.createExpressionStatement(
+                    factory.createAssignment(
+                        backingAccess(),
+                        factory.createIdentifier("value")
+                    )
+                ), generatedMemberRange)
+            ]), bodyRange), true), bodyRange)
+        ), setterMemberRange)
+
+        result.push(setter)
+    }
 
     for (const member of result) {
         clearSynthesizedFlags(tsInstance, member)
@@ -443,6 +441,19 @@ function removeLazyDecoratorModifiers(
         return !tsInstance.isDecorator(modifier) ||
             !isLazyDecorator(tsInstance, modifier, lazyDecoratorImports, options)
     })
+}
+
+function hasReadonlyModifier(
+    tsInstance: TypeScript,
+    property: ts.PropertyDeclaration
+): boolean {
+    if (!tsInstance.canHaveModifiers(property)) {
+        return false
+    }
+
+    return tsInstance.getModifiers(property)?.some((modifier) => {
+        return modifier.kind === tsInstance.SyntaxKind.ReadonlyKeyword
+    }) ?? false
 }
 
 function removeReadonlyModifier(

@@ -148,6 +148,59 @@ it("preserves static modifiers on generated lazy members", async (t: Test) => {
     ])
 })
 
+it("omits the setter for readonly lazy properties", async (t: Test) => {
+    const sourceClass = transformAndFindClass(`
+        import { lazy } from "ts-lazy-property"
+
+        class SourceClass {
+            @lazy()
+            readonly lazyProperty: string = "ok"
+        }
+    `)
+
+    t.expect(memberSummary(sourceClass)).toEqual([
+        "PropertyDeclaration:$lazyProperty",
+        "GetAccessor:lazyProperty"
+    ])
+    t.expect(sourceClass.members.map((member) => {
+        return modifierNames(member)
+    })).toEqual([
+        [],
+        []
+    ])
+})
+
+it("preserves access modifiers on generated lazy members", async (t: Test) => {
+    const sourceClass = transformAndFindClass(`
+        import { lazy } from "ts-lazy-property"
+
+        class SourceClass {
+            @lazy()
+            public publicProperty: string = "public"
+
+            @lazy()
+            protected protectedProperty: string = "protected"
+
+            @lazy()
+            private privateProperty: string = "private"
+        }
+    `)
+
+    t.expect(sourceClass.members.map((member) => {
+        return `${memberNameText(member)}:${modifierNames(member).join(",")}`
+    })).toEqual([
+        "$publicProperty:PublicKeyword",
+        "publicProperty:PublicKeyword",
+        "publicProperty:PublicKeyword",
+        "$protectedProperty:ProtectedKeyword",
+        "protectedProperty:ProtectedKeyword",
+        "protectedProperty:ProtectedKeyword",
+        "$privateProperty:PrivateKeyword",
+        "privateProperty:PrivateKeyword",
+        "privateProperty:PrivateKeyword"
+    ])
+})
+
 it("prints the transformed AST for emit", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { lazy } from "ts-lazy-property"
@@ -246,6 +299,16 @@ function hasStaticModifier(member: ts.ClassElement): boolean {
     return ts.getModifiers(member)?.some((modifier) => {
         return modifier.kind === ts.SyntaxKind.StaticKeyword
     }) ?? false
+}
+
+function modifierNames(member: ts.ClassElement): string[] {
+    if (!ts.canHaveModifiers(member)) {
+        return []
+    }
+
+    return ts.getModifiers(member)?.map((modifier) => {
+        return ts.SyntaxKind[modifier.kind]
+    }) ?? []
 }
 
 function findFirst<Node extends ts.Node>(
