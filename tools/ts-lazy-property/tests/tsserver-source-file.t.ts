@@ -86,9 +86,9 @@ it("tsserver sees the original source text while using the transformed AST", asy
 
         t.equal(snapshot.firstBacking?.name, "$lazyProperty", "Generated backing identifier exists")
         t.equal(snapshot.firstBacking?.text, "lazyProperty", "Generated backing identifier maps to original source text")
-        t.true(backingMember?.text.startsWith("lazyProperty"), "Generated backing property starts at the original property name")
+        t.equal(backingMember?.text, "", "Generated backing property does not compete for source rename range")
         t.true(getterMember?.text.includes("@lazy()"), "Generated getter models the original decorator range")
-        t.true(setterMember?.text.startsWith("lazyProperty"), "Generated setter starts at the original property name")
+        t.equal(setterMember?.text, "", "Generated setter does not compete for source rename range")
         t.equal(regularMember?.text, 'regularProperty: string = "ok"', "Regular property keeps its own source range")
     } finally {
         await fixture.dispose()

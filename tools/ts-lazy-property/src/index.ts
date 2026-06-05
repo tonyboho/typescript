@@ -5,6 +5,9 @@ type TypeScript = ProgramTransformerExtras["ts"]
 type TypeScriptWithParents = TypeScript & {
     setParentRecursive<Node extends ts.Node>(node: Node, incremental: boolean): Node
 }
+type MutableNode = ts.Node & {
+    flags : ts.NodeFlags
+}
 
 export type LazyPropertyTransformerConfig = PluginConfig & {
     packageName? : string,
@@ -241,6 +244,9 @@ function createLazyMembers(
         pos : typeEnd,
         end : property.end
     }
+    const generatedSupportMemberRange = options.preserveLazyDecorator
+        ? zeroWidthRange(property.end)
+        : memberRange
     const accessorMemberRange = options.preserveLazyDecorator ? property : memberRange
     const backingModifiers = removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
     const getterModifiers = options.preserveLazyDecorator
@@ -263,7 +269,7 @@ function createLazyMembers(
         undefined,
         createOptionalLazyValueType(tsInstance, property.type),
         preserveNodeLocation(tsInstance, factory.createIdentifier("undefined"), property.initializer)
-    ), memberRange)
+    ), generatedSupportMemberRange)
 
     const getter = preserveTextRange(tsInstance, factory.createGetAccessorDeclaration(
         removeReadonlyModifier(tsInstance, getterModifiers),
@@ -300,9 +306,9 @@ function createLazyMembers(
                 )
             ), property)
         ]), bodyRange), true), bodyRange)
-    ), memberRange)
+    ), generatedSupportMemberRange)
 
-    return options.preserveLazyDecorator
+    const result = options.preserveLazyDecorator
         ? [
             getter,
             setter,
@@ -313,6 +319,12 @@ function createLazyMembers(
             getter,
             setter
         ]
+
+    for (const member of result) {
+        clearSynthesizedFlags(tsInstance, member)
+    }
+
+    return result
 }
 
 function createOptionalLazyValueType(tsInstance: TypeScript, type: ts.TypeNode): ts.TypeNode {
@@ -395,6 +407,14 @@ function preserveNodeNameLocation<Node extends ts.Node>(
     })
 
     return node
+}
+
+function clearSynthesizedFlags(tsInstance: TypeScript, node: ts.Node): void {
+    (node as MutableNode).flags &= ~tsInstance.NodeFlags.Synthesized
+
+    tsInstance.forEachChild(node, (child) => {
+        clearSynthesizedFlags(tsInstance, child)
+    })
 }
 
 function removeLazyDecoratorModifiers(
