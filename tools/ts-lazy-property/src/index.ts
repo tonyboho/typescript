@@ -23,7 +23,8 @@ type LazyDecoratorImports = {
     namespaces  : Set<string>
 }
 
-export function lazy(..._args: unknown[]): void {
+export function lazy(): (..._args: unknown[]) => void {
+    return () => {}
 }
 
 export default function transformProgram(
@@ -224,7 +225,7 @@ function createLazyMembers(
         undefined,
         preserveNodeNameLocation(tsInstance, factory.createIdentifier("value"), sourceFile, property.name),
         undefined,
-        property.type
+        createOptionalLazyValueType(tsInstance, property.type)
     ), property)
 
     const backingProperty = preserveNodeLocation(tsInstance, factory.createPropertyDeclaration(
@@ -234,10 +235,7 @@ function createLazyMembers(
         ),
         preserveNodeNameLocation(tsInstance, factory.createIdentifier(backingName), sourceFile, property.name),
         undefined,
-        factory.createUnionTypeNode([
-            property.type,
-            factory.createKeywordTypeNode(tsInstance.SyntaxKind.UndefinedKeyword)
-        ]),
+        createOptionalLazyValueType(tsInstance, property.type),
         factory.createIdentifier("undefined")
     ), property)
 
@@ -283,6 +281,13 @@ function createLazyMembers(
         getter,
         setter
     ]
+}
+
+function createOptionalLazyValueType(tsInstance: TypeScript, type: ts.TypeNode): ts.TypeNode {
+    return tsInstance.factory.createUnionTypeNode([
+        type,
+        tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.UndefinedKeyword)
+    ])
 }
 
 function createThisPropertyAccess(tsInstance: TypeScript, propertyName: string): ts.PropertyAccessExpression {
@@ -370,11 +375,11 @@ function isLazyDecorator(
 ): boolean {
     const expression = decorator.expression
 
-    if (tsInstance.isCallExpression(expression)) {
-        return isLazyDecoratorExpression(tsInstance, expression.expression, lazyDecoratorImports, options)
+    if (!tsInstance.isCallExpression(expression) || expression.arguments.length !== 0) {
+        return false
     }
 
-    return isLazyDecoratorExpression(tsInstance, expression, lazyDecoratorImports, options)
+    return isLazyDecoratorExpression(tsInstance, expression.expression, lazyDecoratorImports, options)
 }
 
 function isLazyDecoratorExpression(

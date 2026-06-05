@@ -76,7 +76,7 @@ class SourceClass {
 }
 ```
 
-When you need to refresh the value of the lazy property and re-evaluate its initializing expression, simply assign `undefined` to it. The next access to the property will trigger an initializer. If you need to check, whether the property has value or not without triggering an initializer, access the `$lazyProperty` directly.
+When you need to refresh the value of the lazy property and re-evaluate its initializing expression, simply assign `undefined` to its `$` equivalent. The next access to the property will trigger an initializer. If you need to check, whether the property has value or not without triggering an initializer, access the `$lazyProperty` directly.
 
 ```ts
 import { lazy } from "ts-lazy-property"
@@ -90,14 +90,14 @@ class SourceClass {
     }
 
     refreshLazyProperty() {
-        this.lazyProperty = undefined
+        this.$lazyProperty = undefined
 
         // will trigger a `this.buildLazyProperty()` expression
         this.lazyProperty
     }
 
     processing() {
-        if (this.$lazyProperty) {
+        if (this.$lazyProperty !== undefined) {
             // property has value
         } else {
             // property does not have value
