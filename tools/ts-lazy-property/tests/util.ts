@@ -182,7 +182,6 @@ function createTsconfig(
             module                  : "ESNext",
             moduleResolution        : "Bundler",
             lib                     : [ "ES2022", "DOM" ],
-            strict                  : true,
             useDefineForClassFields : false,
             skipLibCheck            : true,
             outDir                  : "dist",
@@ -195,6 +194,7 @@ function createTsconfig(
                 ...extraCompilerOptionPlugins
             ],
             ...restCompilerOptions,
+            strict                  : true,
             experimentalDecorators
         },
         files : sourceFileNames
