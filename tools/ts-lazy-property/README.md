@@ -4,7 +4,7 @@ TypeScript transformer that expands `@lazy()` class properties.
 
 ## Intro
 
-The value of some properties could be rather costly to initialize and rarely needed, or not needed at all. In such cases, its quite beneficial to transform such property into a lazy property, with delayed initialization, which happens only during the first access to it. This involves certain amount of boilerplate, which this package aims to remove.
+Some properties can be costly to initialize and rarely needed, or not needed at all. In such cases, it is useful to turn the property into a lazy property, with initialization delayed until the first access. This involves a certain amount of boilerplate, which this package aims to remove.
 
 For example:
 
@@ -17,7 +17,7 @@ class SourceClass {
 }
 ```
 
-Will be internally expanded to:
+It will be internally expanded to:
 
 ```ts
 class SourceClass {
@@ -29,13 +29,13 @@ class SourceClass {
         return this.$lazyProperty = 'init_expression'
     }
 
-    set lazyProperty(value: string) {
+    set lazyProperty(value: string | undefined) {
         this.$lazyProperty = value
     }
 }
 ```
 
-The evaluation of the `init_expression` is delayed, and performed only during the first access to the property.
+The evaluation of `init_expression` is delayed and performed only during the first access to the property.
 
 ## Example
 
@@ -48,13 +48,13 @@ class SourceClass {
     @lazy()
     lazyProperty: string = this.buildLazyProperty()
 
-    buildLazyProperty() : string {
+    buildLazyProperty(): string {
         return 'init_expression'
     }
 }
 ```
 
-Which is expanded to:
+It is expanded to:
 
 ```ts
 class SourceClass {
@@ -66,17 +66,17 @@ class SourceClass {
         return this.$lazyProperty = this.buildLazyProperty()
     }
 
-    set lazyProperty(value: string) {
+    set lazyProperty(value: string | undefined) {
         this.$lazyProperty = value
     }
 
-    buildLazyProperty() : string {
-        return 'lazy_initializer'
+    buildLazyProperty(): string {
+        return 'init_expression'
     }
 }
 ```
 
-When you need to refresh the value of the lazy property and re-evaluate its initializing expression, simply assign `undefined` to its `$` equivalent. The next access to the property will trigger an initializer. If you need to check, whether the property has value or not without triggering an initializer, access the `$lazyProperty` directly.
+To refresh the value of the lazy property and re-evaluate its initializer, assign `undefined` to the property. The next access to the property will run the initializer again. If you need to check whether the property already has a value without triggering the initializer, access `$lazyProperty` directly.
 
 ```ts
 import { lazy } from "ts-lazy-property"
@@ -85,22 +85,22 @@ class SourceClass {
     @lazy()
     lazyProperty: string = this.buildLazyProperty()
 
-    buildLazyProperty() : string {
+    buildLazyProperty(): string {
         return 'lazy_initializer'
     }
 
     refreshLazyProperty() {
-        this.$lazyProperty = undefined
+        this.lazyProperty = undefined
 
-        // will trigger a `this.buildLazyProperty()` expression
+        // Will trigger `this.buildLazyProperty()`.
         this.lazyProperty
     }
 
     processing() {
         if (this.$lazyProperty !== undefined) {
-            // property has value
+            // The property has a value.
         } else {
-            // property does not have value
+            // The property does not have a value.
         }
     }
 }
@@ -109,15 +109,17 @@ class SourceClass {
 
 ## Setup
 
-Include `ts-patch` as the development dependency:
+Include `ts-patch` as a dev dependency:
 
-```
-"devDependencies": {
-    "ts-patch": "4.0.1",
+```json
+{
+    "devDependencies": {
+        "ts-patch": "4.0.1"
+    }
 }
 ```
 
-Include as a compiler plugin in the `tsconfig.json`:
+Include `ts-lazy-property` as a compiler plugin in `tsconfig.json`:
 
 ```json
 {
@@ -132,7 +134,7 @@ Include as a compiler plugin in the `tsconfig.json`:
 }
 ```
 
-Add a `prepare` script to your `package.json`
+Add a `prepare` script to your `package.json`:
 
 ```json
 {
@@ -145,14 +147,16 @@ Add a `prepare` script to your `package.json`
 Run `prepare` once so `ts-patch` patches your local TypeScript:
 
 ```shell
-npm run prepare
+pnpm run prepare
 ```
 
 ## Details
 
-The expansion happens at the pre-compile timing, inside the TS code, it does not involve the emitter. This allows to actually create a new property, which starts with a dollar sign: `$lazyProperty` and access to this property will typecheck.
+The expansion happens before type checking, not in the emitter. This allows the transformer to create the backing `$lazyProperty` member early enough for direct access to typecheck.
 
-The extra getter and setter are created in the "virtual" intermediate sources and on the same line as the original property. This keeps line numbers consistent with the original file.
+The exported `lazy()` decorator is a runtime no-op. It is used only as a marker for the transformer, and both standard decorators and legacy `experimentalDecorators` are supported.
+
+The generated backing property, getter, and setter are created in the virtual intermediate source on the same line as the original property. This keeps line numbers consistent with the original file.
 
 ## License
 

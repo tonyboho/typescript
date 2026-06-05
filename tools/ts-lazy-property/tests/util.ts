@@ -13,6 +13,7 @@ export type TypeScriptFixtureOptions = {
     sourceFiles : TypeScriptFixtureSourceFile[],
     experimentalDecorators : boolean,
     compilerOptions? : Record<string, unknown>,
+    compilerPlugins? : Record<string, unknown>[],
     keep? : boolean
 }
 
@@ -56,7 +57,8 @@ export async function createTypeScriptFixture(options: TypeScriptFixtureOptions)
     await writeJson(tsconfigFile, createTsconfig(
         options.sourceFiles.map(({ fileName }) => fileName),
         options.experimentalDecorators,
-        options.compilerOptions
+        options.compilerOptions,
+        options.compilerPlugins
     ))
 
     for (const { fileName, text } of options.sourceFiles) {
@@ -165,8 +167,15 @@ async function runCommand(
 function createTsconfig(
     sourceFileNames: string[],
     experimentalDecorators: boolean,
-    compilerOptions: Record<string, unknown> | undefined
+    compilerOptions: Record<string, unknown> | undefined,
+    compilerPlugins: Record<string, unknown>[] | undefined
 ): unknown {
+    const {
+        plugins : compilerOptionPlugins,
+        ...restCompilerOptions
+    } = compilerOptions ?? {}
+    const extraCompilerOptionPlugins = Array.isArray(compilerOptionPlugins) ? compilerOptionPlugins : []
+
     return {
         compilerOptions : {
             target                  : "ES2022",
@@ -181,9 +190,11 @@ function createTsconfig(
                 {
                     transform        : "ts-lazy-property",
                     transformProgram : true
-                }
+                },
+                ...(compilerPlugins ?? []),
+                ...extraCompilerOptionPlugins
             ],
-            ...compilerOptions,
+            ...restCompilerOptions,
             experimentalDecorators
         },
         files : sourceFileNames
