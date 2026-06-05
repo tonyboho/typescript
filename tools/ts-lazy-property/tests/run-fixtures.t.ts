@@ -16,28 +16,31 @@ it("runs fixture tests", async (t: Test) => {
         .filter((fileName) => fileName.endsWith(".ts"))
         .sort()
 
-    for (const fixtureName of fixtureNames) {
-        await t.subTest(fixtureName, async (t: Test) => {
-            const sourceText = await readFile(path.join(fixturesDirectory, fixtureName), "utf8")
-            const fixture    = await createTypeScriptFixture({
-                sourceFileName : fixtureName,
-                sourceText
-            })
-
-            try {
-                const buildResult = await fixture.build()
-
-                assertSuccessfulCommand(t, buildResult, "Build fixture")
-
-                if (buildResult.exitCode !== 0) {
-                    return
-                }
-
-                assertSuccessfulCommand(t, await fixture.runSiesta(), "Run fixture tests")
-            } finally {
-                await fixture.dispose()
+    const fixture = await createTypeScriptFixture({
+        sourceFiles : await Promise.all(fixtureNames.map(async (fixtureName) => {
+            return {
+                fileName : fixtureName,
+                text     : await readFile(path.join(fixturesDirectory, fixtureName), "utf8")
             }
-        })
+        }))
+    })
+
+    try {
+        const buildResult = await fixture.build()
+
+        assertSuccessfulCommand(t, buildResult, "Build fixtures")
+
+        if (buildResult.exitCode !== 0) {
+            return
+        }
+
+        for (const fixtureName of fixtureNames) {
+            await t.subTest(fixtureName, async (t: Test) => {
+                assertSuccessfulCommand(t, await fixture.runSiesta(fixtureName), "Run fixture tests")
+            })
+        }
+    } finally {
+        await fixture.dispose()
     }
 })
 

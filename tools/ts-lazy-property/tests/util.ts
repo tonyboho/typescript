@@ -10,21 +10,25 @@ const execFileAsync = promisify(execFile)
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 export type TypeScriptFixtureOptions = {
-    sourceText : string,
-    sourceFileName? : string,
+    sourceFiles : TypeScriptFixtureSourceFile[],
     compilerOptions? : Record<string, unknown>,
     keep? : boolean
 }
 
+export type TypeScriptFixtureSourceFile = {
+    fileName : string,
+    text : string,
+}
+
 export type TypeScriptFixture = {
     directory : string,
-    outputFile : string,
+    outputFiles : Map<string, string>,
     packageJsonFile : string,
-    sourceFile : string,
+    sourceFiles : Map<string, string>,
     tsconfigFile : string,
     build : () => Promise<TypeScriptFixtureCommandResult>,
     dispose : () => Promise<void>,
-    runSiesta : () => Promise<TypeScriptFixtureCommandResult>,
+    runSiesta : (sourceFileName: string) => Promise<TypeScriptFixtureCommandResult>,
     typecheck : () => Promise<TypeScriptFixtureCommandResult>
 }
 
@@ -42,23 +46,28 @@ type ExecFileFailure = Error & {
 
 export async function createTypeScriptFixture(options: TypeScriptFixtureOptions): Promise<TypeScriptFixture> {
     const directory       = await mkdtemp(path.join(tmpdir(), "ts-lazy-property-"))
-    const sourceFileName  = options.sourceFileName ?? "source.ts"
     const packageJsonFile = path.join(directory, "package.json")
-    const sourceFile      = path.join(directory, sourceFileName)
     const tsconfigFile    = path.join(directory, "tsconfig.json")
-    const outputFile      = path.join(directory, "dist", sourceFileName.replace(/\.[cm]?tsx?$/, ".js"))
+    const sourceFilePaths = new Map(options.sourceFiles.map(({ fileName }) => [ fileName, path.join(directory, fileName) ]))
+    const outputFiles     = new Map(options.sourceFiles.map(({ fileName }) => [ fileName, outputFileName(directory, fileName) ]))
 
     await writeJson(packageJsonFile, createPackageJson())
-    await writeJson(tsconfigFile, createTsconfig(sourceFileName, options.compilerOptions))
-    await mkdir(path.dirname(sourceFile), { recursive : true })
-    await writeFile(sourceFile, options.sourceText)
+    await writeJson(tsconfigFile, createTsconfig(options.sourceFiles.map(({ fileName }) => fileName), options.compilerOptions))
+
+    for (const { fileName, text } of options.sourceFiles) {
+        const sourceFilePath = path.join(directory, fileName)
+
+        await mkdir(path.dirname(sourceFilePath), { recursive : true })
+        await writeFile(sourceFilePath, text)
+    }
+
     await linkNodeModules(directory)
 
     return {
         directory,
-        outputFile,
+        outputFiles,
         packageJsonFile,
-        sourceFile,
+        sourceFiles : sourceFilePaths,
         tsconfigFile,
 
         async build() {
@@ -73,8 +82,14 @@ export async function createTypeScriptFixture(options: TypeScriptFixtureOptions)
             await rm(directory, { force : true, recursive : true })
         },
 
-        async runSiesta() {
-            return runSiesta(directory, outputFile)
+        async runSiesta(sourceFileName: string) {
+            const testFile = outputFiles.get(sourceFileName)
+
+            if (testFile === undefined) {
+                throw new Error(`Unknown fixture source file: ${sourceFileName}`)
+            }
+
+            return runSiesta(directory, testFile)
         },
 
         async typecheck() {
@@ -142,7 +157,7 @@ async function runCommand(
     }
 }
 
-function createTsconfig(sourceFileName: string, compilerOptions: Record<string, unknown> | undefined): unknown {
+function createTsconfig(sourceFileNames: string[], compilerOptions: Record<string, unknown> | undefined): unknown {
     return {
         compilerOptions : {
             target                  : "ES2022",
@@ -162,10 +177,12 @@ function createTsconfig(sourceFileName: string, compilerOptions: Record<string, 
             ],
             ...compilerOptions
         },
-        files : [
-            sourceFileName
-        ]
+        files : sourceFileNames
     }
+}
+
+function outputFileName(directory: string, sourceFileName: string): string {
+    return path.join(directory, "dist", sourceFileName.replace(/\.[cm]?tsx?$/, ".js"))
 }
 
 async function linkNodeModules(directory: string): Promise<void> {
