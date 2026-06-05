@@ -8,9 +8,12 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import { createTypeScriptFixture } from "./util.js"
 
 type TsServerResponse = {
+    body? : unknown,
     type? : string,
     command? : string,
+    message? : string,
     request_seq? : number
+    success? : boolean
 }
 
 type ProbeSnapshot = {
@@ -47,6 +50,42 @@ const sourceText = trimIndent(`
 `)
 
 const probePluginName = "ts-lazy-property-tsserver-test-probe"
+
+it("tsserver rename request does not crash on a lazy property declaration", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : sourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            sourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(sourceText, sourceText.indexOf("lazyProperty") + 1)
+            }
+        )
+
+        t.true(response.success, response.message ?? "tsserver handles rename request without a debug failure")
+        t.equal(response.command, "rename", "Response belongs to the rename command")
+    } finally {
+        await fixture.dispose()
+    }
+})
 
 it("tsserver sees the original source text while using the transformed AST", async (t: Test) => {
     const fixture = await createTypeScriptFixture({
@@ -92,9 +131,9 @@ it("tsserver sees the original source text while using the transformed AST", asy
 
         t.equal(snapshot.firstBacking?.name, "$lazyProperty", "Generated backing identifier exists")
         t.equal(snapshot.firstBacking?.text, "lazyProperty", "Generated backing identifier maps to original source text")
-        t.true(backingMember?.text.includes("@lazy()"), "Generated backing property maps to the original lazy property range")
-        t.true(getterMember?.text.includes("@lazy()"), "Generated getter maps to the original lazy property range")
-        t.true(setterMember?.text.includes("@lazy()"), "Generated setter maps to the original lazy property range")
+        t.true(backingMember?.text.startsWith("lazyProperty"), "Generated backing property starts at the original property name")
+        t.true(getterMember?.text.includes("@lazy()"), "Generated getter models the original decorator range")
+        t.true(setterMember?.text.startsWith("lazyProperty"), "Generated setter starts at the original property name")
         t.equal(regularMember?.text, 'regularProperty: string = "ok"', "Regular property keeps its own source range")
     } finally {
         await fixture.dispose()
@@ -108,7 +147,6 @@ async function runTypeScriptServerSnapshot(
 ): Promise<ProbeSnapshot> {
     const pluginDirectory = path.join(fixtureDirectory, "node_modules", probePluginName)
     const logFile         = path.join(fixtureDirectory, "tsserver.log")
-    const tsserverFile    = path.join(fixtureDirectory, "node_modules", "typescript", "lib", "tsserver.js")
 
     await mkdir(pluginDirectory, { recursive : true })
     await writeFile(path.join(pluginDirectory, "package.json"), JSON.stringify({
@@ -118,6 +156,30 @@ async function runTypeScriptServerSnapshot(
     }, null, 4))
     await writeFile(path.join(pluginDirectory, "index.cjs"), createProbePluginSource())
 
+    await runTypeScriptServerRequest(
+        fixtureDirectory,
+        sourceFile,
+        text,
+        "quickinfo",
+        {
+            file : sourceFile,
+            ...positionToLineOffset(text, text.indexOf("$lazyProperty"))
+        },
+        logFile
+    )
+
+    return readProbeSnapshot(logFile)
+}
+
+async function runTypeScriptServerRequest(
+    fixtureDirectory: string,
+    sourceFile: string,
+    text: string,
+    command: string,
+    args: unknown,
+    logFile = path.join(fixtureDirectory, "tsserver.log")
+): Promise<TsServerResponse> {
+    const tsserverFile = path.join(fixtureDirectory, "node_modules", "typescript", "lib", "tsserver.js")
     const server = fork(tsserverFile, [
         "--logVerbosity",
         "verbose",
@@ -130,7 +192,7 @@ async function runTypeScriptServerSnapshot(
         silent : true
     })
 
-    const pendingResponses = new Map<number, () => void>()
+    const pendingResponses = new Map<number, (response: TsServerResponse) => void>()
     let sequence           = 0
 
     server.on("message", (message: TsServerResponse) => {
@@ -138,7 +200,7 @@ async function runTypeScriptServerSnapshot(
             return
         }
 
-        pendingResponses.get(message.request_seq)?.()
+        pendingResponses.get(message.request_seq)?.(message)
         pendingResponses.delete(message.request_seq)
     })
 
@@ -150,10 +212,7 @@ async function runTypeScriptServerSnapshot(
         projectRootPath : fixtureDirectory,
         scriptKindName  : "TS"
     })
-    await sendRequest("quickinfo", {
-        file : sourceFile,
-        ...positionToLineOffset(text, text.indexOf("$lazyProperty"))
-    })
+    const response = await sendRequest(command, args)
 
     server.send({
         arguments : {},
@@ -164,9 +223,9 @@ async function runTypeScriptServerSnapshot(
 
     await waitForExit(server)
 
-    return readProbeSnapshot(logFile)
+    return response
 
-    async function sendRequest(command: string, args: unknown): Promise<void> {
+    async function sendRequest(command: string, args: unknown): Promise<TsServerResponse> {
         const seq = ++sequence
 
         server.send({
@@ -176,15 +235,15 @@ async function runTypeScriptServerSnapshot(
             type      : "request"
         })
 
-        await new Promise<void>((resolve, reject) => {
+        return new Promise<TsServerResponse>((resolve, reject) => {
             const timeout = setTimeout(() => {
                 pendingResponses.delete(seq)
                 reject(new Error(`Timed out waiting for tsserver response to ${command}.`))
             }, 10_000)
 
-            pendingResponses.set(seq, () => {
+            pendingResponses.set(seq, (response) => {
                 clearTimeout(timeout)
-                resolve()
+                resolve(response)
             })
         })
     }
@@ -266,7 +325,7 @@ function createProbePluginSource(): string {
             return {
                 classMembers : classMembers(ts, sourceFile),
                 fileName     : sourceFile.fileName,
-                firstBacking : formatOptionalNode(ts, sourceFile, findFirst(ts, sourceFile, node => ts.isIdentifier(node) && node.text === "$lazyProperty")),
+                firstBacking : formatOptionalNode(ts, sourceFile, findBackingDeclarationName(ts, sourceFile)),
                 text         : sourceFile.text,
                 textLength   : sourceFile.text.length
             }
@@ -276,6 +335,18 @@ function createProbePluginSource(): string {
             const sourceClass = findFirst(ts, sourceFile, node => ts.isClassDeclaration(node) && node.name && node.name.text === "SourceClass")
 
             return sourceClass ? sourceClass.members.map(member => formatNode(ts, sourceFile, member)) : []
+        }
+
+        function findBackingDeclarationName(ts, sourceFile) {
+            const sourceClass = findFirst(ts, sourceFile, node => ts.isClassDeclaration(node) && node.name && node.name.text === "SourceClass")
+
+            if (!sourceClass) return undefined
+
+            const backingMember = sourceClass.members.find(member => {
+                return ts.isPropertyDeclaration(member) && member.name && ts.isIdentifier(member.name) && member.name.text === "$lazyProperty"
+            })
+
+            return backingMember && backingMember.name
         }
 
         function findFirst(ts, root, predicate) {

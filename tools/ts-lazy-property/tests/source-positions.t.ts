@@ -70,7 +70,9 @@ it("preserves source positions outside generated lazy members", async (t: Test) 
     for (const sourceCase of sourceCases) {
         await t.subTest(sourceCase.fileName, async (t: Test) => {
             const originalSourceFile    = createSourceFile(sourceCase.fileName, trimIndent(sourceCase.text))
-            const transformedSourceFile = transformSourceFile(ts, originalSourceFile)
+            const transformedSourceFile = transformSourceFile(ts, originalSourceFile, {
+                preserveLazyDecorator : true
+            })
             const generatedRanges       = collectGeneratedLazyMemberRanges(transformedSourceFile)
             const originalStable        = collectStableSignatures(originalSourceFile, originalSourceFile, generatedRanges)
             const transformedStable     = collectStableSignatures(transformedSourceFile, transformedSourceFile, generatedRanges)

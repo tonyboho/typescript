@@ -15,7 +15,17 @@ export type LazyPropertyTransformerConfig = PluginConfig & {
 type TransformOptions = {
     packageName : string,
     decoratorName : string,
-    backingPrefix : string
+    backingPrefix : string,
+    preserveLazyDecorator : boolean
+}
+
+type TransformSourceFileOptions = Partial<TransformOptions>
+
+const defaultTransformOptions: TransformOptions = {
+    packageName           : "ts-lazy-property",
+    decoratorName         : "lazy",
+    backingPrefix         : "$",
+    preserveLazyDecorator : false
 }
 
 type LazyDecoratorImports = {
@@ -36,7 +46,8 @@ export default function transformProgram(
     const options = {
         packageName   : config.packageName ?? "ts-lazy-property",
         decoratorName : config.decoratorName ?? "lazy",
-        backingPrefix : config.backingPrefix ?? "$"
+        backingPrefix : config.backingPrefix ?? "$",
+        preserveLazyDecorator : false
     }
 
     const compilerOptions = program.getCompilerOptions()
@@ -94,7 +105,10 @@ export default function transformProgram(
                 return printedSourceFile
             }
 
-            const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options)
+            const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, {
+                ...options,
+                preserveLazyDecorator : true
+            })
 
             if (transformedSourceFile === sourceFile) {
                 sourceCache.set(cacheKey, sourceFile)
@@ -117,17 +131,18 @@ export default function transformProgram(
 export function transformSourceFile(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
-    options: TransformOptions = {
-        packageName   : "ts-lazy-property",
-        decoratorName : "lazy",
-        backingPrefix : "$"
-    }
+    options: TransformSourceFileOptions = {}
 ): ts.SourceFile {
-    if (!sourceFile.text.includes(options.packageName)) {
+    const resolvedOptions = {
+        ...defaultTransformOptions,
+        ...options
+    }
+
+    if (!sourceFile.text.includes(resolvedOptions.packageName)) {
         return sourceFile
     }
 
-    const lazyDecoratorImports = collectLazyDecoratorImports(tsInstance, sourceFile, options)
+    const lazyDecoratorImports = collectLazyDecoratorImports(tsInstance, sourceFile, resolvedOptions)
 
     if (lazyDecoratorImports.identifiers.size === 0 && lazyDecoratorImports.namespaces.size === 0) {
         return sourceFile
@@ -145,13 +160,13 @@ export function transformSourceFile(
                 const members: ts.ClassElement[] = []
 
                 for (const member of node.members) {
-                    if (!isLazyProperty(tsInstance, member, lazyDecoratorImports, options)) {
+                    if (!isLazyProperty(tsInstance, member, lazyDecoratorImports, resolvedOptions)) {
                         members.push(tsInstance.visitEachChild(member, visit, context) as ts.ClassElement)
                         continue
                     }
 
                     changed = true
-                    members.push(...createLazyMembers(tsInstance, sourceFile, member, lazyDecoratorImports, options))
+                    members.push(...createLazyMembers(tsInstance, sourceFile, member, lazyDecoratorImports, resolvedOptions))
                 }
 
                 if (tsInstance.isClassDeclaration(node)) {
@@ -161,7 +176,7 @@ export function transformSourceFile(
                         node.name,
                         node.typeParameters,
                         node.heritageClauses,
-                        members
+                        createClassMembersNodeArray(tsInstance, members, node.members)
                     )
                 }
 
@@ -171,7 +186,7 @@ export function transformSourceFile(
                     node.name,
                     node.typeParameters,
                     node.heritageClauses,
-                    members
+                    createClassMembersNodeArray(tsInstance, members, node.members)
                 )
             }
 
@@ -216,35 +231,46 @@ function createLazyMembers(
         throw new Error(`@lazy property "${property.name.text}" must have an initializer.`)
     }
 
-    const factory        = tsInstance.factory
-    const propertyName   = property.name.text
-    const backingName    = `${options.backingPrefix}${propertyName}`
-    const backingAccess  = () => preserveNodeLocation(tsInstance, createThisPropertyAccess(tsInstance, backingName), property)
-    const valueParameter = preserveNodeLocation(tsInstance, factory.createParameterDeclaration(
+    const factory       = tsInstance.factory
+    const propertyName  = property.name.text
+    const backingName   = `${options.backingPrefix}${propertyName}`
+    const memberRange   = lazyMemberRange(sourceFile, property)
+    const nameEnd       = property.name.getEnd()
+    const typeEnd       = property.type.end
+    const bodyRange     = {
+        pos : typeEnd,
+        end : property.end
+    }
+    const accessorMemberRange = options.preserveLazyDecorator ? property : memberRange
+    const backingModifiers = removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
+    const getterModifiers = options.preserveLazyDecorator
+        ? property.modifiers
+        : removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
+    const backingAccess = () => preserveNodeLocation(tsInstance, createThisPropertyAccess(tsInstance, backingName), property)
+    const valueParameter = preserveTextRange(tsInstance, factory.createParameterDeclaration(
         undefined,
         undefined,
-        preserveNodeNameLocation(tsInstance, factory.createIdentifier("value"), sourceFile, property.name),
+        preserveTextRange(tsInstance, factory.createIdentifier("value"), zeroWidthRange(nameEnd)),
         undefined,
         property.type
-    ), property)
+    ), zeroWidthRange(nameEnd))
+    const getterParameters = preserveTextRange(tsInstance, factory.createNodeArray([]), zeroWidthRange(nameEnd))
+    const setterParameters = preserveTextRange(tsInstance, factory.createNodeArray([ valueParameter ]), zeroWidthRange(nameEnd))
 
-    const backingProperty = preserveNodeLocation(tsInstance, factory.createPropertyDeclaration(
-        removeReadonlyModifier(
-            tsInstance,
-            removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
-        ),
+    const backingProperty = preserveTextRange(tsInstance, factory.createPropertyDeclaration(
+        removeReadonlyModifier(tsInstance, backingModifiers),
         preserveNodeNameLocation(tsInstance, factory.createIdentifier(backingName), sourceFile, property.name),
         undefined,
         createOptionalLazyValueType(tsInstance, property.type),
-        factory.createIdentifier("undefined")
-    ), property)
+        preserveNodeLocation(tsInstance, factory.createIdentifier("undefined"), property.initializer)
+    ), memberRange)
 
-    const getter = preserveNodeLocation(tsInstance, factory.createGetAccessorDeclaration(
-        removeReadonlyModifier(tsInstance, removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)),
+    const getter = preserveTextRange(tsInstance, factory.createGetAccessorDeclaration(
+        removeReadonlyModifier(tsInstance, getterModifiers),
         preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
-        [],
+        getterParameters,
         property.type,
-        factory.createBlock([
+        preserveTextRange(tsInstance, factory.createBlock(preserveTextRange(tsInstance, factory.createNodeArray([
             preserveNodeLocation(tsInstance, factory.createIfStatement(
                 factory.createBinaryExpression(
                     backingAccess(),
@@ -259,35 +285,44 @@ function createLazyMembers(
                     property.initializer
                 )
             ), property)
-        ], true)
-    ), property)
+        ]), bodyRange), true), bodyRange)
+    ), accessorMemberRange)
 
-    const setter = preserveNodeLocation(tsInstance, factory.createSetAccessorDeclaration(
+    const setter = preserveTextRange(tsInstance, factory.createSetAccessorDeclaration(
         removeReadonlyModifier(tsInstance, removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)),
         preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
-        [ valueParameter ],
-        factory.createBlock([
+        setterParameters,
+        preserveTextRange(tsInstance, factory.createBlock(preserveTextRange(tsInstance, factory.createNodeArray([
             preserveNodeLocation(tsInstance, factory.createExpressionStatement(
                 factory.createAssignment(
                     backingAccess(),
                     factory.createIdentifier("value")
                 )
             ), property)
-        ], true)
-    ), property)
+        ]), bodyRange), true), bodyRange)
+    ), memberRange)
 
-    return [
-        backingProperty,
-        getter,
-        setter
-    ]
+    return options.preserveLazyDecorator
+        ? [
+            getter,
+            setter,
+            backingProperty
+        ]
+        : [
+            backingProperty,
+            getter,
+            setter
+        ]
 }
 
 function createOptionalLazyValueType(tsInstance: TypeScript, type: ts.TypeNode): ts.TypeNode {
-    return tsInstance.factory.createUnionTypeNode([
+    return preserveTextRange(tsInstance, tsInstance.factory.createUnionTypeNode([
         type,
-        tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.UndefinedKeyword)
-    ])
+        preserveTextRange(tsInstance, tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.UndefinedKeyword), {
+            pos : type.end,
+            end : type.end
+        })
+    ]), type)
 }
 
 function createThisPropertyAccess(tsInstance: TypeScript, propertyName: string): ts.PropertyAccessExpression {
@@ -302,9 +337,50 @@ function preserveNodeLocation<Node extends ts.Node>(
     node: Node,
     original: ts.Node
 ): Node {
-    tsInstance.setTextRange(node, original)
+    return preserveTextRange(tsInstance, node, original)
+}
 
-    return node
+function createClassMembersNodeArray(
+    tsInstance: TypeScript,
+    members: ts.ClassElement[],
+    original: ts.NodeArray<ts.ClassElement>
+): ts.NodeArray<ts.ClassElement> {
+    const nodeArray = tsInstance.factory.createNodeArray(members)
+    const firstMember = members.find((member) => {
+        return member.pos >= 0
+    })
+
+    return preserveTextRange(tsInstance, nodeArray, {
+        pos : firstMember?.pos ?? original.pos,
+        end : original.end
+    })
+}
+
+function lazyMemberRange(
+    sourceFile: ts.SourceFile,
+    property: ts.PropertyDeclaration
+): ts.TextRange {
+    return {
+        pos : property.name.getStart(sourceFile),
+        end : property.end
+    }
+}
+
+function zeroWidthRange(pos: number): ts.TextRange {
+    return {
+        pos,
+        end : pos
+    }
+}
+
+function preserveTextRange<Range extends ts.TextRange>(
+    tsInstance: TypeScript,
+    range: Range,
+    original: ts.TextRange
+): Range {
+    tsInstance.setTextRange(range, original)
+
+    return range
 }
 
 function preserveNodeNameLocation<Node extends ts.Node>(
@@ -323,27 +399,45 @@ function preserveNodeNameLocation<Node extends ts.Node>(
 
 function removeLazyDecoratorModifiers(
     tsInstance: TypeScript,
-    modifiers: readonly ts.ModifierLike[] | undefined,
+    modifiers: ts.NodeArray<ts.ModifierLike> | undefined,
     lazyDecoratorImports: LazyDecoratorImports,
     options: TransformOptions
-): ts.ModifierLike[] | undefined {
-    const next = modifiers?.filter((modifier) => {
+): ts.NodeArray<ts.ModifierLike> | undefined {
+    return filterModifiers(tsInstance, modifiers, (modifier) => {
         return !tsInstance.isDecorator(modifier) ||
             !isLazyDecorator(tsInstance, modifier, lazyDecoratorImports, options)
     })
-
-    return next?.length ? next : undefined
 }
 
 function removeReadonlyModifier(
     tsInstance: TypeScript,
-    modifiers: readonly ts.ModifierLike[] | undefined
-): ts.ModifierLike[] | undefined {
-    const next = modifiers?.filter((modifier) => {
+    modifiers: ts.NodeArray<ts.ModifierLike> | undefined
+): ts.NodeArray<ts.ModifierLike> | undefined {
+    return filterModifiers(tsInstance, modifiers, (modifier) => {
         return modifier.kind !== tsInstance.SyntaxKind.ReadonlyKeyword
     })
+}
 
-    return next?.length ? next : undefined
+function filterModifiers(
+    tsInstance: TypeScript,
+    modifiers: ts.NodeArray<ts.ModifierLike> | undefined,
+    keep: (modifier: ts.ModifierLike) => boolean
+): ts.NodeArray<ts.ModifierLike> | undefined {
+    if (modifiers === undefined) {
+        return undefined
+    }
+
+    const next = modifiers.filter(keep)
+
+    if (next.length === 0) {
+        return undefined
+    }
+
+    if (next.length === modifiers.length) {
+        return modifiers
+    }
+
+    return preserveTextRange(tsInstance, tsInstance.factory.createNodeArray(next), modifiers)
 }
 
 function isLazyProperty(
