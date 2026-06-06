@@ -1,69 +1,89 @@
-import { readdir, readFile } from "node:fs/promises"
+import { execFile } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { promisify } from "node:util"
 
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { createTypeScriptFixture } from "./util.js"
-import type { TypeScriptFixtureCommandResult } from "./util.js"
+const execFileAsync         = promisify(execFile)
+const packageRoot           = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const fixtureSuiteDirectory = path.join(packageRoot, "tests", "fixture-suite")
 
-const packageRoot      = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
-const fixturesDirectory = path.join(packageRoot, "tests", "fixture")
+type CommandResult = {
+    command : string,
+    exitCode : number,
+    stderr : string,
+    stdout : string
+}
 
-const decoratorModes = [
+type ExecFileFailure = Error & {
+    code? : number | string,
+    stderr? : Buffer | string,
+    stdout? : Buffer | string
+}
+
+const fixtureModes = [
     {
-        name                   : "legacy decorators",
-        experimentalDecorators : true
+        buildScript : "build:standard",
+        name        : "standard decorators",
+        testScript  : "test:standard"
     },
     {
-        name                   : "standard decorators",
-        experimentalDecorators : false
+        buildScript : "build:legacy",
+        name        : "legacy decorators",
+        testScript  : "test:legacy"
     }
 ]
 
-it("runs fixture tests", async (t: Test) => {
-    const fixtureNames = (await readdir(fixturesDirectory))
-        .filter((fileName) => fileName.endsWith(".ts"))
-        .sort()
-    const sourceFiles  = await Promise.all(fixtureNames.map(async (fixtureName) => {
-        return {
-            fileName : fixtureName,
-            text     : await readFile(path.join(fixturesDirectory, fixtureName), "utf8")
-        }
-    }))
+it("builds and runs the fixture suite package", async (t: Test) => {
+    assertSuccessfulCommand(t, await runPnpm("install"), "Install fixture suite dependencies")
 
-    for (const decoratorMode of decoratorModes) {
-        await t.subTest(decoratorMode.name, async (t: Test) => {
-            const fixture = await createTypeScriptFixture({
-                experimentalDecorators : decoratorMode.experimentalDecorators,
-                sourceFiles
-            })
-
-            try {
-                const buildResult = await fixture.build()
-
-                assertSuccessfulCommand(t, buildResult, "Build fixtures")
-
-                if (buildResult.exitCode !== 0) {
-                    return
-                }
-
-                for (const fixtureName of fixtureNames) {
-                    await t.subTest(fixtureName, async (t: Test) => {
-                        assertSuccessfulCommand(t, await fixture.runSiesta(fixtureName), "Run fixture tests")
-                    })
-                }
-            } finally {
-                await fixture.dispose()
-            }
+    for (const fixtureMode of fixtureModes) {
+        t.it(fixtureMode.name, async (t: Test) => {
+            assertSuccessfulCommand(
+                t,
+                await runPnpm("run", fixtureMode.buildScript),
+                `Build fixture suite with ${fixtureMode.name}`
+            )
+            assertSuccessfulCommand(
+                t,
+                await runPnpm("run", fixtureMode.testScript),
+                `Run fixture suite with ${fixtureMode.name}`
+            )
         })
     }
 })
 
+async function runPnpm(...args: string[]): Promise<CommandResult> {
+    const command = [ "pnpm", ...args ].join(" ")
+
+    try {
+        const result = await execFileAsync("pnpm", args, {
+            cwd : fixtureSuiteDirectory
+        })
+
+        return {
+            command,
+            exitCode : 0,
+            stderr   : outputToString(result.stderr),
+            stdout   : outputToString(result.stdout)
+        }
+    } catch (error) {
+        const failure = error as ExecFileFailure
+
+        return {
+            command,
+            exitCode : typeof failure.code === "number" ? failure.code : 1,
+            stderr   : outputToString(failure.stderr || failure.message),
+            stdout   : outputToString(failure.stdout)
+        }
+    }
+}
+
 function assertSuccessfulCommand(
     t: Test,
-    result: TypeScriptFixtureCommandResult,
+    result: CommandResult,
     description: string
 ): void {
     if (result.exitCode === 0) {
@@ -74,12 +94,19 @@ function assertSuccessfulCommand(
     t.fail(`${description} failed with exit code ${result.exitCode}\n${commandOutput(result)}`)
 }
 
-function commandOutput(result: TypeScriptFixtureCommandResult): string {
+function commandOutput(result: CommandResult): string {
     return [
+        "command:",
+        result.command,
+        "",
         "stdout:",
         result.stdout || "<empty>",
         "",
         "stderr:",
         result.stderr || "<empty>"
     ].join("\n")
+}
+
+function outputToString(output: string | Buffer | undefined): string {
+    return output?.toString() ?? ""
 }

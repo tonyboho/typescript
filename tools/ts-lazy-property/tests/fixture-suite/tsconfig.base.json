@@ -10,17 +10,15 @@
         "strict": true,
         "useDefineForClassFields": false,
         "skipLibCheck": true,
-        "outDir": "dist",
         "rootDir": "src",
         "plugins": [
             {
                 "transform": "ts-lazy-property",
                 "transformProgram": true
             }
-        ],
-        "experimentalDecorators": false
+        ]
     },
     "include": [
-        "src/**/*.ts"
+        "src/**/*.t.ts"
     ]
 }

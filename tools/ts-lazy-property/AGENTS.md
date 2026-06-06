@@ -121,6 +121,7 @@ Important test groups:
 - `tsserver-editor-features.t.ts`: quickinfo/definition/references/highlights after live edits.
 - `tsserver-diagnostic-recovery.t.ts`: typo -> fix IDE flows do not leave stale diagnostics.
 - `tsserver-rename.t.ts`: rename behavior for regular and lazy properties.
-- `fixture-build-and-runtime.t.ts`: strict fixture projects build and run under decorator modes.
+- `fixture-build-and-runtime.t.ts`: installs, builds, and runs `tests/fixture-suite` as a real package.
+- `tests/fixture-suite`: strict runtime suite compiled under standard and legacy decorator modes.
 
 If you change AST construction, assume editor features can regress even when `tsc` passes.
