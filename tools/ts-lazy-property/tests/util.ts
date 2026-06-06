@@ -8,6 +8,8 @@ import { promisify } from "node:util"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
+import type { TsServerDiagnostic } from "./tsserver-util.js"
+
 const execFileAsync = promisify(execFile)
 
 export const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
@@ -205,6 +207,50 @@ export function commandOutput(result: CommandResult): string {
         "stderr:",
         result.stderr || "<empty>"
     ].join("\n")
+}
+
+export function hasTsServerDiagnostic(
+    diagnostics: readonly TsServerDiagnostic[],
+    code: number,
+    line: number
+): boolean {
+    return diagnostics.some((diagnostic) => {
+        return diagnostic.code === code && diagnostic.start.line === line
+    })
+}
+
+export function formatTsServerDiagnostics(diagnostics: readonly TsServerDiagnostic[]): string {
+    return diagnostics.map((diagnostic) => {
+        return `TS${diagnostic.code} ${diagnostic.start.line}:${diagnostic.start.offset} ${diagnostic.text}`
+    }).join("\n")
+}
+
+export function hasTypeScriptDiagnostic(
+    diagnostics: readonly ts.Diagnostic[],
+    code: number,
+    line: number
+): boolean {
+    return diagnostics.some((diagnostic) => {
+        if (diagnostic.file === undefined || diagnostic.start === undefined) {
+            return false
+        }
+
+        const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
+
+        return diagnostic.code === code && position.line + 1 === line
+    })
+}
+
+export function formatTypeScriptDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
+    return diagnostics.map((diagnostic) => {
+        const position = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0)
+
+        return [
+            `TS${diagnostic.code}`,
+            position === undefined ? "?:?" : `${position.line + 1}:${position.character + 1}`,
+            ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+        ].join(" ")
+    }).join("\n")
 }
 
 function createTsconfig(

@@ -2,12 +2,11 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { createTypeScriptFixture, trimIndent } from "./util.js"
+import { createTypeScriptFixture, formatTsServerDiagnostics, hasTsServerDiagnostic, trimIndent } from "./util.js"
 import {
     replaceSubstring,
     runTypeScriptServerSession,
-    textRangeFromIndices,
-    type TsServerDiagnostic
+    textRangeFromIndices
 } from "./tsserver-util.js"
 
 const sourceFileName = "source.ts"
@@ -76,12 +75,12 @@ it("tsserver clears a lazy property type error after the type name is fixed in p
             const typoDiagnostics = await session.getDiagnostics([ sourceFile ])
 
             t.true(
-                hasDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
+                hasTsServerDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
                 "Typo reports TS2552 on the lazy property line"
             )
             t.true(
                 typoDiagnostics.some((diagnostic) => diagnostic.text.includes("stringz")),
-                `Typo diagnostic mentions stringz: ${formatDiagnostics(typoDiagnostics)}`
+                `Typo diagnostic mentions stringz: ${formatTsServerDiagnostics(typoDiagnostics)}`
             )
 
             const { end, nextSource, start } = replaceSubstring(
@@ -99,16 +98,16 @@ it("tsserver clears a lazy property type error after the type name is fixed in p
             const fixedDiagnostics = await session.getDiagnostics([ sourceFile ])
 
             t.false(
-                hasDiagnostic(fixedDiagnostics, 2552, lazyPropertyLine),
-                `Fixed source has no lazy-property type error: ${formatDiagnostics(fixedDiagnostics)}`
+                hasTsServerDiagnostic(fixedDiagnostics, 2552, lazyPropertyLine),
+                `Fixed source has no lazy-property type error: ${formatTsServerDiagnostics(fixedDiagnostics)}`
             )
             t.false(
                 fixedDiagnostics.some((diagnostic) => diagnostic.text.includes("stringz")),
-                `Fixed source has no stale stringz diagnostic: ${formatDiagnostics(fixedDiagnostics)}`
+                `Fixed source has no stale stringz diagnostic: ${formatTsServerDiagnostics(fixedDiagnostics)}`
             )
             t.false(
                 fixedDiagnostics.some((diagnostic) => diagnostic.code === 2552),
-                `Fixed source has no stale TS2552 anywhere: ${formatDiagnostics(fixedDiagnostics)}`
+                `Fixed source has no stale TS2552 anywhere: ${formatTsServerDiagnostics(fixedDiagnostics)}`
             )
 
             t.equal(nextSource, validSourceText, "Editor fix restores the valid source text")
@@ -155,12 +154,12 @@ it("tsserver clears a lazy property type error after single-character editor edi
             const typoDiagnostics = await session.getDiagnostics([ sourceFile ])
 
             t.true(
-                hasDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
-                `Single-character typo reports TS2552 on the lazy property line: ${formatDiagnostics(typoDiagnostics)}`
+                hasTsServerDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
+                `Single-character typo reports TS2552 on the lazy property line: ${formatTsServerDiagnostics(typoDiagnostics)}`
             )
             t.true(
                 typoDiagnostics.some((diagnostic) => diagnostic.text.includes("stringz")),
-                `Single-character typo diagnostic mentions stringz: ${formatDiagnostics(typoDiagnostics)}`
+                `Single-character typo diagnostic mentions stringz: ${formatTsServerDiagnostics(typoDiagnostics)}`
             )
 
             const typoText     = `${validSourceText.slice(0, insertionIndex)}z${validSourceText.slice(insertionIndex)}`
@@ -176,16 +175,16 @@ it("tsserver clears a lazy property type error after single-character editor edi
                 const fixedDiagnostics = await session.getDiagnostics([ sourceFile ])
 
                 t.false(
-                    hasDiagnostic(fixedDiagnostics, 2552, lazyPropertyLine),
-                    `Fixed source has no lazy-property type error after geterr #${index + 1}: ${formatDiagnostics(fixedDiagnostics)}`
+                    hasTsServerDiagnostic(fixedDiagnostics, 2552, lazyPropertyLine),
+                    `Fixed source has no lazy-property type error after geterr #${index + 1}: ${formatTsServerDiagnostics(fixedDiagnostics)}`
                 )
                 t.false(
                     fixedDiagnostics.some((diagnostic) => diagnostic.text.includes("stringz")),
-                    `Fixed source has no stale stringz diagnostic after geterr #${index + 1}: ${formatDiagnostics(fixedDiagnostics)}`
+                    `Fixed source has no stale stringz diagnostic after geterr #${index + 1}: ${formatTsServerDiagnostics(fixedDiagnostics)}`
                 )
                 t.false(
                     fixedDiagnostics.some((diagnostic) => diagnostic.code === 2552),
-                    `Fixed source has no stale TS2552 anywhere after geterr #${index + 1}: ${formatDiagnostics(fixedDiagnostics)}`
+                    `Fixed source has no stale TS2552 anywhere after geterr #${index + 1}: ${formatTsServerDiagnostics(fixedDiagnostics)}`
                 )
             }
         })
@@ -223,11 +222,11 @@ it("tsserver clears backing property access diagnostics after a lazy type typo i
 
             t.false(
                 initialDiagnostics.some((diagnostic) => diagnostic.text.includes("$lazyProperty")),
-                `Initial valid source has no backing-property diagnostic: ${formatDiagnostics(initialDiagnostics)}`
+                `Initial valid source has no backing-property diagnostic: ${formatTsServerDiagnostics(initialDiagnostics)}`
             )
             t.false(
                 initialDiagnostics.some((diagnostic) => diagnostic.code >= 2000),
-                `Initial valid source has no semantic diagnostics: ${formatDiagnostics(initialDiagnostics)}`
+                `Initial valid source has no semantic diagnostics: ${formatTsServerDiagnostics(initialDiagnostics)}`
             )
 
             const insertionIndex = validSourceTextWithBackingUsage.indexOf("string>") + "string".length
@@ -242,12 +241,12 @@ it("tsserver clears backing property access diagnostics after a lazy type typo i
             const typoDiagnostics = await session.getDiagnostics([ sourceFile ])
 
             t.true(
-                hasDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
-                `Typo reports TS2552 on the lazy property line: ${formatDiagnostics(typoDiagnostics)}`
+                hasTsServerDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
+                `Typo reports TS2552 on the lazy property line: ${formatTsServerDiagnostics(typoDiagnostics)}`
             )
             t.true(
                 typoDiagnostics.some((diagnostic) => diagnostic.text.includes("stringz")),
-                `Typo diagnostic mentions stringz: ${formatDiagnostics(typoDiagnostics)}`
+                `Typo diagnostic mentions stringz: ${formatTsServerDiagnostics(typoDiagnostics)}`
             )
 
             const typoText     = `${validSourceTextWithBackingUsage.slice(0, insertionIndex)}z${validSourceTextWithBackingUsage.slice(insertionIndex)}`
@@ -263,20 +262,20 @@ it("tsserver clears backing property access diagnostics after a lazy type typo i
                 const fixedDiagnostics = await session.getDiagnostics([ sourceFile ])
 
                 t.false(
-                    hasDiagnostic(fixedDiagnostics, 2552, lazyPropertyLine),
-                    `Fixed source has no lazy-property type error after geterr #${index + 1}: ${formatDiagnostics(fixedDiagnostics)}`
+                    hasTsServerDiagnostic(fixedDiagnostics, 2552, lazyPropertyLine),
+                    `Fixed source has no lazy-property type error after geterr #${index + 1}: ${formatTsServerDiagnostics(fixedDiagnostics)}`
                 )
                 t.false(
                     fixedDiagnostics.some((diagnostic) => diagnostic.text.includes("stringz")),
-                    `Fixed source has no stale stringz diagnostic after geterr #${index + 1}: ${formatDiagnostics(fixedDiagnostics)}`
+                    `Fixed source has no stale stringz diagnostic after geterr #${index + 1}: ${formatTsServerDiagnostics(fixedDiagnostics)}`
                 )
                 t.false(
                     fixedDiagnostics.some((diagnostic) => diagnostic.text.includes("$lazyProperty")),
-                    `Fixed source has no stale backing-property diagnostic after geterr #${index + 1}: ${formatDiagnostics(fixedDiagnostics)}`
+                    `Fixed source has no stale backing-property diagnostic after geterr #${index + 1}: ${formatTsServerDiagnostics(fixedDiagnostics)}`
                 )
                 t.false(
                     fixedDiagnostics.some((diagnostic) => diagnostic.code >= 2000),
-                    `Fixed source has no semantic diagnostics after geterr #${index + 1}: ${formatDiagnostics(fixedDiagnostics)}`
+                    `Fixed source has no semantic diagnostics after geterr #${index + 1}: ${formatTsServerDiagnostics(fixedDiagnostics)}`
                 )
             }
         })
@@ -284,19 +283,3 @@ it("tsserver clears backing property access diagnostics after a lazy type typo i
         await fixture.dispose()
     }
 })
-
-function hasDiagnostic(
-    diagnostics: TsServerDiagnostic[],
-    code: number,
-    line: number
-): boolean {
-    return diagnostics.some((diagnostic) => {
-        return diagnostic.code === code && diagnostic.start.line === line
-    })
-}
-
-function formatDiagnostics(diagnostics: TsServerDiagnostic[]): string {
-    return diagnostics.map((diagnostic) => {
-        return `TS${diagnostic.code} ${diagnostic.start.line}:${diagnostic.start.offset} ${diagnostic.text}`
-    }).join("\n")
-}

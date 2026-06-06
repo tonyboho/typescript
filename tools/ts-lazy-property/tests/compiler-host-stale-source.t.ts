@@ -3,7 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { createLazyPropertyCompilerHost } from "../src/index.js"
-import { trimIndent } from "./util.js"
+import { formatTypeScriptDiagnostics, hasTypeScriptDiagnostic, trimIndent } from "./util.js"
 
 const sourceFileName = "source.ts"
 const lazyPropertyLine = 5
@@ -46,7 +46,7 @@ it("does not reuse stale transformed source when a lazy property type changes be
     const { fixedDiagnostics, fixedFile, typoDiagnostics } = runStaleVersionFlow(lazyTypeTypoSourceText, validSourceText)
 
     t.true(
-        hasDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
+        hasTypeScriptDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
         "Typo reports TS2552 on the lazy property line"
     )
     assertFixedSource(t, fixedFile, fixedDiagnostics, lazyPropertyLine, "lazy-property")
@@ -56,7 +56,7 @@ it("does not reuse stale transformed source when a regular property type changes
     const { fixedDiagnostics, fixedFile, typoDiagnostics } = runStaleVersionFlow(regularTypeTypoSourceText, validSourceText)
 
     t.true(
-        hasDiagnostic(typoDiagnostics, 2552, regularPropertyLine),
+        hasTypeScriptDiagnostic(typoDiagnostics, 2552, regularPropertyLine),
         "Typo reports TS2552 on the regular property line"
     )
     assertFixedSource(t, fixedFile, fixedDiagnostics, regularPropertyLine, "regular-property")
@@ -127,12 +127,12 @@ function assertFixedSource(
     label: string
 ): void {
     t.false(
-        hasDiagnostic(fixedDiagnostics, 2552, diagnosticLine),
-        `Fixed source has no ${label} type error: ${formatDiagnostics(fixedDiagnostics)}`
+        hasTypeScriptDiagnostic(fixedDiagnostics, 2552, diagnosticLine),
+        `Fixed source has no ${label} type error: ${formatTypeScriptDiagnostics(fixedDiagnostics)}`
     )
     t.false(
         fixedDiagnostics.some((diagnostic) => diagnostic.messageText.toString().includes("stringz")),
-        `Fixed source has no stale stringz diagnostic: ${formatDiagnostics(fixedDiagnostics)}`
+        `Fixed source has no stale stringz diagnostic: ${formatTypeScriptDiagnostics(fixedDiagnostics)}`
     )
     t.false(
         /stringz/.test(fixedFile.text),
@@ -148,32 +148,4 @@ function requireSourceFile(program: ts.Program, message: string): ts.SourceFile 
     }
 
     return sourceFile
-}
-
-function hasDiagnostic(
-    diagnostics: readonly ts.Diagnostic[],
-    code: number,
-    line: number
-): boolean {
-    return diagnostics.some((diagnostic) => {
-        if (diagnostic.file === undefined || diagnostic.start === undefined) {
-            return false
-        }
-
-        const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
-
-        return diagnostic.code === code && position.line + 1 === line
-    })
-}
-
-function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-    return diagnostics.map((diagnostic) => {
-        const position = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0)
-
-        return [
-            `TS${diagnostic.code}`,
-            position === undefined ? "?:?" : `${position.line + 1}:${position.character + 1}`,
-            ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
-        ].join(" ")
-    }).join("\n")
 }

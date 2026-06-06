@@ -3,7 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { transformSourceFile } from "../src/index.js"
-import { trimIndent } from "./util.js"
+import { formatTypeScriptDiagnostics, trimIndent } from "./util.js"
 
 const sourceFileName = "source.ts"
 const sourceText     = trimIndent(`
@@ -21,7 +21,7 @@ it("reports lazy initializer diagnostics at the original source property positio
     const typeError   = diagnostics.find((diagnostic) => diagnostic.code === 2322)
 
     if (typeError === undefined || typeError.start === undefined) {
-        t.fail(`Cannot find TS2322 diagnostic: ${formatDiagnostics(sourceFile, diagnostics)}`)
+        t.fail(`Cannot find TS2322 diagnostic: ${formatTypeScriptDiagnostics(diagnostics)}`)
         return
     }
 
@@ -72,16 +72,4 @@ function createSourceFile(text: string): ts.SourceFile {
         true,
         ts.ScriptKind.TS
     )
-}
-
-function formatDiagnostics(sourceFile: ts.SourceFile, diagnostics: readonly ts.Diagnostic[]): string {
-    return diagnostics.map((diagnostic) => {
-        const position = sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0)
-
-        return [
-            `TS${diagnostic.code}`,
-            `${position.line + 1}:${position.character + 1}`,
-            ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
-        ].join(" ")
-    }).join("\n")
 }
