@@ -288,15 +288,7 @@ function createLazyMembers(
         ? memberRange
         : property
     const backingAccess = () => preserveTextRange(tsInstance, createThisPropertyAccess(tsInstance, backingName), generatedMemberRange)
-    const valueParameter = preserveTextRange(tsInstance, factory.createParameterDeclaration(
-        undefined,
-        undefined,
-        preserveTextRange(tsInstance, factory.createIdentifier("value"), zeroWidthRange(nameEnd)),
-        undefined,
-        property.type
-    ), zeroWidthRange(nameEnd))
     const getterParameters = preserveTextRange(tsInstance, factory.createNodeArray([]), zeroWidthRange(nameEnd))
-    const setterParameters = preserveTextRange(tsInstance, factory.createNodeArray([ valueParameter ]), zeroWidthRange(nameEnd))
     const isReadonly  = hasReadonlyModifier(tsInstance, property)
     const backingType = options.preserveLazyDecorator
         ? preserveTextRange(tsInstance, createOptionalLazyValueType(tsInstance, property.type), zeroWidthRange(nameStart))
@@ -309,7 +301,7 @@ function createLazyMembers(
         backingType,
         options.preserveLazyDecorator
             ? preserveTextRange(tsInstance, factory.createIdentifier("undefined"), zeroWidthRange(nameStart))
-            : preserveNodeLocation(tsInstance, factory.createIdentifier("undefined"), property.initializer)
+            : preserveTextRange(tsInstance, factory.createIdentifier("undefined"), property.initializer)
     ), backingMemberRange)
 
     const getter = preserveTextRange(tsInstance, factory.createGetAccessorDeclaration(
@@ -341,8 +333,16 @@ function createLazyMembers(
     ]
 
     if (!isReadonly) {
+        const valueParameter = preserveTextRange(tsInstance, factory.createParameterDeclaration(
+            undefined,
+            undefined,
+            preserveTextRange(tsInstance, factory.createIdentifier("value"), zeroWidthRange(nameEnd)),
+            undefined,
+            property.type
+        ), zeroWidthRange(nameEnd))
+        const setterParameters = preserveTextRange(tsInstance, factory.createNodeArray([ valueParameter ]), zeroWidthRange(nameEnd))
         const setter = preserveTextRange(tsInstance, factory.createSetAccessorDeclaration(
-            removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options),
+            getterModifiers,
             preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
             setterParameters,
             preserveTextRange(tsInstance, factory.createBlock(preserveTextRange(tsInstance, factory.createNodeArray([
@@ -380,14 +380,6 @@ function createThisPropertyAccess(tsInstance: TypeScript, propertyName: string):
         tsInstance.factory.createThis(),
         propertyName
     )
-}
-
-function preserveNodeLocation<Node extends ts.Node>(
-    tsInstance: TypeScript,
-    node: Node,
-    original: ts.Node
-): Node {
-    return preserveTextRange(tsInstance, node, original)
 }
 
 function createClassMembersNodeArray(
