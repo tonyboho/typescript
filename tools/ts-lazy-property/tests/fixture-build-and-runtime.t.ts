@@ -1,112 +1,39 @@
-import { execFile } from "node:child_process"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
-import { promisify } from "node:util"
 
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-const execFileAsync         = promisify(execFile)
-const packageRoot           = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+import { assertSuccessfulCommand, packageRoot, runPnpm } from "./util.js"
+
 const fixtureSuiteDirectory = path.join(packageRoot, "tests", "fixture-suite")
+const installResult         = await runPnpm(fixtureSuiteDirectory, "install")
 
-type CommandResult = {
-    command : string,
-    exitCode : number,
-    stderr : string,
-    stdout : string
-}
+it("builds and runs the fixture suite with standard decorators", async (t: Test) => {
+    assertSuccessfulCommand(t, installResult, "Install fixture suite dependencies")
 
-type ExecFileFailure = Error & {
-    code? : number | string,
-    stderr? : Buffer | string,
-    stdout? : Buffer | string
-}
-
-const fixtureModes = [
-    {
-        buildScript : "build:standard",
-        name        : "standard decorators",
-        testScript  : "test:standard"
-    },
-    {
-        buildScript : "build:legacy",
-        name        : "legacy decorators",
-        testScript  : "test:legacy"
-    }
-]
-
-it("builds and runs the fixture suite package", async (t: Test) => {
-    assertSuccessfulCommand(t, await runPnpm("install"), "Install fixture suite dependencies")
-
-    for (const fixtureMode of fixtureModes) {
-        t.it(fixtureMode.name, async (t: Test) => {
-            assertSuccessfulCommand(
-                t,
-                await runPnpm("run", fixtureMode.buildScript),
-                `Build fixture suite with ${fixtureMode.name}`
-            )
-            assertSuccessfulCommand(
-                t,
-                await runPnpm("run", fixtureMode.testScript),
-                `Run fixture suite with ${fixtureMode.name}`
-            )
-        })
-    }
+    assertSuccessfulCommand(
+        t,
+        await runPnpm(fixtureSuiteDirectory, "run", "build:standard"),
+        "Build fixture suite with standard decorators"
+    )
+    assertSuccessfulCommand(
+        t,
+        await runPnpm(fixtureSuiteDirectory, "run", "test:standard"),
+        "Run fixture suite with standard decorators"
+    )
 })
 
-async function runPnpm(...args: string[]): Promise<CommandResult> {
-    const command = [ "pnpm", ...args ].join(" ")
+it("builds and runs the fixture suite with legacy decorators", async (t: Test) => {
+    assertSuccessfulCommand(t, installResult, "Install fixture suite dependencies")
 
-    try {
-        const result = await execFileAsync("pnpm", args, {
-            cwd : fixtureSuiteDirectory
-        })
-
-        return {
-            command,
-            exitCode : 0,
-            stderr   : outputToString(result.stderr),
-            stdout   : outputToString(result.stdout)
-        }
-    } catch (error) {
-        const failure = error as ExecFileFailure
-
-        return {
-            command,
-            exitCode : typeof failure.code === "number" ? failure.code : 1,
-            stderr   : outputToString(failure.stderr || failure.message),
-            stdout   : outputToString(failure.stdout)
-        }
-    }
-}
-
-function assertSuccessfulCommand(
-    t: Test,
-    result: CommandResult,
-    description: string
-): void {
-    if (result.exitCode === 0) {
-        t.pass(description)
-        return
-    }
-
-    t.fail(`${description} failed with exit code ${result.exitCode}\n${commandOutput(result)}`)
-}
-
-function commandOutput(result: CommandResult): string {
-    return [
-        "command:",
-        result.command,
-        "",
-        "stdout:",
-        result.stdout || "<empty>",
-        "",
-        "stderr:",
-        result.stderr || "<empty>"
-    ].join("\n")
-}
-
-function outputToString(output: string | Buffer | undefined): string {
-    return output?.toString() ?? ""
-}
+    assertSuccessfulCommand(
+        t,
+        await runPnpm(fixtureSuiteDirectory, "run", "build:legacy"),
+        "Build fixture suite with legacy decorators"
+    )
+    assertSuccessfulCommand(
+        t,
+        await runPnpm(fixtureSuiteDirectory, "run", "test:legacy"),
+        "Run fixture suite with legacy decorators"
+    )
+})

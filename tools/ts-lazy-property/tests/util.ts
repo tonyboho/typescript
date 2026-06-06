@@ -5,9 +5,11 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
+import type { Test } from "@bryntum/siesta/nodejs.js"
+
 const execFileAsync = promisify(execFile)
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+export const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 export type TypeScriptFixtureOptions = {
     sourceFiles : TypeScriptFixtureSourceFile[],
@@ -34,7 +36,10 @@ export type TypeScriptFixture = {
     typecheck : () => Promise<TypeScriptFixtureCommandResult>
 }
 
-export type TypeScriptFixtureCommandResult = {
+export type TypeScriptFixtureCommandResult = CommandResult
+
+export type CommandResult = {
+    command : string,
     exitCode : number,
     stdout : string,
     stderr : string,
@@ -140,15 +145,25 @@ async function runSiesta(directory: string, testFile: string): Promise<TypeScrip
     )
 }
 
-async function runCommand(
+export async function runPnpm(
+    cwd: string,
+    ...args: string[]
+): Promise<CommandResult> {
+    return runCommand("pnpm", args, cwd)
+}
+
+export async function runCommand(
     executable: string,
     args: string[],
     cwd: string
-): Promise<TypeScriptFixtureCommandResult> {
+): Promise<CommandResult> {
+    const command = [ executable, ...args ].join(" ")
+
     try {
         const result = await execFileAsync(executable, args, { cwd })
 
         return {
+            command,
             exitCode : 0,
             stdout   : outputToString(result.stdout),
             stderr   : outputToString(result.stderr)
@@ -157,11 +172,38 @@ async function runCommand(
         const failure = error as ExecFileFailure
 
         return {
+            command,
             exitCode : typeof failure.code === "number" ? failure.code : 1,
             stdout   : outputToString(failure.stdout),
             stderr   : outputToString(failure.stderr || failure.message)
         }
     }
+}
+
+export function assertSuccessfulCommand(
+    t: Test,
+    result: CommandResult,
+    description: string
+): void {
+    if (result.exitCode === 0) {
+        t.pass(description)
+        return
+    }
+
+    t.fail(`${description} failed with exit code ${result.exitCode}\n${commandOutput(result)}`)
+}
+
+export function commandOutput(result: CommandResult): string {
+    return [
+        "command:",
+        result.command,
+        "",
+        "stdout:",
+        result.stdout || "<empty>",
+        "",
+        "stderr:",
+        result.stderr || "<empty>"
+    ].join("\n")
 }
 
 function createTsconfig(
