@@ -3,7 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import transformProgram from "../src/index.js"
-import { trimIndent } from "./util.js"
+import { findFirst, trimIndent } from "./util.js"
 
 type TypeScriptWithParents = typeof ts & {
     setParentRecursive<Node extends ts.Node>(node: Node, incremental: boolean): Node
@@ -203,28 +203,4 @@ function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string[] {
             ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
         ].join(" ")
     })
-}
-
-function findFirst<Node extends ts.Node>(
-    root: ts.Node,
-    predicate: (node: ts.Node) => node is Node
-): Node | undefined {
-    let found: Node | undefined
-
-    const visit = (node: ts.Node): void => {
-        if (found !== undefined) {
-            return
-        }
-
-        if (predicate(node)) {
-            found = node
-            return
-        }
-
-        ts.forEachChild(node, visit)
-    }
-
-    visit(root)
-
-    return found
 }

@@ -3,7 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { printSourceFile, transformSourceFile } from "../src/index.js"
-import { trimIndent } from "./util.js"
+import { findFirst, trimIndent } from "./util.js"
 
 it("keeps unrelated source files untouched", async (t: Test) => {
     const sourceFile      = createSourceFile(`
@@ -341,28 +341,4 @@ function modifierNames(member: ts.ClassElement): string[] {
     return ts.getModifiers(member)?.map((modifier) => {
         return ts.SyntaxKind[modifier.kind]
     }) ?? []
-}
-
-function findFirst<Node extends ts.Node>(
-    root: ts.Node,
-    predicate: (node: ts.Node) => node is Node
-): Node | undefined {
-    let found: Node | undefined
-
-    const visit = (node: ts.Node): void => {
-        if (found !== undefined) {
-            return
-        }
-
-        if (predicate(node)) {
-            found = node
-            return
-        }
-
-        ts.forEachChild(node, visit)
-    }
-
-    visit(root)
-
-    return found
 }

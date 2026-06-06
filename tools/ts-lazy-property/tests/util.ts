@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
 import type { Test } from "@bryntum/siesta/nodejs.js"
+import ts from "typescript"
 
 const execFileAsync = promisify(execFile)
 
@@ -274,4 +275,28 @@ export function trimIndent(text: string): string {
     )
 
     return lines.map((line) => line.slice(minIndent)).join("\n")
+}
+
+export function findFirst<Node extends ts.Node>(
+    root: ts.Node,
+    predicate: (node: ts.Node) => node is Node
+): Node | undefined {
+    let found: Node | undefined
+
+    const visit = (node: ts.Node): void => {
+        if (found !== undefined) {
+            return
+        }
+
+        if (predicate(node)) {
+            found = node
+            return
+        }
+
+        ts.forEachChild(node, visit)
+    }
+
+    visit(root)
+
+    return found
 }
