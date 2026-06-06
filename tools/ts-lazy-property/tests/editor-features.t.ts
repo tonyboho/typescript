@@ -2,7 +2,12 @@ import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
 import { createTypeScriptFixture } from "./util.js"
-import { positionToLineOffset, runTypeScriptServerRequest } from "./tsserver-util.js"
+import {
+    positionToLineOffset,
+    runTypeScriptServerRequest,
+    runTypeScriptServerSession,
+    textRangeFromIndices
+} from "./tsserver-util.js"
 import type { TsServerResponse } from "./tsserver-util.js"
 
 type TextPosition = {
@@ -101,6 +106,66 @@ it("tsserver quickinfo reports public and backing lazy property types", async (t
             backingQuickInfo.displayString?.includes("Map<number, string> | undefined"),
             backingQuickInfo.displayString ?? "Missing backing quickinfo"
         )
+    } finally {
+        await dispose()
+    }
+})
+
+it("tsserver quickinfo and definition recover for backing property after a lazy type typo is fixed", async (t: Test) => {
+    const { sourceFile, dispose } = await createEditorFixture()
+
+    try {
+        await runTypeScriptServerSession(sourceFile.slice(0, sourceFile.lastIndexOf("/")), async (session) => {
+            await session.open({
+                file            : sourceFile,
+                fileContent     : sourceText,
+                projectRootPath : sourceFile.slice(0, sourceFile.lastIndexOf("/"))
+            })
+
+            const insertionIndex = sourceText.indexOf("string>") + "string".length
+            const insertionPoint = textRangeFromIndices(sourceText, insertionIndex, insertionIndex)
+
+            await session.change({
+                file         : sourceFile,
+                insertString : "z",
+                ...insertionPoint
+            })
+
+            const typoText     = `${sourceText.slice(0, insertionIndex)}z${sourceText.slice(insertionIndex)}`
+            const deletionSpan = textRangeFromIndices(typoText, insertionIndex, insertionIndex + 1)
+
+            await session.change({
+                file         : sourceFile,
+                insertString : "",
+                ...deletionSpan
+            })
+
+            const fixedDiagnostics = await session.getDiagnostics([ sourceFile ])
+
+            t.false(
+                fixedDiagnostics.some((diagnostic) => diagnostic.code >= 2000),
+                fixedDiagnostics.map((diagnostic) => `TS${diagnostic.code} ${diagnostic.text}`).join("\n")
+            )
+
+            const quickInfo = assertResponseBody<QuickInfoBody>(
+                t,
+                await session.request("quickinfo", backingUsageArgs(sourceFile))
+            )
+            const definitions = assertResponseBody<DefinitionInfo[]>(
+                t,
+                await session.request("definition", backingUsageArgs(sourceFile))
+            )
+
+            t.true(
+                quickInfo.displayString?.includes("Map<number, string> | undefined"),
+                quickInfo.displayString ?? "Missing backing quickinfo after type fix"
+            )
+            t.true(definitions.some((definition) => {
+                return definition.file === sourceFile &&
+                    sourceSlice(sourceText, definition) === "lazyProperty" &&
+                    definition.start.line === 5
+            }), "Backing property definition resolves to the original lazy property after type fix")
+        })
     } finally {
         await dispose()
     }

@@ -85,7 +85,7 @@ it("tsserver sees the original source text while using the transformed AST", asy
         t.ok(regularMember, "tsserver keeps the regular source property")
 
         t.equal(snapshot.firstBacking?.name, "$lazyProperty", "Generated backing identifier exists")
-        t.equal(snapshot.firstBacking?.text, "", "Generated backing identifier has a zero-width source range")
+        t.equal(snapshot.firstBacking?.text, "lazyProperty", "Generated backing identifier maps to the original lazy property name")
         t.true(backingMember?.text.includes("@lazy()"), "Generated backing property carries the original decorator range")
         t.true(getterMember?.text.startsWith("lazyProperty"), "Generated getter starts at the original property declaration")
         t.equal(setterMember?.text, "", "Generated setter does not compete for source rename range")

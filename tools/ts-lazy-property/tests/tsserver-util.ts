@@ -43,7 +43,8 @@ export type TypeScriptServerSession = {
         file : string,
         fileContent : string,
         projectRootPath : string
-    }) => Promise<void>
+    }) => Promise<void>,
+    request : (command: string, args: unknown) => Promise<TsServerResponse>
 }
 
 export async function runTypeScriptServerSession<T>(
@@ -98,6 +99,10 @@ export async function runTypeScriptServerSession<T>(
 
         async getDiagnostics(files) {
             return waitForDiagnostics(files)
+        },
+
+        async request(command, args) {
+            return sendRequest(command, args)
         },
 
         async close() {

@@ -99,7 +99,11 @@ export function createLazyPropertyCompilerHost(
                 return printedSourceFile
             }
 
-            return transformSourceFile(tsInstance, sourceFile, {
+            return transformSourceFile(tsInstance, cloneSourceFileForTransform(
+                tsInstance,
+                sourceFile,
+                languageVersionOrOptions
+            ), {
                 ...options,
                 preserveLazyDecorator : true
             })
@@ -116,14 +120,21 @@ export default function transformProgram(
     const compilerOptions = program.getCompilerOptions()
     const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
     const nextHost        = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
-    const nextProgram     = tsInstance.createProgram(
+    const diagnosticsHost = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
+    const nextProgram = tsInstance.createProgram(
         program.getRootFileNames(),
         compilerOptions,
         nextHost,
+        undefined
+    )
+    const diagnosticsProgram = tsInstance.createProgram(
+        program.getRootFileNames(),
+        compilerOptions,
+        diagnosticsHost,
         program
     )
 
-    return filterGeneratedBackingDiagnostics(tsInstance, nextProgram, {
+    return filterGeneratedBackingDiagnostics(tsInstance, nextProgram, diagnosticsProgram, {
         packageName           : config.packageName ?? "ts-lazy-property",
         decoratorName         : config.decoratorName ?? "lazy",
         backingPrefix         : config.backingPrefix ?? "$",
@@ -215,18 +226,41 @@ export function printSourceFile(
     return tsInstance.createPrinter().printFile(sourceFile)
 }
 
+function cloneSourceFileForTransform(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions
+): ts.SourceFile {
+    const cloned = tsInstance.createSourceFile(
+        sourceFile.fileName,
+        sourceFile.text,
+        languageVersionOrOptions,
+        true,
+        scriptKindFromFileName(tsInstance, sourceFile.fileName)
+    )
+
+    ;(cloned as SourceFileWithVersion).version = (sourceFile as SourceFileWithVersion).version
+
+    return cloned
+}
+
 function filterGeneratedBackingDiagnostics(
     tsInstance: TypeScript,
     program: ts.Program,
+    diagnosticsProgram: ts.Program,
     options: TransformOptions
 ): ts.Program {
-    const getSemanticDiagnostics = program.getSemanticDiagnostics.bind(program)
+    const getSemanticDiagnostics = diagnosticsProgram.getSemanticDiagnostics.bind(diagnosticsProgram)
     const backingNamesBySourceFile = new WeakMap<ts.SourceFile, Set<string>>()
 
     ;(program as ts.Program & {
         getSemanticDiagnostics : ts.Program["getSemanticDiagnostics"]
     }).getSemanticDiagnostics = (sourceFile, cancellationToken) => {
-        return getSemanticDiagnostics(sourceFile, cancellationToken).filter((diagnostic) => {
+        const diagnosticsSourceFile = sourceFile === undefined
+            ? undefined
+            : diagnosticsProgram.getSourceFile(sourceFile.fileName) ?? sourceFile
+
+        return getSemanticDiagnostics(diagnosticsSourceFile, cancellationToken).filter((diagnostic) => {
             return !isGeneratedBackingAccessDiagnostic(tsInstance, diagnostic, options, backingNamesBySourceFile)
         })
     }
@@ -298,7 +332,7 @@ function createLazyMembers(
     const backingProperty = preserveTextRange(tsInstance, factory.createPropertyDeclaration(
         removeReadonlyModifier(tsInstance, backingModifiers),
         options.preserveLazyDecorator
-            ? preserveTextRange(tsInstance, factory.createIdentifier(backingName), zeroWidthRange(nameStart))
+            ? preserveNodeNameLocation(tsInstance, factory.createIdentifier(backingName), sourceFile, property.name)
             : preserveNodeNameLocation(tsInstance, factory.createIdentifier(backingName), sourceFile, property.name),
         undefined,
         backingType,
