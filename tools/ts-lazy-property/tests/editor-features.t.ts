@@ -72,14 +72,20 @@ it("tsserver definition resolves lazy property usages", async (t: Test) => {
     }
 })
 
-it("tsserver definition does not crash on generated backing property usages", async (t: Test) => {
+it("tsserver definition resolves generated backing property usages to the source declaration", async (t: Test) => {
     const { sourceFile, dispose } = await createEditorFixture()
 
     try {
-        const response = await request(sourceFile, "definition", backingUsageArgs(sourceFile))
+        const definitions = assertResponseBody<DefinitionInfo[]>(
+            t,
+            await request(sourceFile, "definition", backingUsageArgs(sourceFile))
+        )
 
-        t.true(response.success, response.message ?? "Definition request succeeds")
-        t.equal(response.command, "definition", "Response belongs to definition command")
+        t.true(definitions.some((definition) => {
+            return definition.file === sourceFile &&
+                sourceSlice(sourceText, definition) === "lazyProperty" &&
+                definition.start.line === 5
+        }), "Backing property usage resolves to the original property declaration")
     } finally {
         await dispose()
     }

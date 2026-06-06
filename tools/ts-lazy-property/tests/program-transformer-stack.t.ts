@@ -7,6 +7,9 @@ import transformProgram from "../src/index.js"
 type TypeScriptWithParents = typeof ts & {
     setParentRecursive<Node extends ts.Node>(node: Node, incremental: boolean): Node
 }
+type MutableNode = ts.Node & {
+    flags : ts.NodeFlags
+}
 
 const sourceFileName = "source.ts"
 const sourceText     = trimIndent(`
@@ -16,6 +19,11 @@ const sourceText     = trimIndent(`
         @lazy()
         lazyProperty: string = "ok"
     }
+
+    const instance = new SourceClass()
+
+    instance.$lazyProperty
+    instance.previousVirtualProperty
 `)
 
 it("composes with a previous virtual program transformer layer", async (t: Test) => {
@@ -63,8 +71,14 @@ it("composes with a previous virtual program transformer layer", async (t: Test)
         "PropertyDeclaration:previousVirtualProperty"
     ])
     t.false(
-        finalSource.text.includes("previousVirtualProperty"),
-        "Previous layer stays virtual and does not have to modify source text"
+        finalSource.text.includes("previousVirtualProperty: number"),
+        "Previous layer declaration stays virtual and does not have to modify source text"
+    )
+    t.expect(formatDiagnostics(finalProgram.getSemanticDiagnostics(finalSource))).toEqual([])
+    t.equal(
+        typeTextAt(finalProgram, finalSource, "$lazyProperty"),
+        "string | undefined",
+        "Checker sees this transformer's virtual backing property"
     )
 })
 
@@ -100,10 +114,22 @@ function addPreviousVirtualProperty(sourceFile: ts.SourceFile): ts.SourceFile {
     ])
 
     try {
-        return (ts as TypeScriptWithParents).setParentRecursive(transformed.transformed[0], false)
+        const sourceFile = (ts as TypeScriptWithParents).setParentRecursive(transformed.transformed[0], false)
+
+        clearSynthesizedFlags(sourceFile)
+
+        return sourceFile
     } finally {
         transformed.dispose()
     }
+}
+
+function clearSynthesizedFlags(node: ts.Node): void {
+    (node as MutableNode).flags &= ~ts.NodeFlags.Synthesized
+
+    ts.forEachChild(node, (child) => {
+        clearSynthesizedFlags(child)
+    })
 }
 
 function findClass(sourceFile: ts.SourceFile, className: string): ts.ClassDeclaration {
@@ -134,6 +160,48 @@ function memberNameText(member: ts.ClassElement): string {
     }
 
     return member.name.getText()
+}
+
+function typeTextAt(
+    program: ts.Program,
+    sourceFile: ts.SourceFile,
+    text: string
+): string {
+    const node = findPropertyAccessName(sourceFile, text)
+
+    if (node === undefined) {
+        throw new Error(`Cannot find property access: ${text}`)
+    }
+
+    const checker = program.getTypeChecker()
+    const symbol  = checker.getSymbolAtLocation(node)
+
+    if (symbol === undefined) {
+        throw new Error(`Cannot resolve property symbol: ${text}`)
+    }
+
+    return checker.typeToString(checker.getTypeOfSymbolAtLocation(symbol, node))
+}
+
+function findPropertyAccessName(
+    sourceFile: ts.SourceFile,
+    text: string
+): ts.Identifier | undefined {
+    return findFirst(sourceFile, (node): node is ts.Identifier => {
+        return ts.isIdentifier(node) && node.text === text && ts.isPropertyAccessExpression(node.parent)
+    })
+}
+
+function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string[] {
+    return diagnostics.map((diagnostic) => {
+        const position = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0)
+
+        return [
+            `TS${diagnostic.code}`,
+            position === undefined ? "?:?" : `${position.line + 1}:${position.character + 1}`,
+            ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+        ].join(" ")
+    })
 }
 
 function findFirst<Node extends ts.Node>(

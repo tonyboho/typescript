@@ -122,42 +122,6 @@ it("tsserver can rename a regular property usage", async (t: Test) => {
     }
 })
 
-it("tsserver rename request does not crash on a lazy property declaration", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : sourceText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = fixture.sourceFiles.get("source.ts")
-
-        if (sourceFile === undefined) {
-            throw new Error("Missing fixture source file.")
-        }
-
-        const response = await runTypeScriptServerRequest(
-            fixture.directory,
-            sourceFile,
-            sourceText,
-            "rename",
-            {
-                file : sourceFile,
-                ...positionToLineOffset(sourceText, sourceText.indexOf("lazyProperty") + 1)
-            }
-        )
-
-        t.true(response.success, response.message ?? "tsserver handles rename request without a debug failure")
-        t.equal(response.command, "rename", "Response belongs to the rename command")
-    } finally {
-        await fixture.dispose()
-    }
-})
-
 it("tsserver can rename a lazy property declaration", async (t: Test) => {
     const fixture = await createTypeScriptFixture({
         experimentalDecorators : false,
@@ -189,6 +153,7 @@ it("tsserver can rename a lazy property declaration", async (t: Test) => {
 
         const renamedText = assertRenameAllowed(t, response, sourceFile, sourceText, "lazyProperty", "renamedLazyProperty")
 
+        t.false(response.message?.includes("Debug Failure"), response.message ?? "Rename declaration has no debug failure")
         t.true(renamedText.includes("renamedLazyProperty: Map<number, string> = new Map()"), "Renames lazy property declaration")
         t.true(renamedText.includes("instance.renamedLazyProperty"), "Renames lazy property usage")
         t.false(renamedText.includes("lazyProperty: Map<number, string> = new Map()"), "Removes old lazy property declaration")

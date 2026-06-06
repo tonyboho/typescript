@@ -74,6 +74,7 @@ it("expands a named @lazy() import into backing property, getter, and setter", a
         "Backing property name maps to original property name text"
     )
     t.equal(backingMember.name.pos, backingMember.name.getStart(transformedFile), "Backing name pos is normalized to token start")
+    t.true(isOptionalTypeNode(backingMember.type), "Backing property type is the source type unioned with undefined")
 })
 
 it("supports aliased and namespace decorator imports", async (t: Test) => {
@@ -99,6 +100,27 @@ it("supports aliased and namespace decorator imports", async (t: Test) => {
         }
     `))).toEqual([
         "PropertyDeclaration:$lazyProperty",
+        "GetAccessor:lazyProperty",
+        "SetAccessor:lazyProperty"
+    ])
+})
+
+it("supports custom package, decorator, and backing-prefix options", async (t: Test) => {
+    const sourceFile = transformSourceFile(ts, createSourceFile(`
+        import { cached } from "custom-lazy-package"
+
+        class SourceClass {
+            @cached()
+            lazyProperty: string = "ok"
+        }
+    `), {
+        backingPrefix : "__",
+        decoratorName : "cached",
+        packageName   : "custom-lazy-package"
+    })
+
+    t.expect(memberSummary(findClass(sourceFile, "SourceClass"))).toEqual([
+        "PropertyDeclaration:__lazyProperty",
         "GetAccessor:lazyProperty",
         "SetAccessor:lazyProperty"
     ])
@@ -289,6 +311,15 @@ function memberNameText(member: ts.ClassElement): string {
     }
 
     return member.name.getText()
+}
+
+function isOptionalTypeNode(type: ts.TypeNode | undefined): boolean {
+    return type !== undefined &&
+        ts.isUnionTypeNode(type) &&
+        type.types.length === 2 &&
+        type.types.some((item) => {
+            return item.kind === ts.SyntaxKind.UndefinedKeyword
+        })
 }
 
 function hasStaticModifier(member: ts.ClassElement): boolean {
