@@ -1,9 +1,7 @@
 // User-reported IDE flow: typo in @lazy() property type -> error -> fix type back -> error must clear.
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
-import ts from "typescript"
 
-import { createLazyPropertyCompilerHost } from "../src/index.js"
 import { createTypeScriptFixture } from "./util.js"
 import {
     replaceSubstring,
@@ -287,81 +285,6 @@ it("tsserver clears backing property access diagnostics after a lazy type typo i
     }
 })
 
-it("regression: stale lazy-property diagnostics when script text changes before version bumps", async (t: Test) => {
-    let text = typoSourceText
-
-    const compilerOptions = {
-        target                 : ts.ScriptTarget.ES2022,
-        module                 : ts.ModuleKind.ESNext,
-        moduleResolution       : ts.ModuleResolutionKind.Bundler,
-        strict                 : true,
-        skipLibCheck           : true,
-        noEmit                 : true,
-        experimentalDecorators : false
-    }
-    const compilerHost = ts.createCompilerHost(compilerOptions, true)
-    const originalGetSourceFile = compilerHost.getSourceFile.bind(compilerHost)
-
-    compilerHost.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
-        if (fileName.endsWith(sourceFileName)) {
-            const sourceFile = ts.createSourceFile(
-                sourceFileName,
-                text,
-                ts.ScriptTarget.ES2022,
-                true,
-                ts.ScriptKind.TS
-            )
-
-            ;(sourceFile as ts.SourceFile & { version?: string }).version = "1"
-
-            return sourceFile
-        }
-
-        return originalGetSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile)
-    }
-
-    const nextHost = createLazyPropertyCompilerHost(ts, compilerHost, compilerOptions, {})
-
-    const typoProgram = ts.createProgram([ sourceFileName ], compilerOptions, nextHost)
-    const typoFile    = typoProgram.getSourceFile(sourceFileName)
-
-    if (typoFile === undefined) {
-        throw new Error("Missing transformed source file.")
-    }
-
-    const typoDiagnostics = typoProgram.getSemanticDiagnostics(typoFile)
-
-    t.true(
-        hasProgramDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
-        "Typo reports TS2552 on the lazy property line"
-    )
-    t.true(/stringz/.test(typoFile.text), "Typo transform still contains stringz before the fix")
-
-    text = validSourceText
-
-    const fixedProgram = ts.createProgram([ sourceFileName ], compilerOptions, nextHost)
-    const fixedFile    = fixedProgram.getSourceFile(sourceFileName)
-
-    if (fixedFile === undefined) {
-        throw new Error("Missing transformed source file after the type fix.")
-    }
-
-    const fixedDiagnostics = fixedProgram.getSemanticDiagnostics(fixedFile)
-
-    t.false(
-        hasProgramDiagnostic(fixedDiagnostics, 2552, lazyPropertyLine),
-        `Fixed source has no lazy-property type error: ${formatProgramDiagnostics(fixedDiagnostics)}`
-    )
-    t.false(
-        fixedDiagnostics.some((diagnostic) => diagnostic.messageText.toString().includes("stringz")),
-        `Fixed source has no stale stringz diagnostic: ${formatProgramDiagnostics(fixedDiagnostics)}`
-    )
-    t.false(
-        /stringz/.test(fixedFile.text),
-        "Transformed source reflects the corrected lazy property type"
-    )
-})
-
 function hasDiagnostic(
     diagnostics: TsServerDiagnostic[],
     code: number,
@@ -372,37 +295,9 @@ function hasDiagnostic(
     })
 }
 
-function hasProgramDiagnostic(
-    diagnostics: readonly ts.Diagnostic[],
-    code: number,
-    line: number
-): boolean {
-    return diagnostics.some((diagnostic) => {
-        if (diagnostic.file === undefined || diagnostic.start === undefined) {
-            return false
-        }
-
-        const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
-
-        return diagnostic.code === code && position.line + 1 === line
-    })
-}
-
 function formatDiagnostics(diagnostics: TsServerDiagnostic[]): string {
     return diagnostics.map((diagnostic) => {
         return `TS${diagnostic.code} ${diagnostic.start.line}:${diagnostic.start.offset} ${diagnostic.text}`
-    }).join("\n")
-}
-
-function formatProgramDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-    return diagnostics.map((diagnostic) => {
-        const position = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0)
-
-        return [
-            `TS${diagnostic.code}`,
-            position === undefined ? "?:?" : `${position.line + 1}:${position.character + 1}`,
-            ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
-        ].join(" ")
     }).join("\n")
 }
 

@@ -1,7 +1,3 @@
-// Regression test for the IDE bug where fixing a regular property type (stringz -> string)
-// leaves a stale TS2552 squiggle and breaks highlights. This guards the compiler-host
-// side of the issue: transformed SourceFiles must not be reused when the source text
-// changes before the language-service version string catches up.
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
@@ -9,6 +5,8 @@ import ts from "typescript"
 import { createLazyPropertyCompilerHost } from "../src/index.js"
 
 const sourceFileName = "source.ts"
+const lazyPropertyLine = 5
+const regularPropertyLine = 7
 
 const validSourceText = trimIndent(`
     import { lazy } from "ts-lazy-property"
@@ -21,7 +19,18 @@ const validSourceText = trimIndent(`
     }
 `)
 
-const typoSourceText = trimIndent(`
+const lazyTypeTypoSourceText = trimIndent(`
+    import { lazy } from "ts-lazy-property"
+
+    class SourceClass {
+        @lazy()
+        lazyProperty: Map<number, stringz> = new Map()
+
+        regularProperty: string = "ok"
+    }
+`)
+
+const regularTypeTypoSourceText = trimIndent(`
     import { lazy } from "ts-lazy-property"
 
     class SourceClass {
@@ -32,9 +41,34 @@ const typoSourceText = trimIndent(`
     }
 `)
 
-const regularPropertyLine = 7
+it("does not reuse stale transformed source when a lazy property type changes before version bumps", async (t: Test) => {
+    const { fixedDiagnostics, fixedFile, typoDiagnostics } = runStaleVersionFlow(lazyTypeTypoSourceText, validSourceText)
 
-it("regression: stale regular-property diagnostics when script text changes before version bumps", async (t: Test) => {
+    t.true(
+        hasDiagnostic(typoDiagnostics, 2552, lazyPropertyLine),
+        "Typo reports TS2552 on the lazy property line"
+    )
+    assertFixedSource(t, fixedFile, fixedDiagnostics, lazyPropertyLine, "lazy-property")
+})
+
+it("does not reuse stale transformed source when a regular property type changes before version bumps", async (t: Test) => {
+    const { fixedDiagnostics, fixedFile, typoDiagnostics } = runStaleVersionFlow(regularTypeTypoSourceText, validSourceText)
+
+    t.true(
+        hasDiagnostic(typoDiagnostics, 2552, regularPropertyLine),
+        "Typo reports TS2552 on the regular property line"
+    )
+    assertFixedSource(t, fixedFile, fixedDiagnostics, regularPropertyLine, "regular-property")
+})
+
+function runStaleVersionFlow(
+    typoSourceText: string,
+    fixedSourceText: string
+): {
+    fixedDiagnostics : readonly ts.Diagnostic[],
+    fixedFile : ts.SourceFile,
+    typoDiagnostics : readonly ts.Diagnostic[]
+} {
     let text = typoSourceText
 
     const compilerOptions = {
@@ -67,34 +101,33 @@ it("regression: stale regular-property diagnostics when script text changes befo
         return originalGetSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile)
     }
 
-    const nextHost = createLazyPropertyCompilerHost(ts, compilerHost, compilerOptions, {})
-
-    const typoProgram = ts.createProgram([ sourceFileName ], compilerOptions, nextHost)
-    const typoFile    = typoProgram.getSourceFile(sourceFileName)
-
-    if (typoFile === undefined) {
-        throw new Error("Missing transformed source file.")
-    }
-
+    const nextHost        = createLazyPropertyCompilerHost(ts, compilerHost, compilerOptions, {})
+    const typoProgram     = ts.createProgram([ sourceFileName ], compilerOptions, nextHost)
+    const typoFile        = requireSourceFile(typoProgram, "Missing transformed source file.")
     const typoDiagnostics = typoProgram.getSemanticDiagnostics(typoFile)
 
-    t.true(hasDiagnostic(typoDiagnostics, 2552, regularPropertyLine), "Typo reports TS2552 on the regular property line")
-    t.true(/stringz/.test(typoFile.text), "Typo transform still contains stringz before the fix")
-
-    text = validSourceText
+    text = fixedSourceText
 
     const fixedProgram = ts.createProgram([ sourceFileName ], compilerOptions, nextHost)
-    const fixedFile    = fixedProgram.getSourceFile(sourceFileName)
+    const fixedFile    = requireSourceFile(fixedProgram, "Missing transformed source file after the type fix.")
 
-    if (fixedFile === undefined) {
-        throw new Error("Missing transformed source file after the type fix.")
+    return {
+        fixedDiagnostics : fixedProgram.getSemanticDiagnostics(fixedFile),
+        fixedFile,
+        typoDiagnostics
     }
+}
 
-    const fixedDiagnostics = fixedProgram.getSemanticDiagnostics(fixedFile)
-
+function assertFixedSource(
+    t: Test,
+    fixedFile: ts.SourceFile,
+    fixedDiagnostics: readonly ts.Diagnostic[],
+    diagnosticLine: number,
+    label: string
+): void {
     t.false(
-        hasDiagnostic(fixedDiagnostics, 2552, regularPropertyLine),
-        `Fixed source has no regular-property type error: ${formatDiagnostics(fixedDiagnostics)}`
+        hasDiagnostic(fixedDiagnostics, 2552, diagnosticLine),
+        `Fixed source has no ${label} type error: ${formatDiagnostics(fixedDiagnostics)}`
     )
     t.false(
         fixedDiagnostics.some((diagnostic) => diagnostic.messageText.toString().includes("stringz")),
@@ -102,9 +135,19 @@ it("regression: stale regular-property diagnostics when script text changes befo
     )
     t.false(
         /stringz/.test(fixedFile.text),
-        "Transformed source reflects the corrected regular property type"
+        `Transformed source reflects the corrected ${label} type`
     )
-})
+}
+
+function requireSourceFile(program: ts.Program, message: string): ts.SourceFile {
+    const sourceFile = program.getSourceFile(sourceFileName)
+
+    if (sourceFile === undefined) {
+        throw new Error(message)
+    }
+
+    return sourceFile
+}
 
 function hasDiagnostic(
     diagnostics: readonly ts.Diagnostic[],

@@ -90,7 +90,7 @@ This transformer is written to be stackable:
 - If AST shape is identical, normal text reparse is used; this avoids TypeScript scanner
   failures seen when cloning ordinary compiler SourceFiles unnecessarily.
 
-Regression test: `tests/program-transformer-stack.t.ts`.
+Regression test: `tests/program-transformer-composition.t.ts`.
 
 When adding another similar transformer, follow the same layering rule:
 
@@ -110,11 +110,17 @@ pnpm --dir tools/ts-lazy-property test
 pnpm --dir tools/ts-lazy-property run fixture
 ```
 
-Important tests:
+Important test groups:
 
-- `program-transformer-stack.t.ts`: previous virtual layer survives.
-- `source-positions.t.ts`: stable source positions outside generated lazy members.
-- `editor-features.t.ts`: quickinfo/definition/references/highlights after live edits.
-- `lazy-property-typecheck.t.ts`: typo -> fix flows do not leave stale diagnostics.
+- `source-transform.t.ts`: direct `transformSourceFile` AST expansion rules.
+- `source-position-preservation.t.ts`: stable source positions outside generated lazy members.
+- `diagnostic-locations.t.ts`: diagnostics point at source declarations, not decorators.
+- `program-transformer-composition.t.ts`: previous virtual ProgramTransformer layer survives.
+- `compiler-host-stale-source.t.ts`: stale-version compiler host regressions.
+- `tsserver-source-file-view.t.ts`: tsserver sees original text plus transformed AST.
+- `tsserver-editor-features.t.ts`: quickinfo/definition/references/highlights after live edits.
+- `tsserver-diagnostic-recovery.t.ts`: typo -> fix IDE flows do not leave stale diagnostics.
+- `tsserver-rename.t.ts`: rename behavior for regular and lazy properties.
+- `fixture-build-and-runtime.t.ts`: strict fixture projects build and run under decorator modes.
 
 If you change AST construction, assume editor features can regress even when `tsc` passes.
