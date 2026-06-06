@@ -5,6 +5,9 @@ type TypeScript = ProgramTransformerExtras["ts"]
 type TypeScriptWithParents = TypeScript & {
     setParentRecursive<Node extends ts.Node>(node: Node, incremental: boolean): Node
 }
+type NodeFactoryWithCloneNode = ts.NodeFactory & {
+    cloneNode<Node extends ts.Node>(node: Node): Node
+}
 type MutableNode = ts.Node & {
     flags : ts.NodeFlags
 }
@@ -53,7 +56,8 @@ export function createLazyPropertyCompilerHost(
     tsInstance: TypeScript,
     compilerHost: ts.CompilerHost,
     compilerOptions: ts.CompilerOptions,
-    config: LazyPropertyTransformerConfig
+    config: LazyPropertyTransformerConfig,
+    baseProgram?: ts.Program
 ): ts.CompilerHost {
     const options = resolveTransformOptions(config)
     const sourceCache = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
@@ -63,12 +67,19 @@ export function createLazyPropertyCompilerHost(
         ...compilerHost,
 
         getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) {
-            const sourceFile = compilerHost.getSourceFile(
+            const hostSourceFile = compilerHost.getSourceFile(
                 fileName,
                 languageVersionOrOptions,
                 onError,
                 usePrintedSourceFile ? shouldCreateNewSourceFile : true
             )
+            const layeredSourceFile = baseProgram?.getSourceFile(fileName)
+            const useLayeredSourceFile = layeredSourceFile !== undefined &&
+                (
+                    hostSourceFile === undefined ||
+                    layeredSourceFile !== hostSourceFile && hasDifferentAstShape(tsInstance, layeredSourceFile, hostSourceFile)
+                )
+            const sourceFile = useLayeredSourceFile ? layeredSourceFile : hostSourceFile
 
             if (sourceFile === undefined || shouldSkipSourceFile(sourceFile)) {
                 return sourceFile
@@ -103,11 +114,11 @@ export function createLazyPropertyCompilerHost(
                 return printedSourceFile
             }
 
-            return transformSourceFile(tsInstance, cloneSourceFileForTransform(
-                tsInstance,
-                sourceFile,
-                languageVersionOrOptions
-            ), {
+            const transformSourceFileInput = useLayeredSourceFile
+                ? cloneLayeredSourceFileForTransform(tsInstance, sourceFile)
+                : cloneSourceFileForTransform(tsInstance, sourceFile, languageVersionOrOptions)
+
+            return transformSourceFile(tsInstance, transformSourceFileInput, {
                 ...options,
                 preserveLazyDecorator : true
             })
@@ -123,7 +134,7 @@ export default function transformProgram(
 ): ts.Program {
     const compilerOptions = program.getCompilerOptions()
     const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
-    const nextHost        = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
+    const nextHost        = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config, program)
 
     return tsInstance.createProgram(
         program.getRootFileNames(),
@@ -239,6 +250,64 @@ function cloneSourceFileForTransform(
     ;(cloned as SourceFileWithVersion).version = (sourceFile as SourceFileWithVersion).version
 
     return cloned
+}
+
+function hasDifferentAstShape(
+    tsInstance: TypeScript,
+    left: ts.SourceFile,
+    right: ts.SourceFile
+): boolean {
+    const visit = (leftNode: ts.Node, rightNode: ts.Node): boolean => {
+        if (leftNode.kind !== rightNode.kind || leftNode.pos !== rightNode.pos || leftNode.end !== rightNode.end) {
+            return true
+        }
+
+        const leftChildren: ts.Node[] = []
+        const rightChildren: ts.Node[] = []
+
+        tsInstance.forEachChild(leftNode, (child) => {
+            leftChildren.push(child)
+        })
+        tsInstance.forEachChild(rightNode, (child) => {
+            rightChildren.push(child)
+        })
+
+        if (leftChildren.length !== rightChildren.length) {
+            return true
+        }
+
+        return leftChildren.some((leftChild, index) => {
+            return visit(leftChild, rightChildren[index])
+        })
+    }
+
+    return visit(left, right)
+}
+
+function cloneLayeredSourceFileForTransform(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile
+): ts.SourceFile {
+    const cloneNode = (tsInstance.factory as NodeFactoryWithCloneNode).cloneNode.bind(tsInstance.factory)
+    const transformed = tsInstance.transform(sourceFile, [
+        (context) => {
+            const visit: ts.Visitor = (node) => {
+                return cloneNode(tsInstance.visitEachChild(node, visit, context))
+            }
+
+            return (nextSourceFile) => tsInstance.visitNode(nextSourceFile, visit) as ts.SourceFile
+        }
+    ])
+
+    try {
+        const cloned = transformed.transformed[0]
+
+        ;(cloned as SourceFileWithVersion).version = (sourceFile as SourceFileWithVersion).version
+
+        return (tsInstance as TypeScriptWithParents).setParentRecursive(cloned, false)
+    } finally {
+        transformed.dispose()
+    }
 }
 
 function createLazyMembers(
