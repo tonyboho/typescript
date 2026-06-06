@@ -40,53 +40,44 @@ export function lazy(): (..._args: unknown[]) => void {
     return () => {}
 }
 
-export default function transformProgram(
-    program: ts.Program,
-    host: ts.CompilerHost | undefined,
-    config: LazyPropertyTransformerConfig,
-    { ts: tsInstance }: ProgramTransformerExtras
-): ts.Program {
+export function createLazyPropertyCompilerHost(
+    tsInstance: TypeScript,
+    compilerHost: ts.CompilerHost,
+    compilerOptions: ts.CompilerOptions,
+    config: LazyPropertyTransformerConfig
+): ts.CompilerHost {
     const options = {
-        packageName   : config.packageName ?? "ts-lazy-property",
-        decoratorName : config.decoratorName ?? "lazy",
-        backingPrefix : config.backingPrefix ?? "$",
+        packageName           : config.packageName ?? "ts-lazy-property",
+        decoratorName         : config.decoratorName ?? "lazy",
+        backingPrefix         : config.backingPrefix ?? "$",
         preserveLazyDecorator : false
     }
+    const sourceCache = new Map<string, ts.SourceFile>()
 
-    const compilerOptions = program.getCompilerOptions()
-    const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
-    const sourceCache     = new Map<string, ts.SourceFile>()
-
-    const nextHost: ts.CompilerHost = {
+    return {
         ...compilerHost,
 
         getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) {
-            const cacheKey = `${fileName}:${String(shouldCreateNewSourceFile)}`
-            const cached   = sourceCache.get(cacheKey)
-
-            if (cached !== undefined) {
-                return cached
-            }
-
-            const sourceFile = shouldCreateNewSourceFile
-                ? compilerHost.getSourceFile(
-                    fileName,
-                    languageVersionOrOptions,
-                    onError,
-                    shouldCreateNewSourceFile
-                )
-                : program.getSourceFile(fileName) ?? compilerHost.getSourceFile(
-                    fileName,
-                    languageVersionOrOptions,
-                    onError,
-                    shouldCreateNewSourceFile
-                )
+            const usePrintedSourceFile = shouldCreatePrintedSourceFileForEmit(compilerOptions)
+            const sourceFile           = compilerHost.getSourceFile(
+                fileName,
+                languageVersionOrOptions,
+                onError,
+                usePrintedSourceFile ? shouldCreateNewSourceFile : true
+            )
 
             if (sourceFile === undefined || shouldSkipSourceFile(sourceFile)) {
                 return sourceFile
             }
 
-            if (shouldCreatePrintedSourceFileForEmit(compilerOptions)) {
+            if (usePrintedSourceFile) {
+                const cacheKey = sourceFileCacheKey(fileName, shouldCreateNewSourceFile, sourceFile)
+                const cached   = sourceCache.get(cacheKey)
+
+                if (cached !== undefined) {
+                    return cached
+                }
+
                 const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options)
 
                 if (transformedSourceFile === sourceFile) {
@@ -108,27 +99,36 @@ export default function transformProgram(
                 return printedSourceFile
             }
 
-            const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, {
+            return transformSourceFile(tsInstance, sourceFile, {
                 ...options,
                 preserveLazyDecorator : true
             })
-
-            if (transformedSourceFile === sourceFile) {
-                sourceCache.set(cacheKey, sourceFile)
-                return sourceFile
-            }
-
-            sourceCache.set(cacheKey, transformedSourceFile)
-
-            return transformedSourceFile
         }
     }
+}
 
-    return tsInstance.createProgram(
+export default function transformProgram(
+    program: ts.Program,
+    host: ts.CompilerHost | undefined,
+    config: LazyPropertyTransformerConfig,
+    { ts: tsInstance }: ProgramTransformerExtras
+): ts.Program {
+    const compilerOptions = program.getCompilerOptions()
+    const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
+    const nextHost        = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
+    const nextProgram     = tsInstance.createProgram(
         program.getRootFileNames(),
         compilerOptions,
-        nextHost
+        nextHost,
+        program
     )
+
+    return filterGeneratedBackingDiagnostics(tsInstance, nextProgram, {
+        packageName           : config.packageName ?? "ts-lazy-property",
+        decoratorName         : config.decoratorName ?? "lazy",
+        backingPrefix         : config.backingPrefix ?? "$",
+        preserveLazyDecorator : false
+    })
 }
 
 export function transformSourceFile(
@@ -213,6 +213,25 @@ export function printSourceFile(
     sourceFile: ts.SourceFile
 ): string {
     return tsInstance.createPrinter().printFile(sourceFile)
+}
+
+function filterGeneratedBackingDiagnostics(
+    tsInstance: TypeScript,
+    program: ts.Program,
+    options: TransformOptions
+): ts.Program {
+    const getSemanticDiagnostics = program.getSemanticDiagnostics.bind(program)
+    const backingNamesBySourceFile = new WeakMap<ts.SourceFile, Set<string>>()
+
+    ;(program as ts.Program & {
+        getSemanticDiagnostics : ts.Program["getSemanticDiagnostics"]
+    }).getSemanticDiagnostics = (sourceFile, cancellationToken) => {
+        return getSemanticDiagnostics(sourceFile, cancellationToken).filter((diagnostic) => {
+            return !isGeneratedBackingAccessDiagnostic(tsInstance, diagnostic, options, backingNamesBySourceFile)
+        })
+    }
+
+    return program
 }
 
 function createLazyMembers(
@@ -339,6 +358,65 @@ function createLazyMembers(
     }
 
     return result
+}
+
+function isGeneratedBackingAccessDiagnostic(
+    tsInstance: TypeScript,
+    diagnostic: ts.Diagnostic,
+    options: TransformOptions,
+    backingNamesBySourceFile: WeakMap<ts.SourceFile, Set<string>>
+): boolean {
+    if (diagnostic.code !== 2551 || diagnostic.file === undefined || diagnostic.start === undefined) {
+        return false
+    }
+
+    const backingName = diagnosticText(diagnostic)
+
+    if (!backingName.startsWith(options.backingPrefix)) {
+        return false
+    }
+
+    let backingNames = backingNamesBySourceFile.get(diagnostic.file)
+
+    if (backingNames === undefined) {
+        backingNames = collectExpectedBackingPropertyNames(tsInstance, diagnostic.file, options)
+        backingNamesBySourceFile.set(diagnostic.file, backingNames)
+    }
+
+    return backingNames.has(backingName)
+}
+
+function diagnosticText(diagnostic: ts.Diagnostic): string {
+    const text = diagnostic.file?.text ?? ""
+    const start = diagnostic.start ?? 0
+    const match = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*/u.exec(text.slice(start))
+
+    return match?.[0] ?? text.slice(start, start + (diagnostic.length ?? 0))
+}
+
+function collectExpectedBackingPropertyNames(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    options: TransformOptions
+): Set<string> {
+    const backingNames = new Set<string>()
+    const lazyDecoratorImports = collectLazyDecoratorImports(tsInstance, sourceFile, options)
+
+    const visit = (node: ts.Node): void => {
+        if (tsInstance.isPropertyDeclaration(node) && tsInstance.isIdentifier(node.name)) {
+            if (node.name.text.startsWith(options.backingPrefix)) {
+                backingNames.add(node.name.text)
+            } else if (isLazyProperty(tsInstance, node, lazyDecoratorImports, options)) {
+                backingNames.add(`${options.backingPrefix}${node.name.text}`)
+            }
+        }
+
+        tsInstance.forEachChild(node, visit)
+    }
+
+    visit(sourceFile)
+
+    return backingNames
 }
 
 function createOptionalLazyValueType(tsInstance: TypeScript, type: ts.TypeNode): ts.TypeNode {
@@ -581,6 +659,22 @@ function collectLazyDecoratorImports(
     }
 
     return imports
+}
+
+type SourceFileWithVersion = ts.SourceFile & {
+    version? : string
+}
+
+function sourceFileCacheKey(
+    fileName: string,
+    shouldCreateNewSourceFile: boolean | undefined,
+    sourceFile: ts.SourceFile
+): string {
+    const version = (sourceFile as SourceFileWithVersion).version ?? ""
+
+    // Version alone is not enough: the language service can supply new text before
+    // the script version is bumped, which would otherwise return a stale transform.
+    return `${fileName}:${String(shouldCreateNewSourceFile)}:${version}:${sourceFile.text}`
 }
 
 function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
