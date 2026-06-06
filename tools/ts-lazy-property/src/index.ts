@@ -333,6 +333,7 @@ function createLazyMembers(
     const propertyName  = property.name.text
     const backingName   = `${options.backingPrefix}${propertyName}`
     const memberRange   = lazyMemberRange(sourceFile, property)
+    const getterMemberRange = memberRange
     const nameStart     = property.name.getStart(sourceFile)
     const nameEnd       = property.name.getEnd()
     const typeEnd       = property.type.end
@@ -343,16 +344,22 @@ function createLazyMembers(
     const backingMemberRange = options.preserveLazyDecorator
         ? {
             pos : property.pos,
-            end : nameStart
+            end : property.name.pos
         }
-        : memberRange
-    const setterMemberRange = options.preserveLazyDecorator
-        ? zeroWidthRange(property.end)
         : memberRange
     const backingModifiers = options.preserveLazyDecorator
         ? property.modifiers
         : removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
-    const getterModifiers = removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
+    const createAccessorModifiers = () => options.preserveLazyDecorator
+        ? moveModifierTextRanges(
+            tsInstance,
+            removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options),
+            zeroWidthRange(nameStart)
+        )
+        : removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
+    const setterMemberRange = options.preserveLazyDecorator
+        ? zeroWidthRange(property.end)
+        : memberRange
     const generatedMemberRange = options.preserveLazyDecorator
         ? memberRange
         : property
@@ -374,7 +381,7 @@ function createLazyMembers(
     ), backingMemberRange)
 
     const getter = preserveTextRange(tsInstance, factory.createGetAccessorDeclaration(
-        removeReadonlyModifier(tsInstance, getterModifiers),
+        removeReadonlyModifier(tsInstance, createAccessorModifiers()),
         preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
         getterParameters,
         property.type,
@@ -394,7 +401,7 @@ function createLazyMembers(
                 )
             ), generatedMemberRange)
         ]), bodyRange), true), bodyRange)
-    ), memberRange)
+    ), getterMemberRange)
 
     const result: ts.ClassElement[] = [
         backingProperty,
@@ -411,7 +418,7 @@ function createLazyMembers(
         ), zeroWidthRange(nameEnd))
         const setterParameters = preserveTextRange(tsInstance, factory.createNodeArray([ valueParameter ]), zeroWidthRange(nameEnd))
         const setter = preserveTextRange(tsInstance, factory.createSetAccessorDeclaration(
-            getterModifiers,
+            createAccessorModifiers(),
             preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
             setterParameters,
             preserveTextRange(tsInstance, factory.createBlock(preserveTextRange(tsInstance, factory.createNodeArray([
@@ -475,6 +482,26 @@ function lazyMemberRange(
         pos : property.name.getStart(sourceFile),
         end : property.end
     }
+}
+
+function moveModifierTextRanges(
+    tsInstance: TypeScript,
+    modifiers: ts.NodeArray<ts.ModifierLike> | undefined,
+    range: ts.TextRange
+): ts.NodeArray<ts.ModifierLike> | undefined {
+    if (modifiers === undefined) {
+        return undefined
+    }
+
+    return preserveTextRange(tsInstance, tsInstance.factory.createNodeArray(modifiers.map((modifier) => {
+        if (tsInstance.isDecorator(modifier)) {
+            return modifier
+        }
+
+        return preserveTextRange(tsInstance, tsInstance.factory.createModifier(
+            modifier.kind as ts.ModifierSyntaxKind
+        ), range)
+    })), range)
 }
 
 function zeroWidthRange(pos: number): ts.TextRange {

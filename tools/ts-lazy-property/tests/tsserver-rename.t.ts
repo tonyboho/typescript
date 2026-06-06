@@ -44,6 +44,54 @@ const sourceText = trimIndent(`
     console.log(instance.regularProperty)
 `)
 
+const publicLazySourceText = trimIndent(`
+    import { lazy } from "ts-lazy-property"
+
+    class SourceClass {
+        @lazy()
+        public publicProperty: string = "public"
+    }
+
+    const instance = new SourceClass()
+
+    console.log(instance.publicProperty)
+    console.log(instance.$publicProperty)
+`)
+
+const accessModifierLazySourceText = trimIndent(`
+    import { lazy } from "ts-lazy-property"
+
+    class SourceClass {
+        @lazy()
+        public publicProperty: string = "public"
+
+        @lazy()
+        protected protectedProperty: string = "protected"
+
+        @lazy()
+        private privateProperty: string = "private"
+
+        readProtected(): string {
+            return this.protectedProperty
+        }
+
+        readPrivate(): string {
+            return this.privateProperty
+        }
+    }
+
+    class ChildSource extends SourceClass {
+        readInherited(): string {
+            return this.protectedProperty
+        }
+    }
+
+    const instance = new SourceClass()
+
+    console.log(instance.publicProperty)
+    console.log(instance.$publicProperty)
+`)
+
 it("tsserver can rename a regular property declaration", async (t: Test) => {
     const fixture = await createTypeScriptFixture({
         experimentalDecorators : false,
@@ -203,6 +251,242 @@ it("tsserver can rename a lazy property usage", async (t: Test) => {
     }
 })
 
+it("tsserver can rename a public lazy property declaration", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : publicLazySourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            publicLazySourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(publicLazySourceText, publicLazySourceText.indexOf("publicProperty") + 1)
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, publicLazySourceText, "publicProperty", "renamedPublicProperty")
+
+        t.false(response.message?.includes("Debug Failure"), response.message ?? "Rename declaration has no debug failure")
+        t.true(renamedText.includes('public renamedPublicProperty: string = "public"'), "Renames public lazy property declaration")
+        t.true(renamedText.includes("instance.renamedPublicProperty"), "Renames public lazy property usage")
+        t.true(renamedText.includes("instance.$publicProperty"), "Leaves public backing property usage unchanged")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver can rename a public lazy property usage", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : publicLazySourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            publicLazySourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(publicLazySourceText, propertyAccessPosition(publicLazySourceText, "publicProperty"))
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, publicLazySourceText, "publicProperty", "renamedPublicProperty")
+
+        t.false(response.message?.includes("Debug Failure"), response.message ?? "Rename usage has no debug failure")
+        t.true(renamedText.includes('public renamedPublicProperty: string = "public"'), "Renames public lazy property declaration")
+        t.true(renamedText.includes("instance.renamedPublicProperty"), "Renames public lazy property usage")
+        t.true(renamedText.includes("instance.$publicProperty"), "Leaves public backing property usage unchanged")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver can rename a protected lazy property declaration", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : accessModifierLazySourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            accessModifierLazySourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(accessModifierLazySourceText, accessModifierLazySourceText.indexOf("protectedProperty") + 1)
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, accessModifierLazySourceText, "protectedProperty", "renamedProtectedProperty")
+
+        t.false(response.message?.includes("Debug Failure"), response.message ?? "Rename declaration has no debug failure")
+        t.true(renamedText.includes('protected renamedProtectedProperty: string = "protected"'), "Renames protected lazy property declaration")
+        t.true(renamedText.includes("this.renamedProtectedProperty"), "Renames protected lazy property usages")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver can rename a protected lazy property usage", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : accessModifierLazySourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            accessModifierLazySourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(accessModifierLazySourceText, propertyAccessPosition(accessModifierLazySourceText, "protectedProperty", "this."))
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, accessModifierLazySourceText, "protectedProperty", "renamedProtectedProperty")
+
+        t.false(response.message?.includes("Debug Failure"), response.message ?? "Rename usage has no debug failure")
+        t.true(renamedText.includes('protected renamedProtectedProperty: string = "protected"'), "Renames protected lazy property declaration")
+        t.true(renamedText.includes("this.renamedProtectedProperty"), "Renames protected lazy property usages")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver can rename a private lazy property declaration", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : accessModifierLazySourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            accessModifierLazySourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(accessModifierLazySourceText, accessModifierLazySourceText.indexOf("privateProperty") + 1)
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, accessModifierLazySourceText, "privateProperty", "renamedPrivateProperty")
+
+        t.false(response.message?.includes("Debug Failure"), response.message ?? "Rename declaration has no debug failure")
+        t.true(renamedText.includes('private renamedPrivateProperty: string = "private"'), "Renames private lazy property declaration")
+        t.true(renamedText.includes("this.renamedPrivateProperty"), "Renames private lazy property usage")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver can rename a private lazy property usage", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : accessModifierLazySourceText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = fixture.sourceFiles.get("source.ts")
+
+        if (sourceFile === undefined) {
+            throw new Error("Missing fixture source file.")
+        }
+
+        const response = await runTypeScriptServerRequest(
+            fixture.directory,
+            sourceFile,
+            accessModifierLazySourceText,
+            "rename",
+            {
+                file : sourceFile,
+                ...positionToLineOffset(accessModifierLazySourceText, propertyAccessPosition(accessModifierLazySourceText, "privateProperty", "this."))
+            }
+        )
+
+        const renamedText = assertRenameAllowed(t, response, sourceFile, accessModifierLazySourceText, "privateProperty", "renamedPrivateProperty")
+
+        t.false(response.message?.includes("Debug Failure"), response.message ?? "Rename usage has no debug failure")
+        t.true(renamedText.includes('private renamedPrivateProperty: string = "private"'), "Renames private lazy property declaration")
+        t.true(renamedText.includes("this.renamedPrivateProperty"), "Renames private lazy property usage")
+    } finally {
+        await fixture.dispose()
+    }
+})
+
 function assertRenameAllowed(
     t: Test,
     response: TsServerResponse,
@@ -257,8 +541,8 @@ function positionToIndex(source: string, position: TextPosition): number {
     return beforeLine + position.offset - 1
 }
 
-function propertyAccessPosition(source: string, propertyName: string): number {
-    const accessText = `instance.${propertyName}`
+function propertyAccessPosition(source: string, propertyName: string, receiver = "instance."): number {
+    const accessText = `${receiver}${propertyName}`
 
-    return source.indexOf(accessText) + "instance.".length + 1
+    return source.indexOf(accessText) + receiver.length + 1
 }
