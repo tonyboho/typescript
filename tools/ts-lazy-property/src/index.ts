@@ -40,18 +40,22 @@ export function lazy(): (..._args: unknown[]) => void {
     return () => {}
 }
 
+function resolveTransformOptions(config: LazyPropertyTransformerConfig): TransformOptions {
+    return {
+        packageName           : config.packageName ?? defaultTransformOptions.packageName,
+        decoratorName         : config.decoratorName ?? defaultTransformOptions.decoratorName,
+        backingPrefix         : config.backingPrefix ?? defaultTransformOptions.backingPrefix,
+        preserveLazyDecorator : false
+    }
+}
+
 export function createLazyPropertyCompilerHost(
     tsInstance: TypeScript,
     compilerHost: ts.CompilerHost,
     compilerOptions: ts.CompilerOptions,
     config: LazyPropertyTransformerConfig
 ): ts.CompilerHost {
-    const options = {
-        packageName           : config.packageName ?? "ts-lazy-property",
-        decoratorName         : config.decoratorName ?? "lazy",
-        backingPrefix         : config.backingPrefix ?? "$",
-        preserveLazyDecorator : false
-    }
+    const options = resolveTransformOptions(config)
     const sourceCache = new Map<string, ts.SourceFile>()
 
     return {
@@ -119,8 +123,12 @@ export default function transformProgram(
 ): ts.Program {
     const compilerOptions = program.getCompilerOptions()
     const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
+    const options         = resolveTransformOptions(config)
     const nextHost        = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
     const diagnosticsHost = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
+
+    // Editor features need a fresh transformed program; diagnostics need oldProgram to
+    // avoid stale geterr results after incremental edits.
     const nextProgram = tsInstance.createProgram(
         program.getRootFileNames(),
         compilerOptions,
@@ -134,12 +142,7 @@ export default function transformProgram(
         program
     )
 
-    return filterGeneratedBackingDiagnostics(tsInstance, nextProgram, diagnosticsProgram, {
-        packageName           : config.packageName ?? "ts-lazy-property",
-        decoratorName         : config.decoratorName ?? "lazy",
-        backingPrefix         : config.backingPrefix ?? "$",
-        preserveLazyDecorator : false
-    })
+    return filterGeneratedBackingDiagnostics(tsInstance, nextProgram, diagnosticsProgram, options)
 }
 
 export function transformSourceFile(
@@ -231,6 +234,8 @@ function cloneSourceFileForTransform(
     sourceFile: ts.SourceFile,
     languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions
 ): ts.SourceFile {
+    // Preserve-mode programs must not share language-service SourceFile nodes.
+    // TypeScript stores checker/navigation state on AST nodes.
     const cloned = tsInstance.createSourceFile(
         sourceFile.fileName,
         sourceFile.text,
@@ -251,7 +256,7 @@ function filterGeneratedBackingDiagnostics(
     options: TransformOptions
 ): ts.Program {
     const getSemanticDiagnostics = diagnosticsProgram.getSemanticDiagnostics.bind(diagnosticsProgram)
-    const backingNamesBySourceFile = new WeakMap<ts.SourceFile, Set<string>>()
+    const backingNamesBySourceFile = new WeakMap<ts.SourceFile, Map<string, string>>()
 
     ;(program as ts.Program & {
         getSemanticDiagnostics : ts.Program["getSemanticDiagnostics"]
@@ -331,9 +336,7 @@ function createLazyMembers(
 
     const backingProperty = preserveTextRange(tsInstance, factory.createPropertyDeclaration(
         removeReadonlyModifier(tsInstance, backingModifiers),
-        options.preserveLazyDecorator
-            ? preserveNodeNameLocation(tsInstance, factory.createIdentifier(backingName), sourceFile, property.name)
-            : preserveNodeNameLocation(tsInstance, factory.createIdentifier(backingName), sourceFile, property.name),
+        preserveNodeNameLocation(tsInstance, factory.createIdentifier(backingName), sourceFile, property.name),
         undefined,
         backingType,
         options.preserveLazyDecorator
@@ -398,13 +401,16 @@ function isGeneratedBackingAccessDiagnostic(
     tsInstance: TypeScript,
     diagnostic: ts.Diagnostic,
     options: TransformOptions,
-    backingNamesBySourceFile: WeakMap<ts.SourceFile, Set<string>>
+    backingNamesBySourceFile: WeakMap<ts.SourceFile, Map<string, string>>
 ): boolean {
     if (diagnostic.code !== 2551 || diagnostic.file === undefined || diagnostic.start === undefined) {
         return false
     }
 
-    const backingName = diagnosticText(diagnostic)
+    const message = tsFlattenDiagnosticMessageText(diagnostic.messageText)
+    const propertyMatch = /Property '([^']+)' does not exist/.exec(message)
+    const suggestionMatch = /Did you mean '([^']+)'/.exec(message)
+    const backingName = propertyMatch?.[1] ?? diagnosticText(diagnostic)
 
     if (!backingName.startsWith(options.backingPrefix)) {
         return false
@@ -417,7 +423,9 @@ function isGeneratedBackingAccessDiagnostic(
         backingNamesBySourceFile.set(diagnostic.file, backingNames)
     }
 
-    return backingNames.has(backingName)
+    const propertyName = backingNames.get(backingName)
+
+    return propertyName !== undefined && suggestionMatch?.[1] === propertyName
 }
 
 function diagnosticText(diagnostic: ts.Diagnostic): string {
@@ -428,21 +436,33 @@ function diagnosticText(diagnostic: ts.Diagnostic): string {
     return match?.[0] ?? text.slice(start, start + (diagnostic.length ?? 0))
 }
 
+function tsFlattenDiagnosticMessageText(messageText: string | ts.DiagnosticMessageChain): string {
+    if (typeof messageText === "string") {
+        return messageText
+    }
+
+    return [
+        messageText.messageText,
+        ...(messageText.next ?? []).map(tsFlattenDiagnosticMessageText)
+    ].join("\n")
+}
+
 function collectExpectedBackingPropertyNames(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     options: TransformOptions
-): Set<string> {
-    const backingNames = new Set<string>()
+): Map<string, string> {
+    const backingNames = new Map<string, string>()
     const lazyDecoratorImports = collectLazyDecoratorImports(tsInstance, sourceFile, options)
 
     const visit = (node: ts.Node): void => {
-        if (tsInstance.isPropertyDeclaration(node) && tsInstance.isIdentifier(node.name)) {
-            if (node.name.text.startsWith(options.backingPrefix)) {
-                backingNames.add(node.name.text)
-            } else if (isLazyProperty(tsInstance, node, lazyDecoratorImports, options)) {
-                backingNames.add(`${options.backingPrefix}${node.name.text}`)
-            }
+        if (
+            tsInstance.isPropertyDeclaration(node) &&
+            tsInstance.isIdentifier(node.name) &&
+            !node.name.text.startsWith(options.backingPrefix) &&
+            isLazyProperty(tsInstance, node, lazyDecoratorImports, options)
+        ) {
+            backingNames.set(`${options.backingPrefix}${node.name.text}`, node.name.text)
         }
 
         tsInstance.forEachChild(node, visit)
@@ -536,6 +556,7 @@ function preserveNodeNameLocation<Node extends ts.Node>(
 }
 
 function clearSynthesizedFlags(tsInstance: TypeScript, node: ts.Node): void {
+    // Rename/references treat synthesized nodes as non-source even when ranges are real.
     (node as MutableNode).flags &= ~tsInstance.NodeFlags.Synthesized
 
     tsInstance.forEachChild(node, (child) => {
