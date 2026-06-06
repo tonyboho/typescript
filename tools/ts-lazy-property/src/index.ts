@@ -56,14 +56,14 @@ export function createLazyPropertyCompilerHost(
     config: LazyPropertyTransformerConfig
 ): ts.CompilerHost {
     const options = resolveTransformOptions(config)
-    const sourceCache = new Map<string, ts.SourceFile>()
+    const sourceCache = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
+    const usePrintedSourceFile = shouldCreatePrintedSourceFileForEmit(compilerOptions)
 
     return {
         ...compilerHost,
 
         getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) {
-            const usePrintedSourceFile = shouldCreatePrintedSourceFileForEmit(compilerOptions)
-            const sourceFile           = compilerHost.getSourceFile(
+            const sourceFile = compilerHost.getSourceFile(
                 fileName,
                 languageVersionOrOptions,
                 onError,
@@ -75,8 +75,8 @@ export function createLazyPropertyCompilerHost(
             }
 
             if (usePrintedSourceFile) {
-                const cacheKey = sourceFileCacheKey(fileName, shouldCreateNewSourceFile, sourceFile)
-                const cached   = sourceCache.get(cacheKey)
+                const cacheKey = String(shouldCreateNewSourceFile)
+                const cached   = sourceCache.get(sourceFile)?.get(cacheKey)
 
                 if (cached !== undefined) {
                     return cached
@@ -85,7 +85,7 @@ export function createLazyPropertyCompilerHost(
                 const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options)
 
                 if (transformedSourceFile === sourceFile) {
-                    sourceCache.set(cacheKey, sourceFile)
+                    setCachedSourceFile(sourceCache, sourceFile, cacheKey, sourceFile)
                     return sourceFile
                 }
 
@@ -98,7 +98,7 @@ export function createLazyPropertyCompilerHost(
                     scriptKindFromFileName(tsInstance, fileName)
                 )
 
-                sourceCache.set(cacheKey, printedSourceFile)
+                setCachedSourceFile(sourceCache, sourceFile, cacheKey, printedSourceFile)
 
                 return printedSourceFile
             }
@@ -125,7 +125,6 @@ export default function transformProgram(
     const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
     const options         = resolveTransformOptions(config)
     const nextHost        = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
-    const diagnosticsHost = createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config)
 
     // Editor features need a fresh transformed program; diagnostics need oldProgram to
     // avoid stale geterr results after incremental edits.
@@ -135,10 +134,11 @@ export default function transformProgram(
         nextHost,
         undefined
     )
+
     const diagnosticsProgram = tsInstance.createProgram(
         program.getRootFileNames(),
         compilerOptions,
-        diagnosticsHost,
+        createLazyPropertyCompilerHost(tsInstance, compilerHost, compilerOptions, config),
         program
     )
 
@@ -171,6 +171,10 @@ export function transformSourceFile(
         (context) => {
             const visit: ts.Visitor = (node) => {
                 if (!tsInstance.isClassDeclaration(node) && !tsInstance.isClassExpression(node)) {
+                    return tsInstance.visitEachChild(node, visit, context)
+                }
+
+                if (!hasOwnLazyProperty(tsInstance, node, lazyDecoratorImports, resolvedOptions)) {
                     return tsInstance.visitEachChild(node, visit, context)
                 }
 
@@ -255,8 +259,8 @@ function filterGeneratedBackingDiagnostics(
     diagnosticsProgram: ts.Program,
     options: TransformOptions
 ): ts.Program {
-    const getSemanticDiagnostics = diagnosticsProgram.getSemanticDiagnostics.bind(diagnosticsProgram)
     const backingNamesBySourceFile = new WeakMap<ts.SourceFile, Map<string, string>>()
+    const getSemanticDiagnostics = diagnosticsProgram.getSemanticDiagnostics.bind(diagnosticsProgram)
 
     ;(program as ts.Program & {
         getSemanticDiagnostics : ts.Program["getSemanticDiagnostics"]
@@ -630,6 +634,17 @@ function isLazyProperty(
         getLazyDecorator(tsInstance, node, lazyDecoratorImports, options) !== undefined
 }
 
+function hasOwnLazyProperty(
+    tsInstance: TypeScript,
+    node: ts.ClassDeclaration | ts.ClassExpression,
+    lazyDecoratorImports: LazyDecoratorImports,
+    options: TransformOptions
+): boolean {
+    return node.members.some((member) => {
+        return isLazyProperty(tsInstance, member, lazyDecoratorImports, options)
+    })
+}
+
 function getLazyDecorator(
     tsInstance: TypeScript,
     node: ts.HasDecorators,
@@ -720,16 +735,16 @@ type SourceFileWithVersion = ts.SourceFile & {
     version? : string
 }
 
-function sourceFileCacheKey(
-    fileName: string,
-    shouldCreateNewSourceFile: boolean | undefined,
-    sourceFile: ts.SourceFile
-): string {
-    const version = (sourceFile as SourceFileWithVersion).version ?? ""
+function setCachedSourceFile(
+    sourceCache: WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>,
+    sourceFile: ts.SourceFile,
+    cacheKey: string,
+    cachedSourceFile: ts.SourceFile
+): void {
+    const cachedByOptions = sourceCache.get(sourceFile) ?? new Map<string, ts.SourceFile>()
 
-    // Version alone is not enough: the language service can supply new text before
-    // the script version is bumped, which would otherwise return a stale transform.
-    return `${fileName}:${String(shouldCreateNewSourceFile)}:${version}:${sourceFile.text}`
+    cachedByOptions.set(cacheKey, cachedSourceFile)
+    sourceCache.set(sourceFile, cachedByOptions)
 }
 
 function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
