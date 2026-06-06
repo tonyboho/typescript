@@ -3,6 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { transformSourceFile } from "../src/index.js"
+import { trimIndent } from "./util.js"
 
 type SourceSpan = {
     pos : number,
@@ -382,14 +383,4 @@ function isNode(value: unknown): value is ts.Node {
         value !== null &&
         "kind" in value &&
         typeof value.kind === "number"
-}
-
-function trimIndent(text: string): string {
-    const lines     = text.replace(/^\n/, "").replace(/\n\s*$/, "").split("\n")
-    const minIndent = Math.min(...lines
-        .filter((line) => line.trim() !== "")
-        .map((line) => line.match(/^\s*/)?.[0].length ?? 0)
-    )
-
-    return lines.map((line) => line.slice(minIndent)).join("\n")
 }

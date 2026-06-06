@@ -2,7 +2,7 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { createTypeScriptFixture } from "./util.js"
+import { createTypeScriptFixture, trimIndent } from "./util.js"
 import {
     replaceSubstring,
     runTypeScriptServerSession,
@@ -299,14 +299,4 @@ function formatDiagnostics(diagnostics: TsServerDiagnostic[]): string {
     return diagnostics.map((diagnostic) => {
         return `TS${diagnostic.code} ${diagnostic.start.line}:${diagnostic.start.offset} ${diagnostic.text}`
     }).join("\n")
-}
-
-function trimIndent(text: string): string {
-    const lines     = text.replace(/^\n/, "").replace(/\n\s*$/, "").split("\n")
-    const minIndent = Math.min(...lines
-        .filter((line) => line.trim() !== "")
-        .map((line) => line.match(/^\s*/)?.[0].length ?? 0)
-    )
-
-    return lines.map((line) => line.slice(minIndent)).join("\n")
 }

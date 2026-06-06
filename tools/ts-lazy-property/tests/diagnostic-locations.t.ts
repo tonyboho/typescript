@@ -3,6 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { transformSourceFile } from "../src/index.js"
+import { trimIndent } from "./util.js"
 
 const sourceFileName = "source.ts"
 const sourceText     = trimIndent(`
@@ -83,14 +84,4 @@ function formatDiagnostics(sourceFile: ts.SourceFile, diagnostics: readonly ts.D
             ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
         ].join(" ")
     }).join("\n")
-}
-
-function trimIndent(text: string): string {
-    const lines     = text.replace(/^\n/, "").replace(/\n\s*$/, "").split("\n")
-    const minIndent = Math.min(...lines
-        .filter((line) => line.trim() !== "")
-        .map((line) => line.match(/^\s*/)?.[0].length ?? 0)
-    )
-
-    return lines.map((line) => line.slice(minIndent)).join("\n")
 }

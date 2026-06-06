@@ -1,7 +1,7 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { createTypeScriptFixture } from "./util.js"
+import { createTypeScriptFixture, trimIndent } from "./util.js"
 import { positionToLineOffset, runTypeScriptServerRequest } from "./tsserver-util.js"
 import type { TsServerResponse } from "./tsserver-util.js"
 
@@ -261,14 +261,4 @@ function propertyAccessPosition(source: string, propertyName: string): number {
     const accessText = `instance.${propertyName}`
 
     return source.indexOf(accessText) + "instance.".length + 1
-}
-
-function trimIndent(text: string): string {
-    const lines     = text.replace(/^\n/, "").replace(/\n\s*$/, "").split("\n")
-    const minIndent = Math.min(...lines
-        .filter((line) => line.trim() !== "")
-        .map((line) => line.match(/^\s*/)?.[0].length ?? 0)
-    )
-
-    return lines.map((line) => line.slice(minIndent)).join("\n")
 }
