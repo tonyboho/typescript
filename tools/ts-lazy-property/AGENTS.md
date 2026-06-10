@@ -67,6 +67,31 @@ Keep these invariants:
 These pieces are ugly but load-bearing. Tests cover them indirectly via tsserver
 quickinfo, definition, rename, references, highlights, diagnostics, and source positions.
 
+## Mode Resolution and the Preserve-Mode Cache
+
+`usePrintedSourceFile` decides between the emit path (print + reparse) and the
+IDE/preserve path. The explicit `mode: "emit" | "ide"` plugin option wins; without it
+the heuristic `!noEmit && !isTypeScriptServerProcess()` applies. The argv heuristic
+misses tsserver wrappers (`vtsls`, `typescript-language-server`) that load tsserver as
+a module — `mode: "ide"` is the documented escape hatch.
+
+The preserve path caches transformed SourceFiles in a module-level WeakMap
+(`preserveSourceCache`) so tsserver does not reparse + clone + transform every file on
+every program generation. Invariants:
+
+- The cache key is the layered (`baseProgram`) SourceFile **object identity**, plus
+  transform options and language version in the inner key.
+- Never key the cache by `version` or text: hosts can report a stale `version` for
+  changed text (`compiler-host-stale-source.t.ts`).
+- Identity works because tsserver reuses SourceFile objects across program generations
+  for unchanged files and creates new objects on edits — invalidation is automatic.
+- Cached values are this package's own clones (or host-parsed skip files), never the
+  language-service nodes themselves.
+- When `baseProgram` is absent there is no caching and every call recomputes, same as
+  before the cache existed.
+
+Regression test: `tests/compiler-host-preserve-cache.t.ts`.
+
 ## Compatibility With Other Program Transformers
 
 ts-patch composes `transformProgram` entries sequentially:

@@ -158,6 +158,25 @@ The exported `lazy()` decorator is a runtime no-op. It is used only as a marker 
 
 The generated backing property, getter, and setter are created in the virtual intermediate source on the same line as the original property. This keeps line numbers consistent with the original file.
 
+## Options
+
+Additional option `backingPrefix` is supported - prefix of the generated backing property, default `"$"`
+
+```json
+{
+    "compilerOptions": {
+        "plugins": [
+            {
+                "transform": "ts-lazy-property",
+                "transformProgram": true,
+                "backingPrefix": "$"
+            }
+        ]
+    }
+}
+```
+
+
 ## License
 
 MIT License

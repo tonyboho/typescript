@@ -12,10 +12,13 @@ type MutableNode = ts.Node & {
     flags : ts.NodeFlags
 }
 
+export type LazyPropertyTransformerMode = "emit" | "ide"
+
 export type LazyPropertyTransformerConfig = PluginConfig & {
     packageName? : string,
     decoratorName? : string,
-    backingPrefix? : string
+    backingPrefix? : string,
+    mode? : LazyPropertyTransformerMode
 }
 
 type TransformOptions = {
@@ -52,6 +55,12 @@ function resolveTransformOptions(config: LazyPropertyTransformerConfig): Transfo
     }
 }
 
+// Keyed by the layered (base program) SourceFile object identity. Hosts can report a
+// stale `version` for changed text (see compiler-host-stale-source.t.ts), so object
+// identity is the only safe invalidation signal: tsserver reuses SourceFile objects
+// across program generations for unchanged files and creates new ones on edits.
+const preserveSourceCache = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
+
 export function createLazyPropertyCompilerHost(
     tsInstance: TypeScript,
     compilerHost: ts.CompilerHost,
@@ -61,19 +70,39 @@ export function createLazyPropertyCompilerHost(
 ): ts.CompilerHost {
     const options = resolveTransformOptions(config)
     const sourceCache = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
-    const usePrintedSourceFile = shouldCreatePrintedSourceFileForEmit(compilerOptions)
+    const usePrintedSourceFile = resolveUsePrintedSourceFile(config, compilerOptions)
 
     return {
         ...compilerHost,
 
         getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) {
+            const layeredSourceFile = baseProgram?.getSourceFile(fileName)
+            const preserveCacheKey = usePrintedSourceFile
+                ? undefined
+                : preserveSourceCacheKey(options, languageVersionOrOptions)
+
+            if (preserveCacheKey !== undefined && layeredSourceFile !== undefined) {
+                const cached = preserveSourceCache.get(layeredSourceFile)?.get(preserveCacheKey)
+
+                if (cached !== undefined) {
+                    return cached
+                }
+            }
+
+            const cachePreserveSourceFile = (result: ts.SourceFile): ts.SourceFile => {
+                if (preserveCacheKey !== undefined && layeredSourceFile !== undefined) {
+                    setCachedSourceFile(preserveSourceCache, layeredSourceFile, preserveCacheKey, result)
+                }
+
+                return result
+            }
+
             const hostSourceFile = compilerHost.getSourceFile(
                 fileName,
                 languageVersionOrOptions,
                 onError,
                 usePrintedSourceFile ? shouldCreateNewSourceFile : true
             )
-            const layeredSourceFile = baseProgram?.getSourceFile(fileName)
             const useLayeredSourceFile = layeredSourceFile !== undefined &&
                 (
                     hostSourceFile === undefined ||
@@ -81,8 +110,12 @@ export function createLazyPropertyCompilerHost(
                 )
             const sourceFile = useLayeredSourceFile ? layeredSourceFile : hostSourceFile
 
-            if (sourceFile === undefined || shouldSkipSourceFile(sourceFile)) {
+            if (sourceFile === undefined) {
                 return sourceFile
+            }
+
+            if (shouldSkipSourceFile(sourceFile)) {
+                return cachePreserveSourceFile(sourceFile)
             }
 
             if (usePrintedSourceFile) {
@@ -118,10 +151,10 @@ export function createLazyPropertyCompilerHost(
                 ? cloneLayeredSourceFileForTransform(tsInstance, sourceFile)
                 : cloneSourceFileForTransform(tsInstance, sourceFile, languageVersionOrOptions)
 
-            return transformSourceFile(tsInstance, transformSourceFileInput, {
+            return cachePreserveSourceFile(transformSourceFile(tsInstance, transformSourceFileInput, {
                 ...options,
                 preserveLazyDecorator : true
-            })
+            }))
         }
     }
 }
@@ -727,8 +760,45 @@ function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
     return sourceFile.isDeclarationFile || shouldSkipFileName(sourceFile.fileName)
 }
 
+function resolveUsePrintedSourceFile(
+    config: LazyPropertyTransformerConfig,
+    compilerOptions: ts.CompilerOptions
+): boolean {
+    const mode = config.mode
+
+    if (mode === undefined) {
+        return shouldCreatePrintedSourceFileForEmit(compilerOptions)
+    }
+
+    if (mode !== "emit" && mode !== "ide") {
+        throw new Error(`ts-lazy-property: unknown "mode" option ${JSON.stringify(mode)}, expected "emit" or "ide".`)
+    }
+
+    return mode === "emit"
+}
+
 function shouldCreatePrintedSourceFileForEmit(compilerOptions: ts.CompilerOptions): boolean {
     return !compilerOptions.noEmit && !isTypeScriptServerProcess()
+}
+
+function preserveSourceCacheKey(
+    options: TransformOptions,
+    languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions
+): string {
+    const languageVersionKey = typeof languageVersionOrOptions === "object"
+        ? [
+            languageVersionOrOptions.languageVersion,
+            languageVersionOrOptions.impliedNodeFormat ?? "",
+            languageVersionOrOptions.jsDocParsingMode ?? ""
+        ].join(":")
+        : String(languageVersionOrOptions)
+
+    return [
+        options.packageName,
+        options.decoratorName,
+        options.backingPrefix,
+        languageVersionKey
+    ].join("|")
 }
 
 function isTypeScriptServerProcess(): boolean {
