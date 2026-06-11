@@ -393,6 +393,7 @@ function createLazyMembers(
         pos : typeEnd,
         end : property.end
     }
+    const lazyRemovedModifiers = removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
     const backingMemberRange = options.preserveLazyDecorator
         ? {
             pos : property.pos,
@@ -401,14 +402,14 @@ function createLazyMembers(
         : memberRange
     const backingModifiers = options.preserveLazyDecorator
         ? property.modifiers
-        : removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
+        : lazyRemovedModifiers
     const createAccessorModifiers = () => options.preserveLazyDecorator
         ? moveModifierTextRanges(
             tsInstance,
-            removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options),
+            lazyRemovedModifiers,
             zeroWidthRange(nameStart)
         )
-        : removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
+        : lazyRemovedModifiers
     const setterMemberRange = options.preserveLazyDecorator
         ? zeroWidthRange(property.end)
         : memberRange
