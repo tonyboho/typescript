@@ -1,0 +1,43 @@
+{
+    "name": "ts-mixin-class",
+    "version": "0.1.0",
+    "description": "TypeScript program transformer skeleton for class-level mixin decorators.",
+    "type": "module",
+    "main": "dist/src/index.js",
+    "types": "dist/src/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/src/index.d.ts",
+            "default": "./dist/src/index.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "pretest": "pnpm run build",
+        "test": "siesta dist/tests",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "fixture": "pnpm --dir tests/fixture-suite run build && pnpm --dir tests/fixture-suite run test",
+        "prepare": "ts-patch install"
+    },
+    "keywords": [
+        "typescript",
+        "transformer",
+        "ts-patch",
+        "mixin"
+    ],
+    "license": "MIT",
+    "private": true,
+    "peerDependencies": {
+        "typescript": "6.0.3"
+    },
+    "devDependencies": {
+        "@bryntum/siesta": "6.0.0-beta-1",
+        "@types/node": "25.6.0",
+        "ts-patch": "4.0.1",
+        "typescript": "6.0.3"
+    }
+}
