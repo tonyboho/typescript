@@ -1,4 +1,9 @@
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import ts from "typescript"
+
+// dist/tests/util.js -> корень пакета
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
 export function createSourceFile(text: string): ts.SourceFile {
     return ts.createSourceFile(
@@ -42,4 +47,65 @@ export function findFirst<Node extends ts.Node>(
     visit(root)
 
     return found
+}
+
+// Полноценный тайпчек текста как модуля, импортирующего "ts-mixin-class":
+// пакет резолвится в локальный src/index.ts, остальное — обычный node resolution
+export function typecheckText(text: string): string[] {
+    const virtualFileName = path.join(packageRoot, "typecheck-virtual-test.ts")
+
+    const options: ts.CompilerOptions = {
+        strict                  : true,
+        target                  : ts.ScriptTarget.ES2022,
+        module                  : ts.ModuleKind.NodeNext,
+        moduleResolution        : ts.ModuleResolutionKind.NodeNext,
+        useDefineForClassFields : false,
+        noEmit                  : true,
+        skipLibCheck            : true,
+        types                   : []
+    }
+
+    const host = ts.createCompilerHost(options)
+
+    const originalGetSourceFile = host.getSourceFile.bind(host)
+    const originalFileExists    = host.fileExists.bind(host)
+
+    host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
+        if (path.resolve(fileName) === virtualFileName) {
+            return ts.createSourceFile(virtualFileName, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS)
+        }
+
+        return originalGetSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile)
+    }
+
+    host.fileExists = (fileName) => {
+        return path.resolve(fileName) === virtualFileName || originalFileExists(fileName)
+    }
+
+    host.resolveModuleNameLiterals = (moduleLiterals, containingFile, _redirectedReference, compilerOptions) => {
+        return moduleLiterals.map((literal) => {
+            if (literal.text === "ts-mixin-class") {
+                return {
+                    resolvedModule : {
+                        resolvedFileName        : path.join(packageRoot, "src", "index.ts"),
+                        extension               : ts.Extension.Ts,
+                        isExternalLibraryImport : false
+                    }
+                }
+            }
+
+            return ts.resolveModuleName(literal.text, containingFile, compilerOptions, host)
+        })
+    }
+
+    const program = ts.createProgram([ virtualFileName ], options, host)
+
+    return ts.getPreEmitDiagnostics(program).map((diagnostic) => {
+        const message  = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+        const location = diagnostic.file !== undefined && diagnostic.start !== undefined
+            ? `(${diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1})`
+            : ""
+
+        return `TS${diagnostic.code}${location}: ${message}`
+    })
 }

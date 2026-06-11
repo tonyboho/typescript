@@ -3,7 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { printSourceFile, transformSourceFile } from "../src/index.js"
-import { createSourceFile, findFirst } from "./util.js"
+import { createSourceFile, findFirst, trimIndent, typecheckText } from "./util.js"
 
 it("keeps unrelated source files untouched", async (t: Test) => {
     const sourceFile      = createSourceFile(`
@@ -30,35 +30,72 @@ it("does not treat a local @mixin() decorator as the package marker", async (t: 
     t.equal(transformedFile, sourceFile, "Local decorator is ignored")
 })
 
-it("keeps an imported class-level @mixin() marker decorator untouched", async (t: Test) => {
-    const sourceFile      = createSourceFile(`
+it("expands an imported class-level @mixin() class into interface + factory + const", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { mixin } from "ts-mixin-class"
 
         @mixin()
-        class SourceClass {}
-    `)
-    const transformedFile = transformSourceFile(ts, sourceFile)
-    const sourceClass     = findClass(transformedFile, "SourceClass")
+        export class SourceClass<T> {
+            static staticHelper (x: number): number { return x * 2 }
 
-    t.equal(transformedFile, sourceFile, "Returns the original SourceFile instance")
-    t.equal(ts.getDecorators(sourceClass)?.length ?? 0, 1, "Mixin marker decorator is preserved")
-    t.true(printSourceFile(ts, transformedFile).includes("@mixin"), "Printed output keeps the mixin marker")
+            value1: string = "value1"
+
+            passThrough1 (a: T): T { return a }
+
+            method1 (): string { return this.value1 }
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    const interfaceDeclaration = findInterface(transformedFile, "SourceClass")
+    const interfaceMembers     = interfaceDeclaration.members.map((member) => memberName(member))
+
+    t.equal(findClass(transformedFile, "SourceClass"), undefined, "Original class declaration is replaced")
+    t.expect(interfaceMembers).toEqual([ "value1", "passThrough1", "method1" ])
+    t.equal(interfaceDeclaration.typeParameters?.length, 1, "Interface keeps the class type parameters")
+    t.true(hasExportModifier(interfaceDeclaration), "Interface keeps the export modifier")
+
+    t.true(findVariable(transformedFile, "SourceClass$mixin") !== undefined, "Mixin factory is generated")
+    t.true(findVariable(transformedFile, "SourceClass") !== undefined, "Value const is generated")
+
+    t.false(printed.includes("@mixin"), "Marker decorator is removed")
+    t.true(printed.includes("import { type AnyConstructor, type ClassStatics } from \"ts-mixin-class\""),
+        "Helper type import is added")
+    t.true(printed.includes("(base: AnyConstructor) => class extends base"),
+        "Factory takes a base and returns an anonymous class expression")
+    t.true(printed.includes("static staticHelper"), "Static members stay in the factory body")
+    t.false(printedInterface(printed).includes("staticHelper"), "Static members are not in the interface")
+    t.true(
+        printed.includes(
+            "SourceClass$mixin(Object) as unknown as " +
+            "(new <T>(...args: any[]) => SourceClass<T>) & ClassStatics<ReturnType<typeof SourceClass$mixin>>"
+        ),
+        "Value const applies the factory to Object with the declarative cast"
+    )
 })
 
 it("supports aliased and namespace decorator imports", async (t: Test) => {
-    t.equal(countClassDecorators(transformSourceFile(ts, createSourceFile(`
+    const aliased = transformSourceFile(ts, createSourceFile(`
         import { mixin as mix } from "ts-mixin-class"
 
         @mix()
-        class SourceClass {}
-    `))), 1, "Aliased import marker is preserved")
+        class SourceClass {
+            value: string = "ok"
+        }
+    `))
 
-    t.equal(countClassDecorators(transformSourceFile(ts, createSourceFile(`
+    t.true(findInterface(aliased, "SourceClass") !== undefined, "Aliased import marker expands the class")
+
+    const namespaced = transformSourceFile(ts, createSourceFile(`
         import * as MixinClass from "ts-mixin-class"
 
         @MixinClass.mixin()
-        class SourceClass {}
-    `))), 1, "Namespace import marker is preserved")
+        class SourceClass {
+            value: string = "ok"
+        }
+    `))
+
+    t.true(findInterface(namespaced, "SourceClass") !== undefined, "Namespace import marker expands the class")
 })
 
 it("supports custom package and decorator options", async (t: Test) => {
@@ -66,27 +103,370 @@ it("supports custom package and decorator options", async (t: Test) => {
         import { compose } from "custom-mixin-package"
 
         @compose()
-        class SourceClass {}
+        class SourceClass {
+            value: string = "ok"
+        }
     `), {
         decoratorName : "compose",
         packageName   : "custom-mixin-package"
     })
 
-    t.equal(countClassDecorators(transformedFile), 1, "Custom marker is preserved")
+    t.true(findInterface(transformedFile, "SourceClass") !== undefined, "Custom marker expands the class")
+    t.true(
+        printSourceFile(ts, transformedFile)
+            .includes("import { type AnyConstructor, type ClassStatics } from \"custom-mixin-package\""),
+        "Helper type import uses the custom package name"
+    )
 })
 
-function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration {
-    const sourceClass = findFirst(sourceFile, (node): node is ts.ClassDeclaration => {
+it("expands a dependent mixin with a typed base and a dependency chain", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        @mixin()
+        class ChildMixin<T> implements SourceClass1<T> {
+            childMethod (a: T): string { return String(super.passThrough1(a)) }
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("(base: AnyConstructor<SourceClass1<T>>) => class extends base"),
+        "Dependent mixin base parameter is typed with the dependency")
+    t.true(printed.includes("ChildMixin$mixin(SourceClass1$mixin(Object))"),
+        "Value chain applies the dependency factory first")
+    t.true(printed.includes("interface ChildMixin<T> extends SourceClass1<T>"),
+        "Generated interface extends the dependency")
+})
+
+it("transformed output typechecks, including generics, statics and super calls", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        export class SourceClass1<T> {
+            static staticHelper (x: number): number { return x * 2 }
+
+            value1: string = "value1"
+
+            passThrough1 (a: T): T { return a }
+
+            method1 (): string { return this.value1 }
+
+            makeAnother (): SourceClass1<number> {
+                return new SourceClass1<number>()
+            }
+        }
+
+        @mixin()
+        export class ChildMixin<T> implements SourceClass1<T> {
+            childMethod (a: T): string {
+                return "child/" + String(super.passThrough1(a)) + "/" + super.method1()
+            }
+        }
+
+        const direct = new SourceClass1<number>()
+
+        const v1: number = direct.passThrough1(3)
+        const v2: number = SourceClass1.staticHelper(2)
+        const v3: SourceClass1<number> = direct.makeAnother()
+
+        // @ts-expect-error дженерик T = number, строка не подходит
+        const e1: number = direct.passThrough1("x")
+
+        const child = new ChildMixin<boolean>()
+
+        const v4: string = child.childMethod(true)
+        const v5: boolean = child.passThrough1(false)
+
+        // @ts-expect-error childMethod принимает T = boolean
+        const e2: string = child.childMethod("x")
+
+        void [v1, v2, v3, v4, v5, e1, e2]
+    `))
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.expect(diagnostics).toEqual([])
+})
+
+it("expands a consumer class into a merged intermediate base", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        @mixin()
+        class SourceClass2<A> {
+            passThrough2 (a: A): A { return a }
+        }
+
+        class Base {
+            baseValue: number = 42
+        }
+
+        class Consumer<A> extends Base implements SourceClass1<string>, SourceClass2<A> {
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface Consumer$base<A> extends SourceClass1<string>, SourceClass2<A>"),
+        "Merged interface repeats the implements list verbatim")
+    t.true(
+        printed.includes(
+            "class Consumer$base<A> extends (SourceClass2$mixin(SourceClass1$mixin(Base)) as unknown as " +
+            "typeof Base & ClassStatics<typeof SourceClass1> & ClassStatics<typeof SourceClass2>)"
+        ),
+        "Intermediate base applies the runtime chain with the statics cast"
+    )
+    t.true(printed.includes("class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, SourceClass2<A>"),
+        "Consumer extends the intermediate base and keeps its implements clause")
+})
+
+it("expands a consumer class without an explicit base", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        class Consumer<T> implements SourceClass1<T> {
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(
+        printed.includes(
+            "class Consumer$base<T> extends (SourceClass1$mixin(Object) as unknown as " +
+            "AnyConstructor & ClassStatics<typeof SourceClass1>)"
+        ),
+        "Chain starts at Object and the cast head is AnyConstructor"
+    )
+})
+
+it("consumer transitively applies mixin dependencies", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        @mixin()
+        class ChildMixin<T> implements SourceClass1<T> {
+            childMethod (a: T): string { return String(super.passThrough1(a)) }
+        }
+
+        class Consumer<T> implements ChildMixin<T> {
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("ChildMixin$mixin(SourceClass1$mixin(Object))"),
+        "Dependency factory is applied before the dependent mixin")
+    t.true(printed.includes("interface Consumer$base<T> extends ChildMixin<T>"),
+        "Merged interface lists only the direct implements entries")
+})
+
+it("does not treat non-mixin implements entries as mixins", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        interface PlainContract {
+            contractMethod (): void
+        }
+
+        class Consumer<T> implements SourceClass1<T>, PlainContract {
+            contractMethod (): void {}
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface Consumer$base<T> extends SourceClass1<T> {"),
+        "Merged interface contains only mixin entries")
+    t.true(printed.includes("implements SourceClass1<T>, PlainContract"),
+        "Consumer keeps the full implements list")
+})
+
+it("transformed consumer output typechecks end to end", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        export class SourceClass1<T> {
+            static staticHelper (x: number): number { return x * 2 }
+
+            value1: string = "value1"
+
+            passThrough1 (a: T): T { return a }
+
+            method1 (): string { return this.value1 }
+        }
+
+        @mixin()
+        export class SourceClass2<A> {
+            value2: string = "value2"
+
+            passThrough2 (a: A): A { return a }
+
+            method2 (): string { return this.value2 }
+        }
+
+        class Base {
+            baseValue: number = 42
+
+            static staticBase (): string { return "staticBase" }
+        }
+
+        class Consumer1<T, A> implements SourceClass1<T>, SourceClass2<A> {
+        }
+
+        class Consumer2<A> extends Base implements SourceClass1<string>, SourceClass2<A> {
+            method1 (): string {
+                return "consumer2/" + super.method1()
+            }
+        }
+
+        const c1 = new Consumer1<string, number>()
+
+        const v1: string = c1.passThrough1("x")
+        const v2: number = c1.passThrough2(1)
+
+        // @ts-expect-error дженерик T = string
+        const e1: string = c1.passThrough1(1)
+
+        const c2 = new Consumer2<boolean>()
+
+        const v3: string  = c2.passThrough1("fixed")
+        const v4: boolean = c2.passThrough2(true)
+        const v5: number  = c2.baseValue
+        const v6: string  = Consumer2.staticBase()
+        const v7: number  = Consumer2.staticHelper(3)
+
+        // @ts-expect-error первый миксин зафиксирован как SourceClass1<string>
+        const e2: string = c2.passThrough1(1)
+
+        const asMixin: SourceClass1<string> = c2
+        const asBase: Base = c2
+
+        class SubConsumer<A> extends Consumer2<A> {
+            method2 (): string {
+                return "sub/" + super.method2()
+            }
+        }
+
+        const v8: number = new SubConsumer<number>().passThrough2(7)
+
+        void [v1, v2, v3, v4, v5, v6, v7, v8, e1, e2, asMixin, asBase]
+    `))
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.expect(diagnostics).toEqual([])
+})
+
+it("reports unsupported mixin class declarations", async (t: Test) => {
+    t.throwsOk(() => {
+        transformSourceFile(ts, createSourceFile(`
+            import { mixin } from "ts-mixin-class"
+
+            class Base {}
+
+            @mixin()
+            class SourceClass extends Base {}
+        `))
+    }, "cannot use `extends`", "extends on a mixin class is rejected")
+
+    t.throwsOk(() => {
+        transformSourceFile(ts, createSourceFile(`
+            import { mixin } from "ts-mixin-class"
+
+            @mixin()
+            class SourceClass {
+                constructor () {}
+            }
+        `))
+    }, "cannot declare a constructor", "constructor on a mixin class is rejected")
+
+    t.throwsOk(() => {
+        transformSourceFile(ts, createSourceFile(`
+            import { mixin } from "ts-mixin-class"
+
+            @mixin()
+            class SourceClass {
+                private value: string = "x"
+            }
+        `))
+    }, "cannot be `private` or `protected`", "private members are rejected")
+
+    t.throwsOk(() => {
+        transformSourceFile(ts, createSourceFile(`
+            import { mixin } from "ts-mixin-class"
+
+            @mixin()
+            class SourceClass {
+                value = "x"
+            }
+        `))
+    }, "explicit type annotation", "property without a type annotation is rejected")
+})
+
+function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration | undefined {
+    return findFirst(sourceFile, (node): node is ts.ClassDeclaration => {
         return ts.isClassDeclaration(node) && node.name?.text === name
     })
+}
 
-    if (sourceClass === undefined) {
-        throw new Error(`Cannot find class ${name}`)
+function findInterface(sourceFile: ts.SourceFile, name: string): ts.InterfaceDeclaration {
+    const declaration = findFirst(sourceFile, (node): node is ts.InterfaceDeclaration => {
+        return ts.isInterfaceDeclaration(node) && node.name.text === name
+    })
+
+    if (declaration === undefined) {
+        throw new Error(`Cannot find interface ${name}`)
     }
 
-    return sourceClass
+    return declaration
 }
 
-function countClassDecorators(sourceFile: ts.SourceFile): number {
-    return ts.getDecorators(findClass(sourceFile, "SourceClass"))?.length ?? 0
+function findVariable(sourceFile: ts.SourceFile, name: string): ts.VariableDeclaration | undefined {
+    return findFirst(sourceFile, (node): node is ts.VariableDeclaration => {
+        return ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name
+    })
 }
+
+function memberName(member: ts.TypeElement): string {
+    if (member.name !== undefined && (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))) {
+        return member.name.text
+    }
+
+    throw new Error("Unexpected interface member name")
+}
+
+function hasExportModifier(node: ts.InterfaceDeclaration): boolean {
+    return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false
+}
+
+function printedInterface(printed: string): string {
+    const start = printed.indexOf("interface ")
+    const end   = printed.indexOf("}", start)
+
+    return printed.slice(start, end + 1)
+}
+
+void trimIndent

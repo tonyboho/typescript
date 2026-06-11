@@ -1,21 +1,49 @@
 # Agent Notes: ts-mixin-class
 
-This package follows the same broad shape as `tools/ts-lazy-property`: it is intended to
-be a `ts-patch` ProgramTransformer, not a regular runtime library.
+This package follows the same broad shape as `tools/ts-lazy-property`: it is a `ts-patch`
+ProgramTransformer, not a regular runtime library. The design is specified in detail in
+`SPEC.md` and backed by executable spikes in `scratch/`.
 
-Current skeleton behavior:
+Current implementation status (SPEC.md plan):
 
-- Entry point: `src/index.ts`.
-- Default export: `transformProgram`.
-- The transformer detects class decorators imported from this package.
-- The default marker is `@mixin(...)`, imported as a named import or through a namespace
-  import from `ts-mixin-class`.
-- For now this is a passthrough transformer: detected marker decorators are preserved and
-  the original `SourceFile` is returned. The actual mixin expansion is intentionally not
-  implemented yet.
+- [x] Step 2: mixin-class expansion (print + reparse mode). A top-level class decorated
+  with `@mixin(...)` (imported from this package) is replaced with three declarations:
+  `interface X<T>` (instance member signatures), `const X$mixin = <T>(base) => class
+  extends base {...}` (the single copy of the body) and `const X = X$mixin(Object) as
+  unknown as ...` (the value, with statics extracted via `ClassStatics`).
+  Same-file mixin dependencies (declared with `implements`) produce a typed `base`
+  parameter and a nested factory chain.
+- [x] Step 4: consumer transformation. A class whose `implements` list references
+  same-file mixin classes is expanded into `interface X$base` (repeats the mixin
+  entries of the implements list verbatim - declaration merging provides the member
+  types) + `class X$base extends (chain as unknown as typeof Base & ClassStatics<...>)`
+  (runtime chain with transitive dependencies linearized/deduplicated) + the original
+  class with its `extends` switched to `X$base<TypeParams>`. Non-mixin implements
+  entries stay out of `X$base` so the contract check still applies.
+  `tests/fixture-suite` (basic.t.ts) is green under real tsc + ts-patch.
+- [ ] Step 1 (runtime helper with linearization/dedup/hasInstance) is intentionally
+  deferred; the generated chain currently nests factory calls directly.
+- [ ] Step 3: cross-file mixin registry (program pre-scan + module resolution).
+- [ ] Steps 5-8: more fixtures, proper diagnostics, declaration emit,
+  position-preserving tsserver mode.
+- Consumer limitations for now: generic base classes (`extends Base<T>`) are rejected,
+  intermediate declarations are not exported (declaration emit will need this),
+  consumers must be top-level named class declarations.
 
-Keep import-aware detection. A local function named `mixin` must not be treated as the
-package marker.
+Implementation notes:
 
-When the future implementation starts generating class members for mixins, keep the root
-`AGENTS.md` rule in mind: mixin class members must not use `private` or `protected`.
+- Entry point: `src/index.ts`. Default export: `transformProgram`.
+- Keep import-aware detection. A local function named `mixin` must not be treated as the
+  package marker.
+- Generated code imports `type AnyConstructor` / `type ClassStatics` from the package
+  (specifier-level type imports - `createImportClause` changed its signature in TS 6).
+- Constraint violations (extends/constructor/private/protected/abstract on a mixin class,
+  members without explicit type annotations) currently throw `MixinTransformError`;
+  proper ts.Diagnostic reporting is planned for step 6.
+- Known not-yet-handled: name collisions with the injected helper type import, mixin
+  classes nested in namespaces/functions, `export default` mixin classes.
+- Mixin class members must not use `private` or `protected` (root `AGENTS.md` rule);
+  the transformer enforces this.
+- Tests: `tests/source-transform.t.ts` (AST/printed assertions + a full in-memory
+  typecheck of transformed output via `typecheckText` in `tests/util.ts`).
+  `tests/fixture-suite` will become green only after step 4 (consumer transformation).

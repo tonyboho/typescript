@@ -55,7 +55,7 @@ class Consumer<A2> extends Base implements SourceClass1<string>, SourceClass2<A2
 
 
 it("basic", async (t: Test) => {
-    const instance = new Consumer1()
+    const instance = new Consumer()
 
     t.equal(instance.value1, "value1", "Class decorated with @mixin() compiles and runs")
     t.equal(instance.value2, "value2", "Class decorated with @mixin() compiles and runs")
