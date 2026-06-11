@@ -290,28 +290,41 @@ function hasDifferentAstShape(
     left: ts.SourceFile,
     right: ts.SourceFile
 ): boolean {
+    const hasChild = (node: ts.Node): boolean => {
+        return tsInstance.forEachChild(node, () => true) === true
+    }
+    const collectChildren = (node: ts.Node): ts.Node[] => {
+        const children: ts.Node[] = []
+
+        tsInstance.forEachChild(node, (child) => {
+            children.push(child)
+        })
+
+        return children
+    }
     const visit = (leftNode: ts.Node, rightNode: ts.Node): boolean => {
         if (leftNode.kind !== rightNode.kind || leftNode.pos !== rightNode.pos || leftNode.end !== rightNode.end) {
             return true
         }
 
-        const leftChildren: ts.Node[] = []
-        const rightChildren: ts.Node[] = []
+        let rightChildren: ts.Node[] | undefined
+        let rightChildIndex = 0
 
-        tsInstance.forEachChild(leftNode, (child) => {
-            leftChildren.push(child)
-        })
-        tsInstance.forEachChild(rightNode, (child) => {
-            rightChildren.push(child)
-        })
+        const hasDifferentChild = tsInstance.forEachChild(leftNode, (leftChild) => {
+            rightChildren ??= collectChildren(rightNode)
 
-        if (leftChildren.length !== rightChildren.length) {
+            const rightChild = rightChildren[rightChildIndex++]
+
+            return rightChild === undefined || visit(leftChild, rightChild) || undefined
+        }) === true
+
+        if (hasDifferentChild) {
             return true
         }
 
-        return leftChildren.some((leftChild, index) => {
-            return visit(leftChild, rightChildren[index])
-        })
+        return rightChildren === undefined
+            ? hasChild(rightNode)
+            : rightChildIndex !== rightChildren.length
     }
 
     return visit(left, right)
@@ -812,9 +825,11 @@ function isTypeScriptServerProcess(): boolean {
 }
 
 function shouldSkipFileName(fileName: string): boolean {
-    return fileName.includes("/node_modules/") ||
-        fileName.endsWith(".d.ts") ||
-        !/\.[cm]?tsx?$/.test(fileName)
+    const normalizedFileName = fileName.replaceAll("\\", "/")
+
+    return normalizedFileName.includes("/node_modules/") ||
+        normalizedFileName.endsWith(".d.ts") ||
+        !/\.[cm]?tsx?$/.test(normalizedFileName)
 }
 
 function scriptKindFromFileName(tsInstance: TypeScript, fileName: string): ts.ScriptKind {
