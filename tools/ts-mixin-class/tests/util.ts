@@ -1,9 +1,88 @@
+import { execFile } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { promisify } from "node:util"
 import ts from "typescript"
+import type { Test } from "@bryntum/siesta/nodejs.js"
 
 // dist/tests/util.js -> корень пакета
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+export const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+
+const execFileAsync = promisify(execFile)
+
+export type CommandResult = {
+    command : string,
+    exitCode : number,
+    stdout : string,
+    stderr : string,
+}
+
+type ExecFileFailure = Error & {
+    code? : number | string,
+    stdout? : string | Buffer,
+    stderr? : string | Buffer,
+}
+
+export async function runPnpm(
+    cwd: string,
+    ...args: string[]
+): Promise<CommandResult> {
+    return runCommand("pnpm", args, cwd)
+}
+
+export async function runCommand(
+    executable: string,
+    args: string[],
+    cwd: string
+): Promise<CommandResult> {
+    const command = [ executable, ...args ].join(" ")
+
+    try {
+        const result = await execFileAsync(executable, args, { cwd })
+
+        return {
+            command,
+            exitCode : 0,
+            stdout   : outputToString(result.stdout),
+            stderr   : outputToString(result.stderr)
+        }
+    } catch (error) {
+        const failure = error as ExecFileFailure
+
+        return {
+            command,
+            exitCode : typeof failure.code === "number" ? failure.code : 1,
+            stdout   : outputToString(failure.stdout),
+            stderr   : outputToString(failure.stderr || failure.message)
+        }
+    }
+}
+
+export function assertSuccessfulCommand(
+    t: Test,
+    result: CommandResult,
+    description: string
+): void {
+    if (result.exitCode === 0) {
+        t.pass(description)
+        return
+    }
+
+    t.fail(`${description} failed with exit code ${result.exitCode}\n${commandOutput(result)}`)
+}
+
+export function commandOutput(result: CommandResult): string {
+    return [
+        "command:",
+        result.command,
+        "",
+        "stdout:",
+        result.stdout || "<empty>",
+        "",
+        "stderr:",
+        result.stderr || "<empty>"
+    ].join("\n")
+}
 
 export function createSourceFile(text: string): ts.SourceFile {
     return ts.createSourceFile(
@@ -108,4 +187,8 @@ export function typecheckText(text: string): string[] {
 
         return `TS${diagnostic.code}${location}: ${message}`
     })
+}
+
+function outputToString(output: string | Buffer | undefined): string {
+    return output?.toString() ?? ""
 }

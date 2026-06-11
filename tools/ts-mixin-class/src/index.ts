@@ -63,6 +63,10 @@ const defaultTransformOptions: TransformOptions = {
 
 const anyConstructorName = "AnyConstructor"
 const classStaticsName   = "ClassStatics"
+const defineMixinClassName = "defineMixinClass"
+const mixinChainName = "mixinChain"
+const mixinFactoryName = "MixinFactory"
+const runtimeMixinClassName = "RuntimeMixinClass"
 const mixinFactorySuffix = "$mixin"
 const consumerBaseSuffix = "$base"
 
@@ -73,8 +77,215 @@ export type AnyConstructor<T extends object = object> = new (...args: any[]) => 
 
 export type ClassStatics<C> = Omit<C, "prototype">
 
+export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
+
+export type RuntimeMixinClass = {
+    $mixin: MixinFactory,
+    $requirements: readonly RuntimeMixinClass[]
+}
+
+type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass
+
+type RuntimeMixinMetadata = {
+    factory: MixinFactory,
+    requirements: RuntimeMixinClassValue[],
+    linearization: RuntimeMixinClassValue[] | undefined,
+    applications: WeakMap<AnyConstructor<any>, AnyConstructor<any>>
+}
+
+const runtimeMixinMetadata = new WeakMap<RuntimeMixinClassValue, RuntimeMixinMetadata>()
+const appliedMixinClasses = new WeakMap<AnyConstructor<any>, Set<RuntimeMixinClassValue>>()
+
 export function mixin(..._args: unknown[]): (..._decoratorArgs: unknown[]) => void {
     return () => {}
+}
+
+export function defineMixinClass(
+    name: string,
+    factory: MixinFactory,
+    requirements: readonly RuntimeMixinClassValue[] = []
+): RuntimeMixinClassValue {
+    const requirementList = [ ...requirements ]
+    const requirementLinearization = linearizeRuntimeRequirements(requirementList)
+    const base = applyRuntimeMixins(Object, requirementLinearization.slice().reverse())
+    const mixinClass = factory(base) as RuntimeMixinClassValue
+    const applications = new WeakMap<AnyConstructor<any>, AnyConstructor<any>>()
+
+    applications.set(base, mixinClass)
+
+    runtimeMixinMetadata.set(mixinClass, {
+        factory,
+        requirements   : requirementList,
+        linearization  : [ mixinClass, ...requirementLinearization ],
+        applications
+    })
+
+    Object.defineProperty(mixinClass, "$mixin", { value : factory })
+    Object.defineProperty(mixinClass, "$requirements", { value : requirementList })
+    Object.defineProperty(mixinClass, Symbol.hasInstance, {
+        value(instance: unknown) {
+            return hasRuntimeMixinInstance(instance, mixinClass)
+        }
+    })
+
+    setClassName(mixinClass, name)
+    registerAppliedMixins(mixinClass, [ mixinClass, ...requirementLinearization ])
+
+    return mixinClass
+}
+
+export function mixinChain<Base extends AnyConstructor<any>>(
+    base: Base,
+    ...mixins: RuntimeMixinClassValue[]
+): AnyConstructor<any> {
+    return applyRuntimeMixins(base, linearizeRuntimeRequirements(mixins).slice().reverse())
+}
+
+function applyRuntimeMixins(
+    base: AnyConstructor<any>,
+    mixins: readonly RuntimeMixinClassValue[]
+): AnyConstructor<any> {
+    let current = base
+
+    for (const mixinClass of mixins) {
+        current = applyRuntimeMixin(current, mixinClass)
+    }
+
+    return current
+}
+
+function applyRuntimeMixin(
+    base: AnyConstructor<any>,
+    mixinClass: RuntimeMixinClassValue
+): AnyConstructor<any> {
+    const metadata = runtimeMetadataOf(mixinClass)
+    const cached = metadata.applications.get(base)
+
+    if (cached !== undefined) {
+        return cached
+    }
+
+    const appliedClass = metadata.factory(base)
+
+    metadata.applications.set(base, appliedClass)
+    setClassName(appliedClass, mixinClass.name)
+    registerAppliedMixins(appliedClass, [ mixinClass, ...linearizeRuntimeMixin(mixinClass).slice(1) ])
+
+    return appliedClass
+}
+
+function linearizeRuntimeMixin(mixinClass: RuntimeMixinClassValue): RuntimeMixinClassValue[] {
+    const metadata = runtimeMetadataOf(mixinClass)
+
+    if (metadata.linearization !== undefined) {
+        return metadata.linearization
+    }
+
+    metadata.linearization = [
+        mixinClass,
+        ...linearizeRuntimeRequirements(metadata.requirements)
+    ]
+
+    return metadata.linearization
+}
+
+function linearizeRuntimeRequirements(
+    mixins: readonly RuntimeMixinClassValue[]
+): RuntimeMixinClassValue[] {
+    if (mixins.length === 0) {
+        return []
+    }
+
+    return mergeRuntimeLinearizations([
+        ...mixins.map((mixinClass) => [ ...linearizeRuntimeMixin(mixinClass) ]),
+        [ ...mixins ]
+    ])
+}
+
+function mergeRuntimeLinearizations(sequences: RuntimeMixinClassValue[][]): RuntimeMixinClassValue[] {
+    const result: RuntimeMixinClassValue[] = []
+    const pending = sequences
+        .map((sequence) => sequence.filter((mixinClass, index) => sequence.indexOf(mixinClass) === index))
+        .filter((sequence) => sequence.length > 0)
+
+    while (pending.length > 0) {
+        const candidate = pending
+            .map((sequence) => sequence[0])
+            .find((head) => {
+                return pending.every((sequence) => !sequence.slice(1).includes(head))
+            })
+
+        if (candidate === undefined) {
+            throw new Error("Cannot linearize mixin classes: inconsistent requirements")
+        }
+
+        result.push(candidate)
+
+        for (let index = pending.length - 1; index >= 0; index--) {
+            if (pending[index][0] === candidate) {
+                pending[index].shift()
+            }
+
+            if (pending[index].length === 0) {
+                pending.splice(index, 1)
+            }
+        }
+    }
+
+    return result
+}
+
+function runtimeMetadataOf(mixinClass: RuntimeMixinClassValue): RuntimeMixinMetadata {
+    const metadata = runtimeMixinMetadata.get(mixinClass)
+
+    if (metadata === undefined) {
+        throw new Error(`Class ${mixinClass.name || "<anonymous>"} is not a registered mixin class`)
+    }
+
+    return metadata
+}
+
+function registerAppliedMixins(
+    appliedClass: AnyConstructor<any>,
+    mixins: readonly RuntimeMixinClassValue[]
+): void {
+    const inherited = appliedMixinClasses.get(Object.getPrototypeOf(appliedClass)) ?? new Set<RuntimeMixinClassValue>()
+    const applied = new Set<RuntimeMixinClassValue>(inherited)
+
+    for (const mixinClass of mixins) {
+        applied.add(mixinClass)
+    }
+
+    appliedMixinClasses.set(appliedClass, applied)
+}
+
+function hasRuntimeMixinInstance(instance: unknown, mixinClass: RuntimeMixinClassValue): boolean {
+    if (instance === null || typeof instance !== "object" && typeof instance !== "function") {
+        return false
+    }
+
+    let constructor = (instance as { constructor?: unknown }).constructor
+
+    while (typeof constructor === "function") {
+        if (appliedMixinClasses.get(constructor as AnyConstructor<any>)?.has(mixinClass)) {
+            return true
+        }
+
+        constructor = Object.getPrototypeOf(constructor)
+    }
+
+    return false
+}
+
+function setClassName(classConstructor: AnyConstructor<any>, name: string): void {
+    if (name.length === 0) {
+        return
+    }
+
+    Object.defineProperty(classConstructor, "name", {
+        configurable : true,
+        value        : name
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -701,11 +912,18 @@ function expandMixinClass(
                 undefined,
                 factory.createAsExpression(
                     factory.createAsExpression(
-                        createChainExpression(
-                            tsInstance,
-                            [ ...linearizeDependencies(ref.dependencies, context), ref ],
-                            factory.createIdentifier("Object"),
-                            context
+                        factory.createCallExpression(
+                            factory.createIdentifier(defineMixinClassName),
+                            undefined,
+                            [
+                                factory.createStringLiteral(ref.className),
+                                asMixinFactory(tsInstance, factory.createIdentifier(ref.localFactoryName)),
+                                factory.createArrayLiteralExpression(
+                                    directDependencyRefs(tsInstance, declaration, context).map((dependencyRef) => {
+                                        return mixinValueIdentifier(tsInstance, dependencyRef)
+                                    })
+                                )
+                            ]
                         ),
                         factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
                     ),
@@ -731,7 +949,8 @@ function expandMixinClass(
                             factory.createTypeReferenceNode("ReturnType", [
                                 factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
                             ])
-                        ])
+                        ]),
+                        factory.createTypeReferenceNode(runtimeMixinClassName, undefined)
                     ])
                 )
             )
@@ -739,6 +958,39 @@ function expandMixinClass(
     )
 
     return [ interfaceDeclaration, factoryStatement, valueStatement ]
+}
+
+function asMixinFactory(tsInstance: TypeScript, expression: ts.Expression): ts.Expression {
+    return tsInstance.factory.createAsExpression(
+        tsInstance.factory.createAsExpression(
+            expression,
+            tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
+        ),
+        tsInstance.factory.createTypeReferenceNode(mixinFactoryName, undefined)
+    )
+}
+
+function directDependencyRefs(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    context: FileMixinContext
+): ResolvedMixinRef[] {
+    return implementsTypes(tsInstance, declaration)
+        .filter((heritageType) => {
+            return tsInstance.isIdentifier(heritageType.expression) &&
+                context.byLocalName.has(heritageType.expression.text)
+        })
+        .map((heritageType) => {
+            return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
+        })
+}
+
+function mixinValueIdentifier(tsInstance: TypeScript, ref: ResolvedMixinRef): ts.Identifier {
+    if (ref.localValueName === undefined) {
+        throw new Error(`Mixin value ${ref.className} is not available in the transformed file`)
+    }
+
+    return tsInstance.factory.createIdentifier(ref.localValueName)
 }
 
 // Параметр base фабрики: AnyConstructor, либо AnyConstructor<Dep1<...> & Dep2<...>>
@@ -780,7 +1032,7 @@ function createBaseParameter(
 // Потребитель разворачивается в промежуточную базу с declaration merging (SPEC.md):
 //
 //     interface X$base<A> extends Mixin1<...>, Mixin2<...> {}
-//     class X$base<A> extends (Mixin2$mixin(Mixin1$mixin(Base)) as unknown as
+//     class X$base<A> extends (mixinChain(Base, Mixin1, Mixin2) as unknown as
 //         typeof Base & ClassStatics<typeof Mixin1> & ClassStatics<typeof Mixin2>) {}
 //     class X<A> extends X$base<A> implements Mixin1<...>, Mixin2<...> { ...тело без изменений... }
 
@@ -820,10 +1072,11 @@ function expandConsumerClass(
     }
 
     const mixinHeritage = consumedMixins(tsInstance, declaration, context)
+    const directMixinRefs = mixinHeritage.map((heritageType) => {
+        return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
+    })
     const linearized    = linearizeDependencies(
-        mixinHeritage.map((heritageType) => {
-            return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!.key
-        }),
+        directMixinRefs.map((ref) => ref.key),
         context
     )
 
@@ -844,13 +1097,12 @@ function expandConsumerClass(
                 factory.createParenthesizedExpression(
                     factory.createAsExpression(
                         factory.createAsExpression(
-                            createChainExpression(
+                            createMixinChainExpression(
                                 tsInstance,
-                                linearized,
+                                directMixinRefs,
                                 extendsType !== undefined
                                     ? extendsType.expression
-                                    : factory.createIdentifier("Object"),
-                                context
+                                    : factory.createIdentifier("Object")
                             ),
                             factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
                         ),
@@ -966,33 +1218,21 @@ function linearizeDependencies(
     return linearized
 }
 
-function createChainExpression(
+function createMixinChainExpression(
     tsInstance: TypeScript,
     mixinRefs: ResolvedMixinRef[],
-    baseExpression: ts.Expression,
-    context: FileMixinContext
+    baseExpression: ts.Expression
 ): ts.Expression {
     const factory = tsInstance.factory
 
-    let expression = baseExpression
-
-    for (const ref of mixinRefs) {
-        if (ref.factoryImport !== undefined) {
-            context.usedFactoryImports.set(`${ref.factoryImport.specifier}::${ref.localFactoryName}`, {
-                specifier    : ref.factoryImport.specifier,
-                importedName : ref.factoryImport.importedName,
-                localName    : ref.localFactoryName
-            })
-        }
-
-        expression = factory.createCallExpression(
-            factory.createIdentifier(ref.localFactoryName),
-            undefined,
-            [ expression ]
-        )
-    }
-
-    return expression
+    return factory.createCallExpression(
+        factory.createIdentifier(mixinChainName),
+        undefined,
+        [
+            baseExpression,
+            ...mixinRefs.map((ref) => mixinValueIdentifier(tsInstance, ref))
+        ]
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,8 +1398,12 @@ function createHelperTypeImport(tsInstance: TypeScript, options: TransformOption
             undefined,
             undefined,
             factory.createNamedImports([
+                factory.createImportSpecifier(false, undefined, factory.createIdentifier(defineMixinClassName)),
+                factory.createImportSpecifier(false, undefined, factory.createIdentifier(mixinChainName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(anyConstructorName)),
-                factory.createImportSpecifier(true, undefined, factory.createIdentifier(classStaticsName))
+                factory.createImportSpecifier(true, undefined, factory.createIdentifier(classStaticsName)),
+                factory.createImportSpecifier(true, undefined, factory.createIdentifier(mixinFactoryName)),
+                factory.createImportSpecifier(true, undefined, factory.createIdentifier(runtimeMixinClassName))
             ])
         ),
         factory.createStringLiteral(options.packageName)

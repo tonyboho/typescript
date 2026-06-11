@@ -1,0 +1,109 @@
+import { it } from "@bryntum/siesta/nodejs.js"
+import type { Test } from "@bryntum/siesta/nodejs.js"
+
+import { defineMixinClass, mixinChain, type AnyConstructor, type MixinFactory } from "../src/index.js"
+
+type NamedInstance = {
+    who(): string
+}
+
+class Base {
+    who(): string {
+        return "Base"
+    }
+}
+
+it("linearizes mixin requirements with C3 order", async (t: Test) => {
+    const A = createNamedMixin("A")
+    const B = createNamedMixin("B", [ A ])
+    const C = createNamedMixin("C", [ A ])
+    const D = createNamedMixin("D", [ B, C ])
+
+    class Consumer extends mixinChain(Base, D) {}
+
+    const instance = new Consumer()
+
+    t.equal(instance.who(), "D>B>C>A>Base", "Diamond dependencies follow C3 method resolution order")
+    t.true(instance instanceof A, "Instance matches transitive mixin A")
+    t.true(instance instanceof B, "Instance matches transitive mixin B")
+    t.true(instance instanceof C, "Instance matches transitive mixin C")
+    t.true(instance instanceof D, "Instance matches direct mixin D")
+})
+
+it("caches mixin applications for the same base", async (t: Test) => {
+    const A = createNamedMixin("A")
+    const B = createNamedMixin("B", [ A ])
+
+    t.equal(mixinChain(Base, B), mixinChain(Base, B), "Repeated chain creation returns the cached class")
+})
+
+it("reuses canonical requirement classes while defining sibling mixins", async (t: Test) => {
+    const aBases: AnyConstructor[] = []
+    const bBases: AnyConstructor[] = []
+    const cBases: AnyConstructor[] = []
+
+    const A = createTrackedMixin("A", aBases)
+
+    createTrackedMixin("B", bBases, [ A ])
+    createTrackedMixin("C", cBases, [ A ])
+
+    t.equal(aBases.length, 1, "Requirement factory is not re-applied for each dependent mixin")
+    t.equal(aBases[0], Object, "Standalone mixin is first applied to Object")
+    t.equal(bBases[0], A, "First dependent mixin receives the canonical requirement class")
+    t.equal(cBases[0], A, "Second dependent mixin reuses the same canonical requirement class")
+})
+
+it("reuses a canonical requirement chain for deeper dependents", async (t: Test) => {
+    const aBases: AnyConstructor[] = []
+    const bBases: AnyConstructor[] = []
+    const cBases: AnyConstructor[] = []
+
+    const A = createTrackedMixin("A", aBases)
+    const B = createTrackedMixin("B", bBases, [ A ])
+
+    createTrackedMixin("C", cBases, [ B ])
+
+    t.equal(aBases.length, 1, "Bottom requirement is not rebuilt for the deeper chain")
+    t.equal(bBases.length, 1, "Top requirement is not rebuilt for the deeper chain")
+    t.equal(bBases[0], A, "Top requirement was built on the canonical bottom class")
+    t.equal(cBases[0], B, "Deeper dependent receives the canonical top requirement class")
+})
+
+it("rejects inconsistent C3 requirements", async (t: Test) => {
+    const A = createNamedMixin("A")
+    const B = createNamedMixin("B")
+    const X = createNamedMixin("X", [ A, B ])
+    const Y = createNamedMixin("Y", [ B, A ])
+
+    t.throwsOk(() => {
+        createNamedMixin("Z", [ X, Y ])
+    }, "Cannot linearize mixin classes", "Inconsistent order is rejected")
+})
+
+function createNamedMixin(
+    name: string,
+    requirements: ReturnType<typeof defineMixinClass>[] = []
+): ReturnType<typeof defineMixinClass> {
+    const factory = ((base: AnyConstructor<NamedInstance>) => {
+        return class extends base {
+            who(): string {
+                return `${name}>${super.who()}`
+            }
+        }
+    }) as unknown as MixinFactory
+
+    return defineMixinClass(name, factory, requirements)
+}
+
+function createTrackedMixin(
+    name: string,
+    bases: AnyConstructor[],
+    requirements: ReturnType<typeof defineMixinClass>[] = []
+): ReturnType<typeof defineMixinClass> {
+    const factory = ((base: AnyConstructor) => {
+        bases.push(base)
+        return class extends base {}
+    }) as unknown as MixinFactory
+
+    return defineMixinClass(name, factory, requirements)
+}

@@ -21,8 +21,12 @@ Current implementation status (SPEC.md plan):
   class with its `extends` switched to `X$base<TypeParams>`. Non-mixin implements
   entries stay out of `X$base` so the contract check still applies.
   `tests/fixture-suite` (basic.t.ts) builds under real tsc + ts-patch.
-- [ ] Step 1 (runtime helper with linearization/dedup/hasInstance) is intentionally
-  deferred; the generated chain currently nests factory calls directly.
+- [x] Step 1: runtime helper with C3 linearization, cached mixin linearizations, cached
+  applications per `(mixin, base)`, and `Symbol.hasInstance` support. Generated consumer
+  bases call `mixinChain(Base, M1, M2)`; generated mixin values are registered with
+  `defineMixinClass(...)`. The canonical class returned by `defineMixinClass` is also
+  stored as the cached application of that mixin to its canonical requirement base, so
+  sibling/deeper dependents reuse existing chain segments instead of rebuilding them.
 - [x] Step 3: cross-file mixin registry (program pre-scan + module resolution).
   `tests/fixture-suite` imports mixin classes from `src/mixins.ts` and verifies that a
   consumer in another file receives their members, statics, and generics at compile time.
@@ -46,7 +50,10 @@ Implementation notes:
   classes nested in namespaces/functions, `export default` mixin classes.
 - Mixin class members must not use `private` or `protected` (root `AGENTS.md` rule);
   the transformer enforces this.
-- Tests: `tests/source-transform.t.ts` (AST/printed assertions + a full in-memory
+- Tests: `tests/runtime-helper.t.ts` (C3 order, application cache, `instanceof`),
+  `tests/source-transform.t.ts` (AST/printed assertions + a full in-memory
   typecheck of transformed output via `typecheckText` in `tests/util.ts`) and
-  `tests/fixture-suite` (real `tsc + ts-patch` standard/legacy decorator builds).
-  Runtime assertions are intentionally not required until the runtime helper step.
+  `tests/fixture-build-and-runtime.t.ts` (real `tsc + ts-patch` standard/legacy decorator
+  builds plus runtime Siesta runs of `tests/fixture-suite`).
+  Fixture coverage includes cross-file consumers (`basic.t.ts`), static inheritance
+  (`statics.t.ts`), and self-reference from inside a mixin body (`self-reference.t.ts`).

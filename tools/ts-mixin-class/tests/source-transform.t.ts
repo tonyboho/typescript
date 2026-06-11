@@ -59,18 +59,24 @@ it("expands an imported class-level @mixin() class into interface + factory + co
     t.true(findVariable(transformedFile, "SourceClass") !== undefined, "Value const is generated")
 
     t.false(printed.includes("@mixin"), "Marker decorator is removed")
-    t.true(printed.includes("import { type AnyConstructor, type ClassStatics } from \"ts-mixin-class\""),
-        "Helper type import is added")
+    t.true(
+        printed.includes(
+            "import { defineMixinClass, mixinChain, type AnyConstructor, type ClassStatics, " +
+            "type MixinFactory, type RuntimeMixinClass } from \"ts-mixin-class\""
+        ),
+        "Helper import is added"
+    )
     t.true(printed.includes("(base: AnyConstructor) => class extends base"),
         "Factory takes a base and returns an anonymous class expression")
     t.true(printed.includes("static staticHelper"), "Static members stay in the factory body")
     t.false(printedInterface(printed).includes("staticHelper"), "Static members are not in the interface")
     t.true(
         printed.includes(
-            "SourceClass$mixin(Object) as unknown as " +
-            "(new <T>(...args: any[]) => SourceClass<T>) & ClassStatics<ReturnType<typeof SourceClass$mixin>>"
+            "defineMixinClass(\"SourceClass\", SourceClass$mixin as unknown as MixinFactory, []) as unknown as " +
+            "(new <T>(...args: any[]) => SourceClass<T>) & " +
+            "ClassStatics<ReturnType<typeof SourceClass$mixin>> & RuntimeMixinClass"
         ),
-        "Value const applies the factory to Object with the declarative cast"
+        "Value const registers the factory with the runtime helper and keeps the declarative cast"
     )
 })
 
@@ -114,8 +120,11 @@ it("supports custom package and decorator options", async (t: Test) => {
     t.true(findInterface(transformedFile, "SourceClass") !== undefined, "Custom marker expands the class")
     t.true(
         printSourceFile(ts, transformedFile)
-            .includes("import { type AnyConstructor, type ClassStatics } from \"custom-mixin-package\""),
-        "Helper type import uses the custom package name"
+            .includes(
+                "import { defineMixinClass, mixinChain, type AnyConstructor, type ClassStatics, " +
+                "type MixinFactory, type RuntimeMixinClass } from \"custom-mixin-package\""
+            ),
+        "Helper import uses the custom package name"
     )
 })
 
@@ -137,8 +146,8 @@ it("expands a dependent mixin with a typed base and a dependency chain", async (
 
     t.true(printed.includes("(base: AnyConstructor<SourceClass1<T>>) => class extends base"),
         "Dependent mixin base parameter is typed with the dependency")
-    t.true(printed.includes("ChildMixin$mixin(SourceClass1$mixin(Object))"),
-        "Value chain applies the dependency factory first")
+    t.true(printed.includes("defineMixinClass(\"ChildMixin\", ChildMixin$mixin as unknown as MixinFactory, [SourceClass1])"),
+        "Value const registers the direct dependency with the runtime helper")
     t.true(printed.includes("interface ChildMixin<T> extends SourceClass1<T>"),
         "Generated interface extends the dependency")
 })
@@ -221,10 +230,10 @@ it("expands a consumer class into a merged intermediate base", async (t: Test) =
         "Merged interface repeats the implements list verbatim")
     t.true(
         printed.includes(
-            "class Consumer$base<A> extends (SourceClass2$mixin(SourceClass1$mixin(Base)) as unknown as " +
+            "class Consumer$base<A> extends (mixinChain(Base, SourceClass1, SourceClass2) as unknown as " +
             "typeof Base & ClassStatics<typeof SourceClass1> & ClassStatics<typeof SourceClass2>)"
         ),
-        "Intermediate base applies the runtime chain with the statics cast"
+        "Intermediate base delegates the runtime chain to the helper with the statics cast"
     )
     t.true(printed.includes("class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, SourceClass2<A>"),
         "Consumer extends the intermediate base and keeps its implements clause")
@@ -246,10 +255,10 @@ it("expands a consumer class without an explicit base", async (t: Test) => {
 
     t.true(
         printed.includes(
-            "class Consumer$base<T> extends (SourceClass1$mixin(Object) as unknown as " +
+            "class Consumer$base<T> extends (mixinChain(Object, SourceClass1) as unknown as " +
             "AnyConstructor & ClassStatics<typeof SourceClass1>)"
         ),
-        "Chain starts at Object and the cast head is AnyConstructor"
+        "Helper chain starts at Object and the cast head is AnyConstructor"
     )
 })
 
@@ -272,8 +281,8 @@ it("consumer transitively applies mixin dependencies", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("ChildMixin$mixin(SourceClass1$mixin(Object))"),
-        "Dependency factory is applied before the dependent mixin")
+    t.true(printed.includes("mixinChain(Object, ChildMixin)"),
+        "Consumer delegates transitive dependency application to the runtime helper")
     t.true(printed.includes("interface Consumer$base<T> extends ChildMixin<T>"),
         "Merged interface lists only the direct implements entries")
 })

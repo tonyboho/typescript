@@ -1,6 +1,6 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
-import { SourceClass1, SourceClass2 } from "./mixins"
+import { SourceClass1, SourceClass2 } from "./mixins.js"
 
 
 class Base {

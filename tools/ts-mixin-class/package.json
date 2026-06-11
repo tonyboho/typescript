@@ -20,7 +20,7 @@
         "pretest": "pnpm run build",
         "test": "siesta dist/tests",
         "typecheck": "tsc -p tsconfig.json --noEmit",
-        "fixture": "pnpm --dir tests/fixture-suite run build",
+        "fixture": "pnpm --dir tests/fixture-suite run build && pnpm --dir tests/fixture-suite run test",
         "prepare": "ts-patch install"
     },
     "keywords": [
