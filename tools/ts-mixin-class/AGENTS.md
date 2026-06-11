@@ -10,8 +10,9 @@ Current skeleton behavior:
 - The transformer detects class decorators imported from this package.
 - The default marker is `@mixin(...)`, imported as a named import or through a namespace
   import from `ts-mixin-class`.
-- A detected marker decorator is removed from the class AST. The actual mixin expansion is
-  intentionally not implemented yet.
+- For now this is a passthrough transformer: detected marker decorators are preserved and
+  the original `SourceFile` is returned. The actual mixin expansion is intentionally not
+  implemented yet.
 
 Keep import-aware detection. A local function named `mixin` must not be treated as the
 package marker.

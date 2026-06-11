@@ -111,58 +111,9 @@ export function transformSourceFile(
         return sourceFile
     }
 
-    let changed = false
+    hasMixinClass(tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions)
 
-    const transformed = tsInstance.transform(sourceFile, [
-        (context) => {
-            const visit: ts.Visitor = (node) => {
-                if (!tsInstance.isClassDeclaration(node) && !tsInstance.isClassExpression(node)) {
-                    return tsInstance.visitEachChild(node, visit, context)
-                }
-
-                const modifiers = removeMixinDecorators(
-                    tsInstance,
-                    node.modifiers,
-                    mixinDecoratorImports,
-                    resolvedOptions
-                )
-
-                if (modifiers === node.modifiers) {
-                    return tsInstance.visitEachChild(node, visit, context)
-                }
-
-                changed = true
-
-                if (tsInstance.isClassDeclaration(node)) {
-                    return context.factory.updateClassDeclaration(
-                        node,
-                        modifiers,
-                        node.name,
-                        node.typeParameters,
-                        node.heritageClauses,
-                        node.members
-                    )
-                }
-
-                return context.factory.updateClassExpression(
-                    node,
-                    modifiers,
-                    node.name,
-                    node.typeParameters,
-                    node.heritageClauses,
-                    node.members
-                )
-            }
-
-            return (nextSourceFile) => tsInstance.visitNode(nextSourceFile, visit) as ts.SourceFile
-        }
-    ])
-
-    const transformedSourceFile = transformed.transformed[0]
-
-    transformed.dispose()
-
-    return changed ? transformedSourceFile : sourceFile
+    return sourceFile
 }
 
 export function hasMixinDecorator(
@@ -185,25 +136,32 @@ export function printSourceFile(tsInstance: TypeScript, sourceFile: ts.SourceFil
     return tsInstance.createPrinter({ newLine : tsInstance.NewLineKind.LineFeed }).printFile(sourceFile)
 }
 
-function removeMixinDecorators(
+function hasMixinClass(
     tsInstance: TypeScript,
-    modifiers: ts.NodeArray<ts.ModifierLike> | undefined,
+    sourceFile: ts.SourceFile,
     imports: MixinDecoratorImports,
     options: TransformOptions
-): ts.NodeArray<ts.ModifierLike> | undefined {
-    if (modifiers === undefined) {
-        return modifiers
+): boolean {
+    let found = false
+
+    const visit = (node: ts.Node): void => {
+        if (found) {
+            return
+        }
+
+        if ((tsInstance.isClassDeclaration(node) || tsInstance.isClassExpression(node)) &&
+            hasMixinDecorator(tsInstance, node, imports, options)
+        ) {
+            found = true
+            return
+        }
+
+        tsInstance.forEachChild(node, visit)
     }
 
-    const nextModifiers = modifiers.filter((modifier) => {
-        return !tsInstance.isDecorator(modifier) || !isMixinDecorator(tsInstance, modifier, imports, options)
-    })
+    visit(sourceFile)
 
-    if (nextModifiers.length === modifiers.length) {
-        return modifiers
-    }
-
-    return tsInstance.factory.createNodeArray(nextModifiers)
+    return found
 }
 
 function isMixinDecorator(

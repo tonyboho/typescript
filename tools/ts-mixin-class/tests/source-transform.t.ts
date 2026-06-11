@@ -30,7 +30,7 @@ it("does not treat a local @mixin() decorator as the package marker", async (t: 
     t.equal(transformedFile, sourceFile, "Local decorator is ignored")
 })
 
-it("removes an imported class-level @mixin() marker decorator", async (t: Test) => {
+it("keeps an imported class-level @mixin() marker decorator untouched", async (t: Test) => {
     const sourceFile      = createSourceFile(`
         import { mixin } from "ts-mixin-class"
 
@@ -40,9 +40,9 @@ it("removes an imported class-level @mixin() marker decorator", async (t: Test) 
     const transformedFile = transformSourceFile(ts, sourceFile)
     const sourceClass     = findClass(transformedFile, "SourceClass")
 
-    t.not.equal(transformedFile, sourceFile, "Returns a transformed SourceFile instance")
-    t.equal(ts.getDecorators(sourceClass)?.length ?? 0, 0, "Mixin marker decorator is consumed")
-    t.false(printSourceFile(ts, transformedFile).includes("@mixin"), "Printed output has no mixin marker")
+    t.equal(transformedFile, sourceFile, "Returns the original SourceFile instance")
+    t.equal(ts.getDecorators(sourceClass)?.length ?? 0, 1, "Mixin marker decorator is preserved")
+    t.true(printSourceFile(ts, transformedFile).includes("@mixin"), "Printed output keeps the mixin marker")
 })
 
 it("supports aliased and namespace decorator imports", async (t: Test) => {
@@ -51,14 +51,14 @@ it("supports aliased and namespace decorator imports", async (t: Test) => {
 
         @mix()
         class SourceClass {}
-    `))), 0, "Aliased import marker is consumed")
+    `))), 1, "Aliased import marker is preserved")
 
     t.equal(countClassDecorators(transformSourceFile(ts, createSourceFile(`
         import * as MixinClass from "ts-mixin-class"
 
         @MixinClass.mixin()
         class SourceClass {}
-    `))), 0, "Namespace import marker is consumed")
+    `))), 1, "Namespace import marker is preserved")
 })
 
 it("supports custom package and decorator options", async (t: Test) => {
@@ -72,7 +72,7 @@ it("supports custom package and decorator options", async (t: Test) => {
         packageName   : "custom-mixin-package"
     })
 
-    t.equal(countClassDecorators(transformedFile), 0, "Custom marker is consumed")
+    t.equal(countClassDecorators(transformedFile), 1, "Custom marker is preserved")
 })
 
 function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration {
