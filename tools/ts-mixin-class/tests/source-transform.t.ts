@@ -262,6 +262,55 @@ it("expands a consumer class without an explicit base", async (t: Test) => {
     )
 })
 
+it("supports a generic consumer base class", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        class Base<T> {
+            baseValue: T
+
+            constructor (baseValue: T) {
+                this.baseValue = baseValue
+            }
+
+            baseMethod (): T {
+                return this.baseValue
+            }
+        }
+
+        class Consumer<A> extends Base<A> implements SourceClass1<string> {
+            method (): A {
+                return super.baseMethod()
+            }
+        }
+
+        const consumer = new Consumer<number>(42)
+
+        const v1: number = consumer.baseValue
+        const v2: number = consumer.method()
+        const v3: string = consumer.passThrough1("x")
+
+        // @ts-expect-error Base<T> is instantiated as Base<number>.
+        const e1: string = consumer.baseValue
+
+        // @ts-expect-error SourceClass1 is instantiated as SourceClass1<string>.
+        const e2: number = consumer.passThrough1(1)
+
+        void [v1, v2, v3, e1, e2]
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+    const diagnostics = typecheckText(printed)
+
+    t.true(printed.includes("interface Consumer$base<A> extends Base<A>, SourceClass1<string>"),
+        "Merged interface includes the instantiated generic base")
+    t.expect(diagnostics).toEqual([])
+})
+
 it("consumer transitively applies mixin dependencies", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { mixin } from "ts-mixin-class"

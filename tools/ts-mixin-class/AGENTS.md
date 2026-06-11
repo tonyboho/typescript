@@ -32,9 +32,13 @@ Current implementation status (SPEC.md plan):
   consumer in another file receives their members, statics, and generics at compile time.
 - [ ] Steps 5-8: more fixtures, proper diagnostics, declaration emit,
   position-preserving tsserver mode.
-- Consumer limitations for now: generic base classes (`extends Base<T>`) are rejected,
-  intermediate declarations are not exported (declaration emit will need this),
+- Consumer limitations for now: intermediate declarations are not exported (declaration emit will need this),
   consumers must be top-level named class declarations.
+- Generic consumer bases (`extends Base<T>`) are supported for instance typing and runtime.
+  The generated runtime `extends` cast intentionally uses `AnyConstructor` plus
+  `ClassStatics<typeof Base>` because TypeScript forbids referencing consumer type
+  parameters in base-class expressions (`TS2562`); constructor argument types are therefore
+  permissive for this case.
 
 Implementation notes:
 

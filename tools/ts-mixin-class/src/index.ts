@@ -1064,13 +1064,6 @@ function expandConsumerClass(
     const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
 
-    if (extendsType?.typeArguments !== undefined) {
-        throw new MixinTransformError(
-            sourceFile, extendsType,
-            "A generic base class of a mixin consumer is not supported yet"
-        )
-    }
-
     const mixinHeritage = consumedMixins(tsInstance, declaration, context)
     const directMixinRefs = mixinHeritage.map((heritageType) => {
         return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
@@ -1084,7 +1077,13 @@ function expandConsumerClass(
         undefined,
         baseName,
         typeParameters,
-        [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, mixinHeritage) ],
+        [ factory.createHeritageClause(
+            tsInstance.SyntaxKind.ExtendsKeyword,
+            [
+                ...(extendsType?.typeArguments !== undefined ? [ extendsType ] : []),
+                ...mixinHeritage
+            ]
+        ) ],
         []
     )
 
@@ -1137,9 +1136,7 @@ function createConsumerBaseCastType(
     const factory = tsInstance.factory
 
     const types = [
-        extendsType !== undefined
-            ? factory.createTypeQueryNode(expressionToEntityName(tsInstance, extendsType.expression))
-            : factory.createTypeReferenceNode(anyConstructorName, undefined),
+        createConsumerBaseHeadType(tsInstance, extendsType),
         ...mixinRefs
             .filter((ref) => ref.localValueName !== undefined)
             .map((ref) => {
@@ -1150,6 +1147,28 @@ function createConsumerBaseCastType(
     ]
 
     return types.length === 1 ? types[0] : factory.createIntersectionTypeNode(types)
+}
+
+function createConsumerBaseHeadType(
+    tsInstance: TypeScript,
+    extendsType: ts.ExpressionWithTypeArguments | undefined
+): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    if (extendsType === undefined) {
+        return factory.createTypeReferenceNode(anyConstructorName, undefined)
+    }
+
+    if (extendsType.typeArguments === undefined) {
+        return factory.createTypeQueryNode(expressionToEntityName(tsInstance, extendsType.expression))
+    }
+
+    return factory.createIntersectionTypeNode([
+        factory.createTypeReferenceNode(anyConstructorName, undefined),
+        factory.createTypeReferenceNode(classStaticsName, [
+            factory.createTypeQueryNode(expressionToEntityName(tsInstance, extendsType.expression))
+        ])
+    ])
 }
 
 function consumerHeritageClauses(
