@@ -303,44 +303,44 @@ function hasDifferentAstShape(
     left: ts.SourceFile,
     right: ts.SourceFile
 ): boolean {
-    const hasChild = (node: ts.Node): boolean => {
-        return tsInstance.forEachChild(node, () => true) === true
-    }
-    const collectChildren = (node: ts.Node): ts.Node[] => {
-        const children: ts.Node[] = []
+    const leftStack: ts.Node[] = [ left ]
+    const rightStack: ts.Node[] = [ right ]
+    const leftChildren: ts.Node[] = []
+    const rightChildren: ts.Node[] = []
+    const collectChildren = (node: ts.Node, children: ts.Node[]): void => {
+        children.length = 0
 
         tsInstance.forEachChild(node, (child) => {
             children.push(child)
         })
-
-        return children
     }
-    const visit = (leftNode: ts.Node, rightNode: ts.Node): boolean => {
+
+    while (leftStack.length > 0) {
+        const leftNode = leftStack.pop() as ts.Node
+        const rightNode = rightStack.pop()
+
+        if (rightNode === undefined) {
+            return true
+        }
+
         if (leftNode.kind !== rightNode.kind || leftNode.pos !== rightNode.pos || leftNode.end !== rightNode.end) {
             return true
         }
 
-        let rightChildren: ts.Node[] | undefined
-        let rightChildIndex = 0
+        collectChildren(leftNode, leftChildren)
+        collectChildren(rightNode, rightChildren)
 
-        const hasDifferentChild = tsInstance.forEachChild(leftNode, (leftChild) => {
-            rightChildren ??= collectChildren(rightNode)
-
-            const rightChild = rightChildren[rightChildIndex++]
-
-            return rightChild === undefined || visit(leftChild, rightChild) || undefined
-        }) === true
-
-        if (hasDifferentChild) {
+        if (leftChildren.length !== rightChildren.length) {
             return true
         }
 
-        return rightChildren === undefined
-            ? hasChild(rightNode)
-            : rightChildIndex !== rightChildren.length
+        for (let index = leftChildren.length - 1; index >= 0; index--) {
+            leftStack.push(leftChildren[index])
+            rightStack.push(rightChildren[index])
+        }
     }
 
-    return visit(left, right)
+    return rightStack.length !== 0
 }
 
 function cloneLayeredSourceFileForTransform(
