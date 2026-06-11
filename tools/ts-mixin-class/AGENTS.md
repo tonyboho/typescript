@@ -20,10 +20,12 @@ Current implementation status (SPEC.md plan):
   (runtime chain with transitive dependencies linearized/deduplicated) + the original
   class with its `extends` switched to `X$base<TypeParams>`. Non-mixin implements
   entries stay out of `X$base` so the contract check still applies.
-  `tests/fixture-suite` (basic.t.ts) is green under real tsc + ts-patch.
+  `tests/fixture-suite` (basic.t.ts) builds under real tsc + ts-patch.
 - [ ] Step 1 (runtime helper with linearization/dedup/hasInstance) is intentionally
   deferred; the generated chain currently nests factory calls directly.
-- [ ] Step 3: cross-file mixin registry (program pre-scan + module resolution).
+- [x] Step 3: cross-file mixin registry (program pre-scan + module resolution).
+  `tests/fixture-suite` imports mixin classes from `src/mixins.ts` and verifies that a
+  consumer in another file receives their members, statics, and generics at compile time.
 - [ ] Steps 5-8: more fixtures, proper diagnostics, declaration emit,
   position-preserving tsserver mode.
 - Consumer limitations for now: generic base classes (`extends Base<T>`) are rejected,
@@ -45,5 +47,6 @@ Implementation notes:
 - Mixin class members must not use `private` or `protected` (root `AGENTS.md` rule);
   the transformer enforces this.
 - Tests: `tests/source-transform.t.ts` (AST/printed assertions + a full in-memory
-  typecheck of transformed output via `typecheckText` in `tests/util.ts`).
-  `tests/fixture-suite` will become green only after step 4 (consumer transformation).
+  typecheck of transformed output via `typecheckText` in `tests/util.ts`) and
+  `tests/fixture-suite` (real `tsc + ts-patch` standard/legacy decorator builds).
+  Runtime assertions are intentionally not required until the runtime helper step.

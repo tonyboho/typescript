@@ -1,3 +1,4 @@
+import path from "node:path"
 import type * as ts from "typescript"
 import type { PluginConfig, ProgramTransformerExtras } from "ts-patch"
 
@@ -18,11 +19,41 @@ type MixinDecoratorImports = {
     namespaces  : Set<string>
 }
 
-type MixinClassInfo = {
-    declaration  : ts.ClassDeclaration,
+// ---------------------------------------------------------------------------
+// Реестр mixin-классов программы (кросс-файловость)
+
+export type RegisteredMixin = {
+    fileName     : string,
     name         : string,
-    // имена mixin-классов этого же файла из implements, в порядке объявления
+    // ключи реестра зависимостей (mixin-записи из implements)
     dependencies : string[]
+}
+
+export type MixinRegistry = Map<string, RegisteredMixin>
+
+export type CrossFileContext = {
+    registry : MixinRegistry,
+    resolveModuleFileName : (specifier: string, containingFile: string) => string | undefined
+}
+
+// Ссылка на миксин с точки зрения трансформируемого файла
+type ResolvedMixinRef = {
+    key              : string,
+    className        : string,
+    // имя значения миксина в этом файле (same-file или импорт); undefined для
+    // транзитивной зависимости, которую файл не импортирует
+    localValueName   : string | undefined,
+    localFactoryName : string,
+    factoryImport    : { specifier: string, importedName: string } | undefined,
+    dependencies     : string[],
+    declaration      : ts.ClassDeclaration | undefined
+}
+
+type FileMixinContext = {
+    byLocalName : Map<string, ResolvedMixinRef>,
+    byKey       : Map<string, ResolvedMixinRef>,
+    // фабрики, реально использованные в сгенерированных цепочках
+    usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>
 }
 
 const defaultTransformOptions: TransformOptions = {
@@ -64,7 +95,16 @@ export default function transformProgram(
 ): ts.Program {
     const compilerOptions = program.getCompilerOptions()
     const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
-    const nextHost        = createMixinClassCompilerHost(tsInstance, compilerHost, config)
+    const options         = resolveTransformOptions(config)
+
+    const resolveModuleFileName = (specifier: string, containingFile: string): string | undefined => {
+        return tsInstance.resolveModuleName(specifier, containingFile, compilerOptions, compilerHost)
+            .resolvedModule?.resolvedFileName
+    }
+
+    const registry  = buildMixinRegistry(tsInstance, program, options, resolveModuleFileName)
+    const crossFile = registry.size === 0 ? undefined : { registry, resolveModuleFileName }
+    const nextHost  = createMixinClassCompilerHost(tsInstance, compilerHost, config, crossFile)
 
     return tsInstance.createProgram(
         program.getRootFileNames(),
@@ -77,7 +117,8 @@ export default function transformProgram(
 export function createMixinClassCompilerHost(
     tsInstance: TypeScript,
     compilerHost: ts.CompilerHost,
-    config: MixinClassTransformerConfig
+    config: MixinClassTransformerConfig,
+    crossFile?: CrossFileContext
 ): ts.CompilerHost {
     const options = resolveTransformOptions(config)
 
@@ -96,7 +137,7 @@ export function createMixinClassCompilerHost(
                 return sourceFile
             }
 
-            const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options)
+            const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options, crossFile)
 
             if (transformedSourceFile === sourceFile) {
                 return sourceFile
@@ -114,105 +155,434 @@ export function createMixinClassCompilerHost(
 }
 
 // ---------------------------------------------------------------------------
+// Построение реестра mixin-классов по всем файлам программы
+
+export function buildMixinRegistry(
+    tsInstance: TypeScript,
+    program: ts.Program,
+    options: Partial<TransformOptions> = {},
+    resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined
+): MixinRegistry {
+    const resolvedOptions = {
+        ...defaultTransformOptions,
+        ...options
+    }
+
+    type Candidate = {
+        sourceFile       : ts.SourceFile,
+        declaration      : ts.ClassDeclaration,
+        name             : string,
+        implementsNames  : string[]
+    }
+
+    const candidates: Candidate[] = []
+
+    for (const sourceFile of program.getSourceFiles()) {
+        if (shouldSkipSourceFile(sourceFile) || !sourceFile.text.includes(resolvedOptions.packageName)) {
+            continue
+        }
+
+        const imports = collectMixinDecoratorImports(tsInstance, sourceFile, resolvedOptions)
+
+        if (imports.identifiers.size === 0 && imports.namespaces.size === 0) {
+            continue
+        }
+
+        for (const statement of sourceFile.statements) {
+            if (!tsInstance.isClassDeclaration(statement) ||
+                statement.name === undefined ||
+                !hasMixinDecorator(tsInstance, statement, imports, resolvedOptions)
+            ) {
+                continue
+            }
+
+            candidates.push({
+                sourceFile,
+                declaration     : statement,
+                name            : statement.name.text,
+                implementsNames : implementsTypes(tsInstance, statement)
+                    .map((heritageType) => heritageType.expression)
+                    .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
+                    .map((expression) => expression.text)
+            })
+        }
+    }
+
+    const registry: MixinRegistry = new Map()
+
+    for (const candidate of candidates) {
+        registry.set(registryKey(candidate.sourceFile.fileName, candidate.name), {
+            fileName     : candidate.sourceFile.fileName,
+            name         : candidate.name,
+            dependencies : []
+        })
+    }
+
+    const importMaps = new Map<string, Map<string, { resolvedFileName: string, importedName: string }>>()
+
+    for (const candidate of candidates) {
+        const fileName = candidate.sourceFile.fileName
+        const entry    = registry.get(registryKey(fileName, candidate.name))
+
+        if (entry === undefined) {
+            continue
+        }
+
+        let importMap = importMaps.get(fileName)
+
+        if (importMap === undefined) {
+            importMap = buildImportedNameMap(tsInstance, candidate.sourceFile, resolveModuleFileName)
+            importMaps.set(fileName, importMap)
+        }
+
+        for (const implementsName of candidate.implementsNames) {
+            const sameFileKey = registryKey(fileName, implementsName)
+
+            if (registry.has(sameFileKey)) {
+                entry.dependencies.push(sameFileKey)
+                continue
+            }
+
+            const imported = importMap.get(implementsName)
+
+            if (imported !== undefined) {
+                const importedKey = registryKey(imported.resolvedFileName, imported.importedName)
+
+                if (registry.has(importedKey)) {
+                    entry.dependencies.push(importedKey)
+                }
+            }
+        }
+    }
+
+    return registry
+}
+
+function registryKey(fileName: string, name: string): string {
+    return `${normalizePath(fileName)}::${name}`
+}
+
+function normalizePath(fileName: string): string {
+    return fileName.replaceAll("\\", "/")
+}
+
+// localName -> откуда импортировано (только успешно разрешённые именованные импорты)
+function buildImportedNameMap(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined
+): Map<string, { resolvedFileName: string, importedName: string }> {
+    const importMap = new Map<string, { resolvedFileName: string, importedName: string }>()
+
+    if (resolveModuleFileName === undefined) {
+        return importMap
+    }
+
+    for (const statement of sourceFile.statements) {
+        if (!tsInstance.isImportDeclaration(statement) ||
+            !tsInstance.isStringLiteral(statement.moduleSpecifier)
+        ) {
+            continue
+        }
+
+        const namedBindings = statement.importClause?.namedBindings
+
+        if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
+            continue
+        }
+
+        const resolvedFileName = resolveModuleFileName(statement.moduleSpecifier.text, sourceFile.fileName)
+
+        if (resolvedFileName === undefined) {
+            continue
+        }
+
+        for (const element of namedBindings.elements) {
+            importMap.set(element.name.text, {
+                resolvedFileName,
+                importedName : element.propertyName?.text ?? element.name.text
+            })
+        }
+    }
+
+    return importMap
+}
+
+// ---------------------------------------------------------------------------
 // Трансформация исходного файла
 
 export function transformSourceFile(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
-    options: Partial<TransformOptions> = {}
+    options: Partial<TransformOptions> = {},
+    crossFile?: CrossFileContext
 ): ts.SourceFile {
     const resolvedOptions = {
         ...defaultTransformOptions,
         ...options
     }
 
-    if (!sourceFile.text.includes(resolvedOptions.packageName)) {
+    if (crossFile === undefined && !sourceFile.text.includes(resolvedOptions.packageName)) {
         return sourceFile
     }
 
     const mixinDecoratorImports = collectMixinDecoratorImports(tsInstance, sourceFile, resolvedOptions)
+    const context               = buildFileMixinContext(
+        tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions, crossFile
+    )
 
-    if (mixinDecoratorImports.identifiers.size === 0 && mixinDecoratorImports.namespaces.size === 0) {
+    if (context.byLocalName.size === 0) {
         return sourceFile
     }
 
-    const mixinClasses = collectMixinClasses(tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions)
+    let expandedAnything = false
 
-    if (mixinClasses.size === 0) {
-        return sourceFile
-    }
-
-    const statements: ts.Statement[] = []
-
-    let helperImportInserted = false
-
-    for (const statement of sourceFile.statements) {
-        statements.push(statement)
-
-        if (!helperImportInserted && isPackageImport(tsInstance, statement, resolvedOptions)) {
-            statements.push(createHelperTypeImport(tsInstance, resolvedOptions))
-            helperImportInserted = true
-        }
-    }
-
-    const expandedStatements = statements.flatMap((statement) => {
+    const expandedStatements = sourceFile.statements.flatMap((statement): ts.Statement[] => {
         if (tsInstance.isClassDeclaration(statement) && statement.name !== undefined) {
-            const info = mixinClasses.get(statement.name.text)
+            const ref = context.byLocalName.get(statement.name.text)
 
-            if (info !== undefined && info.declaration === statement) {
-                return expandMixinClass(tsInstance, sourceFile, info, mixinClasses)
+            if (ref !== undefined && ref.declaration === statement) {
+                expandedAnything = true
+                return expandMixinClass(tsInstance, sourceFile, ref, context)
             }
 
-            if (consumedMixins(tsInstance, statement, mixinClasses).length > 0) {
-                return expandConsumerClass(tsInstance, sourceFile, statement, mixinClasses)
+            if (consumedMixins(tsInstance, statement, context).length > 0) {
+                expandedAnything = true
+                return expandConsumerClass(tsInstance, sourceFile, statement, context)
             }
         }
 
         return [ statement ]
     })
 
-    return tsInstance.factory.updateSourceFile(sourceFile, expandedStatements)
+    if (!expandedAnything) {
+        return sourceFile
+    }
+
+    return tsInstance.factory.updateSourceFile(
+        sourceFile,
+        insertGeneratedImports(tsInstance, expandedStatements, context, resolvedOptions)
+    )
 }
 
-function collectMixinClasses(
+// Сгенерированные импорты (хелперы типов + фабрики миксинов из других модулей)
+// вставляются после последнего исходного импорта
+function insertGeneratedImports(
+    tsInstance: TypeScript,
+    statements: ts.Statement[],
+    context: FileMixinContext,
+    options: TransformOptions
+): ts.Statement[] {
+    const factory = tsInstance.factory
+
+    const generatedImports: ts.ImportDeclaration[] = [ createHelperTypeImport(tsInstance, options) ]
+
+    const bySpecifier = new Map<string, Array<{ importedName: string, localName: string }>>()
+
+    for (const factoryImport of context.usedFactoryImports.values()) {
+        const elements = bySpecifier.get(factoryImport.specifier) ?? []
+
+        elements.push(factoryImport)
+        bySpecifier.set(factoryImport.specifier, elements)
+    }
+
+    for (const [ specifier, elements ] of bySpecifier) {
+        generatedImports.push(factory.createImportDeclaration(
+            undefined,
+            factory.createImportClause(
+                undefined,
+                undefined,
+                factory.createNamedImports(elements.map((element) => {
+                    return factory.createImportSpecifier(
+                        false,
+                        element.importedName === element.localName
+                            ? undefined
+                            : factory.createIdentifier(element.importedName),
+                        factory.createIdentifier(element.localName)
+                    )
+                }))
+            ),
+            factory.createStringLiteral(specifier)
+        ))
+    }
+
+    let lastImportIndex = -1
+
+    for (let index = 0; index < statements.length; index++) {
+        if (tsInstance.isImportDeclaration(statements[index])) {
+            lastImportIndex = index
+        }
+    }
+
+    return [
+        ...statements.slice(0, lastImportIndex + 1),
+        ...generatedImports,
+        ...statements.slice(lastImportIndex + 1)
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// Контекст миксинов трансформируемого файла
+
+function buildFileMixinContext(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     imports: MixinDecoratorImports,
-    options: TransformOptions
-): Map<string, MixinClassInfo> {
-    const mixinClasses = new Map<string, MixinClassInfo>()
-
-    for (const statement of sourceFile.statements) {
-        if (!tsInstance.isClassDeclaration(statement) ||
-            !hasMixinDecorator(tsInstance, statement, imports, options)
-        ) {
-            continue
-        }
-
-        if (statement.name === undefined) {
-            throw new MixinTransformError(sourceFile, statement, "A mixin class must have a name")
-        }
-
-        mixinClasses.set(statement.name.text, {
-            declaration  : statement,
-            name         : statement.name.text,
-            dependencies : []
-        })
+    options: TransformOptions,
+    crossFile?: CrossFileContext
+): FileMixinContext {
+    const context: FileMixinContext = {
+        byLocalName        : new Map(),
+        byKey              : new Map(),
+        usedFactoryImports : new Map()
     }
 
-    for (const info of mixinClasses.values()) {
-        validateMixinClass(tsInstance, sourceFile, info.declaration)
-
-        for (const heritageType of implementsTypes(tsInstance, info.declaration)) {
-            if (tsInstance.isIdentifier(heritageType.expression) &&
-                mixinClasses.has(heritageType.expression.text)
+    // 1. mixin-классы этого файла
+    if (imports.identifiers.size > 0 || imports.namespaces.size > 0) {
+        for (const statement of sourceFile.statements) {
+            if (!tsInstance.isClassDeclaration(statement) ||
+                !hasMixinDecorator(tsInstance, statement, imports, options)
             ) {
-                info.dependencies.push(heritageType.expression.text)
+                continue
+            }
+
+            if (statement.name === undefined) {
+                throw new MixinTransformError(sourceFile, statement, "A mixin class must have a name")
+            }
+
+            validateMixinClass(tsInstance, sourceFile, statement)
+
+            const name = statement.name.text
+            const ref: ResolvedMixinRef = {
+                key              : registryKey(sourceFile.fileName, name),
+                className        : name,
+                localValueName   : name,
+                localFactoryName : name + mixinFactorySuffix,
+                factoryImport    : undefined,
+                dependencies     : [],
+                declaration      : statement
+            }
+
+            context.byLocalName.set(name, ref)
+            context.byKey.set(ref.key, ref)
+        }
+    }
+
+    // 2. импортированные mixin-классы (по реестру)
+    if (crossFile !== undefined) {
+        const importMap = buildImportedNameMap(tsInstance, sourceFile, crossFile.resolveModuleFileName)
+
+        for (const statement of sourceFile.statements) {
+            if (!tsInstance.isImportDeclaration(statement) ||
+                !tsInstance.isStringLiteral(statement.moduleSpecifier)
+            ) {
+                continue
+            }
+
+            const namedBindings = statement.importClause?.namedBindings
+
+            if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
+                continue
+            }
+
+            for (const element of namedBindings.elements) {
+                const localName = element.name.text
+                const imported  = importMap.get(localName)
+
+                if (imported === undefined || context.byLocalName.has(localName)) {
+                    continue
+                }
+
+                const key        = registryKey(imported.resolvedFileName, imported.importedName)
+                const registered = crossFile.registry.get(key)
+
+                if (registered === undefined) {
+                    continue
+                }
+
+                const ref: ResolvedMixinRef = {
+                    key,
+                    className        : registered.name,
+                    localValueName   : localName,
+                    localFactoryName : localName + mixinFactorySuffix,
+                    factoryImport    : {
+                        specifier    : statement.moduleSpecifier.text,
+                        importedName : imported.importedName + mixinFactorySuffix
+                    },
+                    dependencies     : registered.dependencies,
+                    declaration      : undefined
+                }
+
+                context.byLocalName.set(localName, ref)
+                context.byKey.set(key, ref)
             }
         }
     }
 
-    return mixinClasses
+    // 3. зависимости same-file миксинов (по локальным именам из implements)
+    for (const ref of context.byLocalName.values()) {
+        if (ref.declaration === undefined) {
+            continue
+        }
+
+        for (const heritageType of implementsTypes(tsInstance, ref.declaration)) {
+            if (tsInstance.isIdentifier(heritageType.expression)) {
+                const dependency = context.byLocalName.get(heritageType.expression.text)
+
+                if (dependency !== undefined) {
+                    ref.dependencies.push(dependency.key)
+                }
+            }
+        }
+    }
+
+    // 4. транзитивное замыкание по реестру: зависимости, которые файл не импортирует
+    if (crossFile !== undefined) {
+        const queue = [ ...context.byKey.values() ].flatMap((ref) => ref.dependencies)
+
+        while (queue.length > 0) {
+            const key = queue.pop()
+
+            if (key === undefined || context.byKey.has(key)) {
+                continue
+            }
+
+            const registered = crossFile.registry.get(key)
+
+            if (registered === undefined) {
+                continue
+            }
+
+            context.byKey.set(key, {
+                key,
+                className        : registered.name,
+                localValueName   : undefined,
+                localFactoryName : registered.name + mixinFactorySuffix,
+                factoryImport    : {
+                    specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                    importedName : registered.name + mixinFactorySuffix
+                },
+                dependencies     : registered.dependencies,
+                declaration      : undefined
+            })
+
+            queue.push(...registered.dependencies)
+        }
+    }
+
+    return context
+}
+
+function relativeImportSpecifier(fromFileName: string, toFileName: string): string {
+    const relative = path.posix.relative(
+        path.posix.dirname(normalizePath(fromFileName)),
+        normalizePath(toFileName)
+    )
+
+    const withoutExtension = relative
+        .replace(/\.[cm]?tsx?$/, "")
+
+    return withoutExtension.startsWith(".") ? withoutExtension : "./" + withoutExtension
 }
 
 function validateMixinClass(
@@ -261,26 +631,35 @@ function validateMixinClass(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Трансформация mixin-класса
+//
 // Mixin-класс разворачивается в три декларации (см. SPEC.md):
 //
 //     interface X<T> { ...сигнатуры инстанс-членов... }
 //     const X$mixin = <T>(base: AnyConstructor) => class extends base { ...тело... }
 //     const X = X$mixin(Object) as unknown as
 //         (new <T>(...args: any[]) => X<T>) & ClassStatics<ReturnType<typeof X$mixin>>
+
 function expandMixinClass(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
-    info: MixinClassInfo,
-    mixinClasses: Map<string, MixinClassInfo>
+    ref: ResolvedMixinRef,
+    context: FileMixinContext
 ): ts.Statement[] {
-    const factory        = tsInstance.factory
-    const declaration    = info.declaration
+    const factory         = tsInstance.factory
+    const declaration     = ref.declaration
+
+    if (declaration === undefined) {
+        throw new Error(`Mixin class ${ref.className} has no declaration in the transformed file`)
+    }
+
     const exportModifiers = exportModifiersOf(tsInstance, declaration)
-    const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
+    const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
 
     const interfaceDeclaration = factory.createInterfaceDeclaration(
         exportModifiers,
-        info.name,
+        ref.className,
         typeParameters,
         interfaceHeritageClauses(tsInstance, declaration),
         buildInterfaceMembers(tsInstance, sourceFile, declaration)
@@ -290,13 +669,13 @@ function expandMixinClass(
         exportModifiers,
         factory.createVariableDeclarationList([
             factory.createVariableDeclaration(
-                info.name + mixinFactorySuffix,
+                ref.localFactoryName,
                 undefined,
                 undefined,
                 factory.createArrowFunction(
                     undefined,
                     typeParameters,
-                    [ createBaseParameter(tsInstance, declaration, mixinClasses) ],
+                    [ createBaseParameter(tsInstance, declaration, context) ],
                     undefined,
                     undefined,
                     factory.createClassExpression(
@@ -317,12 +696,17 @@ function expandMixinClass(
         exportModifiers,
         factory.createVariableDeclarationList([
             factory.createVariableDeclaration(
-                info.name,
+                ref.className,
                 undefined,
                 undefined,
                 factory.createAsExpression(
                     factory.createAsExpression(
-                        createMixinChainExpression(tsInstance, info, mixinClasses),
+                        createChainExpression(
+                            tsInstance,
+                            [ ...linearizeDependencies(ref.dependencies, context), ref ],
+                            factory.createIdentifier("Object"),
+                            context
+                        ),
                         factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
                     ),
                     factory.createIntersectionTypeNode([
@@ -337,7 +721,7 @@ function expandMixinClass(
                                 factory.createArrayTypeNode(factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword))
                             ) ],
                             factory.createTypeReferenceNode(
-                                info.name,
+                                ref.className,
                                 typeParameters?.map((typeParameter) => {
                                     return factory.createTypeReferenceNode(typeParameter.name, undefined)
                                 })
@@ -345,7 +729,7 @@ function expandMixinClass(
                         )),
                         factory.createTypeReferenceNode(classStaticsName, [
                             factory.createTypeReferenceNode("ReturnType", [
-                                factory.createTypeQueryNode(factory.createIdentifier(info.name + mixinFactorySuffix))
+                                factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
                             ])
                         ])
                     ])
@@ -362,14 +746,14 @@ function expandMixinClass(
 function createBaseParameter(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
-    mixinClasses: Map<string, MixinClassInfo>
+    context: FileMixinContext
 ): ts.ParameterDeclaration {
     const factory = tsInstance.factory
 
     const dependencyTypes = implementsTypes(tsInstance, declaration)
         .filter((heritageType) => {
             return tsInstance.isIdentifier(heritageType.expression) &&
-                mixinClasses.has(heritageType.expression.text)
+                context.byLocalName.has(heritageType.expression.text)
         })
         .map((heritageType) => heritageTypeToTypeReference(tsInstance, heritageType))
 
@@ -390,65 +774,32 @@ function createBaseParameter(
     )
 }
 
-// Значение миксина: применение его фабрики к цепочке фабрик зависимостей
-// поверх Object, в порядке DFS-линеаризации с дедупликацией
-function createMixinChainExpression(
-    tsInstance: TypeScript,
-    info: MixinClassInfo,
-    mixinClasses: Map<string, MixinClassInfo>
-): ts.Expression {
-    return createChainExpression(
-        tsInstance,
-        [ ...linearizeDependencies(info, mixinClasses), info.name ],
-        tsInstance.factory.createIdentifier("Object")
-    )
-}
-
-function createChainExpression(
-    tsInstance: TypeScript,
-    mixinNames: string[],
-    baseExpression: ts.Expression
-): ts.Expression {
-    const factory = tsInstance.factory
-
-    let expression = baseExpression
-
-    for (const name of mixinNames) {
-        expression = factory.createCallExpression(
-            factory.createIdentifier(name + mixinFactorySuffix),
-            undefined,
-            [ expression ]
-        )
-    }
-
-    return expression
-}
-
 // ---------------------------------------------------------------------------
 // Трансформация класса-потребителя
-
-function consumedMixins(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    mixinClasses: Map<string, MixinClassInfo>
-): ts.ExpressionWithTypeArguments[] {
-    return implementsTypes(tsInstance, declaration).filter((heritageType) => {
-        return tsInstance.isIdentifier(heritageType.expression) &&
-            mixinClasses.has(heritageType.expression.text)
-    })
-}
-
+//
 // Потребитель разворачивается в промежуточную базу с declaration merging (SPEC.md):
 //
 //     interface X$base<A> extends Mixin1<...>, Mixin2<...> {}
 //     class X$base<A> extends (Mixin2$mixin(Mixin1$mixin(Base)) as unknown as
 //         typeof Base & ClassStatics<typeof Mixin1> & ClassStatics<typeof Mixin2>) {}
 //     class X<A> extends X$base<A> implements Mixin1<...>, Mixin2<...> { ...тело без изменений... }
+
+function consumedMixins(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    context: FileMixinContext
+): ts.ExpressionWithTypeArguments[] {
+    return implementsTypes(tsInstance, declaration).filter((heritageType) => {
+        return tsInstance.isIdentifier(heritageType.expression) &&
+            context.byLocalName.has(heritageType.expression.text)
+    })
+}
+
 function expandConsumerClass(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
-    mixinClasses: Map<string, MixinClassInfo>
+    context: FileMixinContext
 ): ts.Statement[] {
     const factory = tsInstance.factory
 
@@ -468,12 +819,13 @@ function expandConsumerClass(
         )
     }
 
-    const mixinHeritage = consumedMixins(tsInstance, declaration, mixinClasses)
-    const linearized    = linearizeDependencies({
-        declaration,
-        name,
-        dependencies : mixinHeritage.map((heritageType) => (heritageType.expression as ts.Identifier).text)
-    }, mixinClasses)
+    const mixinHeritage = consumedMixins(tsInstance, declaration, context)
+    const linearized    = linearizeDependencies(
+        mixinHeritage.map((heritageType) => {
+            return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!.key
+        }),
+        context
+    )
 
     const baseInterface = factory.createInterfaceDeclaration(
         undefined,
@@ -497,7 +849,8 @@ function expandConsumerClass(
                                 linearized,
                                 extendsType !== undefined
                                     ? extendsType.expression
-                                    : factory.createIdentifier("Object")
+                                    : factory.createIdentifier("Object"),
+                                context
                             ),
                             factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
                         ),
@@ -523,11 +876,11 @@ function expandConsumerClass(
 }
 
 // Каст runtime-цепочки: typeof Base (или AnyConstructor без явной базы)
-// плюс статика каждого применённого миксина
+// плюс статика каждого применённого миксина, чьё значение доступно в файле
 function createConsumerBaseCastType(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
-    mixinNames: string[]
+    mixinRefs: ResolvedMixinRef[]
 ): ts.TypeNode {
     const factory = tsInstance.factory
 
@@ -535,11 +888,13 @@ function createConsumerBaseCastType(
         extendsType !== undefined
             ? factory.createTypeQueryNode(expressionToEntityName(tsInstance, extendsType.expression))
             : factory.createTypeReferenceNode(anyConstructorName, undefined),
-        ...mixinNames.map((name) => {
-            return factory.createTypeReferenceNode(classStaticsName, [
-                factory.createTypeQueryNode(factory.createIdentifier(name))
-            ])
-        })
+        ...mixinRefs
+            .filter((ref) => ref.localValueName !== undefined)
+            .map((ref) => {
+                return factory.createTypeReferenceNode(classStaticsName, [
+                    factory.createTypeQueryNode(factory.createIdentifier(ref.localValueName as string))
+                ])
+            })
     ]
 
     return types.length === 1 ? types[0] : factory.createIntersectionTypeNode(types)
@@ -584,28 +939,60 @@ function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expressio
     throw new Error("Unsupported base class expression of a mixin consumer")
 }
 
-function linearizeDependencies(
-    info: MixinClassInfo,
-    mixinClasses: Map<string, MixinClassInfo>,
-    seen: Set<string> = new Set()
-): string[] {
-    const linearized: string[] = []
+// ---------------------------------------------------------------------------
+// Линеаризация и построение runtime-цепочки
 
-    for (const dependency of info.dependencies) {
-        if (seen.has(dependency)) {
+function linearizeDependencies(
+    dependencyKeys: string[],
+    context: FileMixinContext,
+    seen: Set<string> = new Set()
+): ResolvedMixinRef[] {
+    const linearized: ResolvedMixinRef[] = []
+
+    for (const key of dependencyKeys) {
+        if (seen.has(key)) {
             continue
         }
 
-        seen.add(dependency)
+        seen.add(key)
 
-        const dependencyInfo = mixinClasses.get(dependency)
+        const ref = context.byKey.get(key)
 
-        if (dependencyInfo !== undefined) {
-            linearized.push(...linearizeDependencies(dependencyInfo, mixinClasses, seen), dependency)
+        if (ref !== undefined) {
+            linearized.push(...linearizeDependencies(ref.dependencies, context, seen), ref)
         }
     }
 
     return linearized
+}
+
+function createChainExpression(
+    tsInstance: TypeScript,
+    mixinRefs: ResolvedMixinRef[],
+    baseExpression: ts.Expression,
+    context: FileMixinContext
+): ts.Expression {
+    const factory = tsInstance.factory
+
+    let expression = baseExpression
+
+    for (const ref of mixinRefs) {
+        if (ref.factoryImport !== undefined) {
+            context.usedFactoryImports.set(`${ref.factoryImport.specifier}::${ref.localFactoryName}`, {
+                specifier    : ref.factoryImport.specifier,
+                importedName : ref.factoryImport.importedName,
+                localName    : ref.localFactoryName
+            })
+        }
+
+        expression = factory.createCallExpression(
+            factory.createIdentifier(ref.localFactoryName),
+            undefined,
+            [ expression ]
+        )
+    }
+
+    return expression
 }
 
 // ---------------------------------------------------------------------------
@@ -999,7 +1386,7 @@ function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
 }
 
 function shouldSkipFileName(fileName: string): boolean {
-    const normalizedFileName = fileName.replaceAll("\\", "/")
+    const normalizedFileName = normalizePath(fileName)
 
     return normalizedFileName.includes("/node_modules/") ||
         normalizedFileName.endsWith(".d.ts") ||

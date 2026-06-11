@@ -62,7 +62,7 @@ export function typecheckText(text: string): string[] {
         useDefineForClassFields : false,
         noEmit                  : true,
         skipLibCheck            : true,
-        types                   : []
+        types                   : [ "node" ]
     }
 
     const host = ts.createCompilerHost(options)
