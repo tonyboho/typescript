@@ -46,6 +46,21 @@ it("does not expand an imported @lazy decorator unless it is called", async (t: 
     t.equal(transformedFile, sourceFile, "Bare decorator is ignored")
 })
 
+it("keeps files with a lazy import but no lazy properties untouched", async (t: Test) => {
+    const sourceFile      = createSourceFile(`
+        import { lazy } from "ts-lazy-property"
+
+        lazy()
+
+        class SourceClass {
+            regularProperty: string = "ok"
+        }
+    `)
+    const transformedFile = transformSourceFile(ts, sourceFile)
+
+    t.equal(transformedFile, sourceFile, "No-op lazy imports return the original SourceFile instance")
+})
+
 it("expands a named @lazy() import into backing property, getter, and setter", async (t: Test) => {
     const sourceFile      = createSourceFile(`
         import { lazy } from "ts-lazy-property"

@@ -128,11 +128,10 @@ never require previous virtual nodes to exist in source text.
 
 ## Test Expectations
 
-Run at least:
+Run:
 
 ```bash
 pnpm --dir tools/ts-lazy-property test
-pnpm --dir tools/ts-lazy-property run fixture
 ```
 
 Important test groups:

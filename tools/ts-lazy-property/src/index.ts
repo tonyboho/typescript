@@ -197,6 +197,12 @@ export function transformSourceFile(
         return sourceFile
     }
 
+    if (!sourceFile.text.includes("@") &&
+        !hasLazyPropertyInSourceFile(tsInstance, sourceFile, lazyDecoratorImports, resolvedOptions)
+    ) {
+        return sourceFile
+    }
+
     let changed = false
 
     const transformed = tsInstance.transform(sourceFile, [
@@ -654,6 +660,26 @@ function isLazyProperty(
 ): node is ts.PropertyDeclaration {
     return tsInstance.isPropertyDeclaration(node) &&
         getLazyDecorator(tsInstance, node, lazyDecoratorImports, options) !== undefined
+}
+
+function hasLazyPropertyInSourceFile(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    lazyDecoratorImports: LazyDecoratorImports,
+    options: TransformOptions
+): boolean {
+    const visit = (node: ts.Node): true | undefined => {
+        if (
+            (tsInstance.isClassDeclaration(node) || tsInstance.isClassExpression(node)) &&
+            hasOwnLazyProperty(tsInstance, node, lazyDecoratorImports, options)
+        ) {
+            return true
+        }
+
+        return tsInstance.forEachChild(node, visit)
+    }
+
+    return tsInstance.forEachChild(sourceFile, visit) === true
 }
 
 function hasOwnLazyProperty(
