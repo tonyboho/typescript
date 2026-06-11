@@ -28,7 +28,9 @@ type TransformOptions = {
     preserveLazyDecorator : boolean
 }
 
-type TransformSourceFileOptions = Partial<TransformOptions>
+type TransformSourceFileOptions = Partial<TransformOptions> & {
+    trustSourceText? : boolean
+}
 
 const defaultTransformOptions: TransformOptions = {
     packageName           : "ts-lazy-property",
@@ -126,7 +128,10 @@ export function createLazyPropertyCompilerHost(
                     return cached
                 }
 
-                const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options)
+                const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, {
+                    ...options,
+                    trustSourceText : !useLayeredSourceFile
+                })
 
                 if (transformedSourceFile === sourceFile) {
                     setCachedSourceFile(sourceCache, sourceFile, cacheKey, sourceFile)
@@ -153,7 +158,8 @@ export function createLazyPropertyCompilerHost(
 
             return cachePreserveSourceFile(transformSourceFile(tsInstance, transformSourceFileInput, {
                 ...options,
-                preserveLazyDecorator : true
+                preserveLazyDecorator : true,
+                trustSourceText       : !useLayeredSourceFile
             }))
         }
     }
@@ -182,9 +188,10 @@ export function transformSourceFile(
     sourceFile: ts.SourceFile,
     options: TransformSourceFileOptions = {}
 ): ts.SourceFile {
-    const resolvedOptions = {
+    const { trustSourceText = false, ...transformOptions } = options
+    const resolvedOptions: TransformOptions = {
         ...defaultTransformOptions,
-        ...options
+        ...transformOptions
     }
 
     if (!sourceFile.text.includes(resolvedOptions.packageName)) {
@@ -197,10 +204,10 @@ export function transformSourceFile(
         return sourceFile
     }
 
-    if (!sourceFile.text.includes("@") &&
-        !hasLazyPropertyInSourceFile(tsInstance, sourceFile, lazyDecoratorImports, resolvedOptions)
-    ) {
-        return sourceFile
+    if (!sourceFile.text.includes("@")) {
+        if (trustSourceText || !hasLazyPropertyInSourceFile(tsInstance, sourceFile, lazyDecoratorImports, resolvedOptions)) {
+            return sourceFile
+        }
     }
 
     let changed = false
