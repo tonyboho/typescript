@@ -24,7 +24,7 @@ class Consumer<A2> extends Base<A2> implements SourceClass1<string>, SourceClass
 
         this.value1 = "value1"
 
-        super.value2 = "value2"
+        this.value2 = "value2"
 
         return super.method1()
     }

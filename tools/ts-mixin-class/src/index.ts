@@ -710,21 +710,14 @@ function preserveSourceViewGeneratedClassLikeRange<
     if (node.typeParameters !== undefined) {
         const generatedTypeParameterRange = zeroWidthRange(original.typeParameters?.end ?? original.name?.end ?? original.end)
 
-        preserveTextRange(tsInstance, node.typeParameters, original.typeParameters ?? generatedTypeParameterRange)
+        preserveTextRange(tsInstance, node.typeParameters, generatedTypeParameterRange)
 
-        node.typeParameters.forEach((typeParameter, index) => {
-            const originalTypeParameter = original.typeParameters?.[index]
-
-            if (originalTypeParameter !== undefined) {
-                preserveTextRange(tsInstance, typeParameter, originalTypeParameter)
-                preserveTextRange(tsInstance, typeParameter.name, originalTypeParameter.name)
-            } else {
-                preserveSubtreeTextRange(
-                    tsInstance,
-                    typeParameter,
-                    generatedTypeParameterRange
-                )
-            }
+        node.typeParameters.forEach((typeParameter) => {
+            preserveSubtreeTextRange(
+                tsInstance,
+                typeParameter,
+                generatedTypeParameterRange
+            )
         })
     }
 
@@ -2281,6 +2274,7 @@ function expandConsumerClass(
         throw error
     }
     const generatedRange = options.sourceView ? declaration : generatedTextRange(sourceFile, declaration.pos)
+    const sourceViewGeneratedRange = generatedTextRange(sourceFile, declaration.pos)
     const originalExtendsClause = extendsClause(tsInstance, declaration)
     const firstHeritageType = declaration.heritageClauses?.[0]?.types[0]
     const generatedHeritageRange = originalExtendsClause ??
@@ -2350,7 +2344,7 @@ function expandConsumerClass(
         ...staticCollisionValidations
     ]
     const checkedTypeParameters = options.sourceView
-        ? appendSourceViewValidationTypeParameters(tsInstance, declaration.typeParameters, consumerValidations)
+        ? appendSourceViewValidationTypeParameters(tsInstance, undefined, consumerValidations)
         : appendRequiredBaseValidationTypeParameters(
             tsInstance,
             declaration.typeParameters,
@@ -2364,15 +2358,27 @@ function expandConsumerClass(
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
-                ...(extendsType?.typeArguments !== undefined ? [ cloneExpressionWithTypeArguments(tsInstance, extendsType) ] : []),
-                ...(implicitRequiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, implicitRequiredBase) ]),
-                ...mixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+                ...(extendsType?.typeArguments !== undefined
+                    ? [ options.sourceView
+                        ? cloneExpressionWithAnyTypeArguments(tsInstance, extendsType)
+                        : cloneExpressionWithTypeArguments(tsInstance, extendsType) ]
+                    : []),
+                ...(implicitRequiredBase === undefined
+                    ? []
+                    : [ options.sourceView
+                        ? cloneExpressionWithAnyTypeArguments(tsInstance, implicitRequiredBase)
+                        : cloneExpressionWithTypeArguments(tsInstance, implicitRequiredBase) ]),
+                ...mixinHeritage.map((heritageType) => {
+                    return options.sourceView
+                        ? cloneExpressionWithAnyTypeArguments(tsInstance, heritageType)
+                        : cloneExpressionWithTypeArguments(tsInstance, heritageType)
+                })
             ]
         ) ],
         []
     )
     const baseInterface = options.sourceView
-        ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseInterfaceNode, declaration)
+        ? preserveGeneratedDeclarationRange(tsInstance, baseInterfaceNode, sourceViewGeneratedRange, declaration)
         : preserveGeneratedDeclarationRange(tsInstance, baseInterfaceNode, generatedRange, declaration)
 
     const baseClassNode = factory.createClassDeclaration(
@@ -2391,7 +2397,7 @@ function expandConsumerClass(
         []
     )
     const baseClass = options.sourceView
-        ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseClassNode, declaration)
+        ? preserveGeneratedDeclarationRange(tsInstance, baseClassNode, sourceViewGeneratedRange, declaration)
         : preserveGeneratedDeclarationRange(tsInstance, baseClassNode, generatedRange, declaration)
 
     const constructionMembers = createConstructionMembers(
@@ -2420,7 +2426,8 @@ function expandConsumerClass(
             generatedHeritageRange,
             generatedHeritageTypeRange,
             consumerValidations.map((validation) => validation.typeArgument),
-            !options.sourceView || originalExtendsClause !== undefined
+            !options.sourceView || originalExtendsClause !== undefined,
+            !options.sourceView
         ),
         updatedConsumerMembers
     )
@@ -2428,9 +2435,10 @@ function expandConsumerClass(
     const emptyBaseClass = emptyBaseName === undefined
         ? []
         : [ options.sourceView
-            ? preserveSourceViewGeneratedClassLikeRange(
+            ? preserveGeneratedDeclarationRange(
                 tsInstance,
                 factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
+                sourceViewGeneratedRange,
                 declaration
             )
             : preserveGeneratedDeclarationRange(
@@ -3173,6 +3181,18 @@ function cloneExpressionWithTypeArguments(
     )
 }
 
+function cloneExpressionWithAnyTypeArguments(
+    tsInstance: TypeScript,
+    expression: ts.ExpressionWithTypeArguments
+): ts.ExpressionWithTypeArguments {
+    return tsInstance.factory.createExpressionWithTypeArguments(
+        cloneNode(tsInstance, expression.expression),
+        expression.typeArguments?.map(() => {
+            return tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+        })
+    )
+}
+
 function firstRequiredBaseType(
     tsInstance: TypeScript,
     context: FileMixinContext,
@@ -3561,7 +3581,7 @@ function appendSourceViewValidationTypeParameters(
     validations: RequiredBaseValidation[]
 ): ts.NodeArray<ts.TypeParameterDeclaration> | undefined {
     const typeParameters = [
-        ...(consumerTypeParameters ?? []),
+        ...(consumerTypeParameters?.map((typeParameter) => cloneNode(tsInstance, typeParameter)) ?? []),
         ...validations.map((validation) => cloneNode(tsInstance, validation.typeParameter))
     ]
 
@@ -3778,7 +3798,7 @@ function createConsumerBaseCastType(
 
 function createSourceViewConsumerBaseCastType(
     tsInstance: TypeScript,
-    packageName: string,
+    _packageName: string,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
     implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
     emptyBaseName: string | undefined,
@@ -3787,13 +3807,14 @@ function createSourceViewConsumerBaseCastType(
     const factory = tsInstance.factory
 
     const types = [
-        createSourceViewConsumerBaseHeadType(tsInstance, packageName, extendsType, implicitRequiredBase, emptyBaseName),
+        createSourceViewConsumerBaseHeadType(tsInstance, extendsType, implicitRequiredBase, emptyBaseName),
         ...mixinRefs
             .filter((ref) => ref.localValueName !== undefined)
             .map((ref) => {
-                return createHelperImportType(tsInstance, packageName, classStaticsName, [
+                return createInlineClassStaticsType(
+                    tsInstance,
                     factory.createTypeQueryNode(factory.createIdentifier(ref.localValueName as string))
-                ])
+                )
             })
     ]
 
@@ -3846,7 +3867,6 @@ function createConsumerBaseHeadType(
 
 function createSourceViewConsumerBaseHeadType(
     tsInstance: TypeScript,
-    packageName: string,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
     implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
     emptyBaseName: string | undefined
@@ -3863,28 +3883,39 @@ function createSourceViewConsumerBaseHeadType(
     }
 
     return factory.createIntersectionTypeNode([
-        createHelperImportType(tsInstance, packageName, anyConstructorName, undefined),
-        createHelperImportType(tsInstance, packageName, classStaticsName, [
+        createInlineAnyConstructorType(tsInstance),
+        createInlineClassStaticsType(
+            tsInstance,
             factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
-        ])
+        )
     ])
 }
 
-function createHelperImportType(
-    tsInstance: TypeScript,
-    packageName: string,
-    helperName: string,
-    typeArguments: readonly ts.TypeNode[] | undefined
-): ts.TypeNode {
+function createInlineAnyConstructorType(tsInstance: TypeScript): ts.TypeNode {
     const factory = tsInstance.factory
 
-    return factory.createImportTypeNode(
-        factory.createLiteralTypeNode(factory.createStringLiteral(packageName)),
+    return factory.createConstructorTypeNode(
         undefined,
-        factory.createIdentifier(helperName),
-        typeArguments,
-        false
+        undefined,
+        [ factory.createParameterDeclaration(
+            undefined,
+            factory.createToken(tsInstance.SyntaxKind.DotDotDotToken),
+            "args",
+            undefined,
+            factory.createArrayTypeNode(factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)),
+            undefined
+        ) ],
+        factory.createKeywordTypeNode(tsInstance.SyntaxKind.ObjectKeyword)
     )
+}
+
+function createInlineClassStaticsType(tsInstance: TypeScript, classType: ts.TypeNode): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    return factory.createTypeReferenceNode("Omit", [
+        classType,
+        factory.createLiteralTypeNode(factory.createStringLiteral("prototype"))
+    ])
 }
 
 function isSupportedBaseExpression(tsInstance: TypeScript, expression: ts.Expression): boolean {
@@ -3904,11 +3935,12 @@ function consumerHeritageClauses(
     generatedRange: ts.TextRange,
     generatedTypeRange: ts.TextRange = generatedRange,
     extraTypeArguments: ts.TypeNode[] = [],
-    keepImplements = true
+    keepImplements = true,
+    includeOwnTypeArguments = true
 ): ts.NodeArray<ts.HeritageClause> {
     const factory = tsInstance.factory
 
-    const ownTypeArguments = declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
+    const ownTypeArguments = includeOwnTypeArguments && declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
         ? declaration.typeParameters.map((typeParameter): ts.TypeNode => {
             return factory.createTypeReferenceNode(typeParameter.name.text, undefined)
         })
@@ -4571,6 +4603,10 @@ function resolveUsePrintedSourceFile(
     const mode = config.mode
 
     if (mode === undefined) {
+        if (isTypeScriptServerProcess()) {
+            return false
+        }
+
         return shouldCreatePrintedSourceFileForEmit(compilerOptions)
     }
 

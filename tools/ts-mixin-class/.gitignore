@@ -1,2 +1,3 @@
 /dist
 /node_modules
+/tests/fixture-suite/tsserver.log
