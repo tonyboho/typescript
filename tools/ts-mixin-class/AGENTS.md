@@ -42,6 +42,10 @@ Implemented snapshot:
 - Generated top-level helper names use a double-underscore prefix, for example
   `__Source$mixin`, `__Consumer$base`, `__Consumer$empty`, and
   `__Source$mixinValue`, to reduce accidental collisions with user declarations.
+- Consumer constructor arguments are intentionally permissive (`AnyConstructor`) even for
+  generic bases. Instance members, `super`, runtime inheritance, and statics are typed;
+  construction will later be modeled through an explicit static factory/new protocol
+  instead of trying to merge arbitrary constructor signatures from mixins and bases.
 
 Current plan:
 
@@ -54,11 +58,6 @@ Current plan:
   value declarations.
 - Consumer limitation to remove later: consumers must be top-level named class
   declarations; anonymous consumer declarations currently get a custom diagnostic.
-- Generic consumer bases are supported for instance typing and runtime, but the generated
-  runtime `extends` cast intentionally uses `AnyConstructor` plus
-  `ClassStatics<typeof Base>` because TypeScript forbids referencing consumer type
-  parameters in base-class expressions (`TS2562`); constructor argument types are therefore
-  permissive for this case.
 
 Future Work:
 
