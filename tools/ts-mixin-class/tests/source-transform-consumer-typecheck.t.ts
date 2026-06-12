@@ -186,7 +186,7 @@ it("transformed generic consumer base output typechecks", async (t: Test) => {
     t.expect(diagnostics).toEqual([])
 })
 
-it("fast construction config mode preserves generic new inference without public-only filtering", async (t: Test) => {
+it("instance-type construction config mode preserves generic new inference without public-only filtering", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { Base, mixin } from "ts-mixin-class"
 
@@ -219,15 +219,15 @@ it("fast construction config mode preserves generic new inference without public
 
         GenericConsumer.new({ genericMixinMethod : () => "x" })
 
-        // @ts-expect-error fast config still rejects properties that are not on the consumer instance.
+        // @ts-expect-error instance-type config still rejects properties that are not on the consumer instance.
         GenericConsumer.new({ missingValue : "x" })
 
-        // @ts-expect-error fast config infers T = string.
+        // @ts-expect-error instance-type config infers T = string.
         const e1: number | undefined = genericConstructed.genericMixinValue
 
         void [ v1, v2, v3, e1 ]
     `), {
-        constructionConfig : "fast"
+        constructionConfig : "instance-type"
     })
 
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))

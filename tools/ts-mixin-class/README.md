@@ -42,5 +42,5 @@ const model = Model.new({ id : "42" })
 ```
 
 `constructionConfig: "public-only"` is the default and builds the `new(...)` config type
-from explicitly `public` instance fields. `constructionConfig: "fast"` uses a broader
-`Partial<Consumer<T>>` shape.
+from explicitly `public` instance fields. `constructionConfig: "instance-type"` uses
+the broader `Partial<Consumer<T>>` shape.

@@ -213,7 +213,7 @@ const model = Model.new({ id : "42" })
 Тип config управляется опцией трансформера `constructionConfig`:
 
 - `public-only` — режим по умолчанию. Трансформер собирает из AST только поля, явно помеченные модификатором `public`, на базе, потребителе и примененных миксинах, и генерирует точный тип вида `Partial<Pick<Consumer<T>, "...">>`.
-- `fast` — более дешевый режим. Генерируется широкий тип `Partial<Consumer<T>>`: он сохраняет generic inference для `new(...)`, но не фильтрует методы и другие публичные instance-члены так точно, как `public-only`.
+- `instance-type` — широкий режим по полному instance type потребителя. Генерируется тип `Partial<Consumer<T>>`: он сохраняет generic inference для `new(...)`, но не фильтрует методы и другие публичные instance-члены так точно, как `public-only`.
 
 Если класс не наследуется от `Base`, трансформер не добавляет construction adapter и не вмешивается в пользовательскую модель создания экземпляров.
 
@@ -276,4 +276,4 @@ const model = Model.new({ id : "42" })
 - Потребители должны быть именованными top-level class declarations. Вложенные объявления в блоках/functions/namespaces и class expressions требуют отдельной формы трансформации.
 - Dynamic consumer base expressions (`extends makeBase()`) пока не поддерживаются и получают diagnostic; будущая поддержка должна сохранить порядок вычисления и типизацию static/instance сторон.
 - Коллизии с injected helper imports/generated helper names пока не сканируются явно.
-- Конструирование через произвольные constructor signatures не моделируется. Поддержан opt-in протокол `Base.new(config)` с режимами `constructionConfig: "public-only"` и `"fast"`.
+- Конструирование через произвольные constructor signatures не моделируется. Поддержан opt-in протокол `Base.new(config)` с режимами `constructionConfig: "public-only"` и `"instance-type"`.

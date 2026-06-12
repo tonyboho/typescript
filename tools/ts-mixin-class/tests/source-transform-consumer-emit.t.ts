@@ -184,7 +184,7 @@ it("generates public-only static construction config overloads by default", asyn
         "Public-only construction config ignores consumer fields without an explicit public modifier")
 })
 
-it("can use fast construction config mode", async (t: Test) => {
+it("can use instance-type construction config mode", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { Base, mixin } from "ts-mixin-class"
 
@@ -201,12 +201,12 @@ it("can use fast construction config mode", async (t: Test) => {
             ownValue: T | undefined
         }
     `), {
-        constructionConfig : "fast"
+        constructionConfig : "instance-type"
     })
     const printed = printSourceFile(ts, transformedFile)
 
     t.true(printed.includes("static new<T>(props?: Partial<Consumer<T>>): Consumer<T>;"),
-        "Fast construction config mode uses the whole consumer instance shape")
+        "Instance-type construction config mode uses the whole consumer instance shape")
     t.false(printed.includes("Pick<Consumer<T>"),
-        "Fast construction config mode skips static public-property collection")
+        "Instance-type construction config mode skips static public-property collection")
 })

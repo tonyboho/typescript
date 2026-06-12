@@ -20,7 +20,7 @@ export type MixinClassTransformerConfig = PluginConfig & {
 
 export type MixinClassTransformerMode = "emit" | "ide"
 export type StaticCollisionCheckMode = false | "never" | "strict"
-export type ConstructionConfigMode = "public-only" | "fast"
+export type ConstructionConfigMode = "public-only" | "instance-type"
 
 type TransformOptions = {
     packageName : string,
@@ -2803,7 +2803,7 @@ function createConstructionConfigType(
 ): ts.TypeNode {
     const factory = tsInstance.factory
 
-    if (mode === "fast") {
+    if (mode === "instance-type") {
         return factory.createTypeReferenceNode("Partial", [
             createConsumerInstanceType(tsInstance, declaration)
         ])

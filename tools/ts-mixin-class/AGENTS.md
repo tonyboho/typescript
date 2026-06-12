@@ -66,7 +66,8 @@ Implemented snapshot:
   static `new(...)` adapter only for consumers whose base chain syntactically extends
   `Base`. `constructionConfig: "public-only"` is the default and generates a precise
   config type from explicitly `public` instance fields on the consumer/base/mixins.
-  `constructionConfig: "fast"` uses the cheaper broad `Partial<Consumer<T>>` shape.
+  `constructionConfig: "instance-type"` uses the whole consumer instance shape through
+  broad `Partial<Consumer<T>>`.
 
 Active gaps:
 
