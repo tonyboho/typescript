@@ -46,6 +46,7 @@ export type MixinRegistry = Map<string, RegisteredMixin>
 export type CrossFileContext = {
     registry : MixinRegistry,
     resolveModuleFileName : (specifier: string, containingFile: string) => string | undefined
+    canImportRuntimeValue? : (resolvedFileName: string) => boolean
 }
 
 type ImportedNameBinding = {
@@ -69,6 +70,10 @@ type ResolvedMixinRef = {
     } | undefined,
     dependencies     : string[],
     declaration      : ts.ClassDeclaration | undefined
+    missingRuntimeImport : {
+        specifier : string,
+        importedName : string
+    } | undefined
 }
 
 type FileMixinContext = {
@@ -387,9 +392,12 @@ export default function transformProgram(
         return tsInstance.resolveModuleName(specifier, containingFile, compilerOptions, compilerHost)
             .resolvedModule?.resolvedFileName
     }
+    const canImportRuntimeValue = (resolvedFileName: string): boolean => {
+        return hasRuntimeModuleForDeclaration(tsInstance, compilerHost, resolvedFileName)
+    }
 
     const registry  = buildMixinRegistry(tsInstance, program, options, resolveModuleFileName)
-    const crossFile = registry.size === 0 ? undefined : { registry, resolveModuleFileName }
+    const crossFile = registry.size === 0 ? undefined : { registry, resolveModuleFileName, canImportRuntimeValue }
     const nextHost  = createMixinClassCompilerHost(tsInstance, compilerHost, compilerOptions, config, crossFile)
 
     return tsInstance.createProgram(
@@ -878,6 +886,43 @@ function normalizePath(fileName: string): string {
     return fileName.replaceAll("\\", "/")
 }
 
+function hasRuntimeModuleForDeclaration(
+    tsInstance: TypeScript,
+    compilerHost: ts.CompilerHost,
+    fileName: string
+): boolean {
+    if (!fileName.endsWith(".d.ts") && !fileName.endsWith(".d.mts") && !fileName.endsWith(".d.cts")) {
+        return true
+    }
+
+    return runtimeModuleFileNames(fileName).some((runtimeFileName) => {
+        return compilerHost.fileExists(runtimeFileName) ||
+            tsInstance.sys.fileExists(runtimeFileName)
+    })
+}
+
+function runtimeModuleFileNames(declarationFileName: string): string[] {
+    if (declarationFileName.endsWith(".d.mts")) {
+        return [
+            declarationFileName.slice(0, -".d.mts".length) + ".mjs",
+            declarationFileName.slice(0, -".d.mts".length) + ".js"
+        ]
+    }
+
+    if (declarationFileName.endsWith(".d.cts")) {
+        return [
+            declarationFileName.slice(0, -".d.cts".length) + ".cjs",
+            declarationFileName.slice(0, -".d.cts".length) + ".js"
+        ]
+    }
+
+    return [
+        declarationFileName.slice(0, -".d.ts".length) + ".js",
+        declarationFileName.slice(0, -".d.ts".length) + ".mjs",
+        declarationFileName.slice(0, -".d.ts".length) + ".cjs"
+    ]
+}
+
 // localName -> откуда импортировано (только успешно разрешённые именованные импорты)
 function buildImportedNameMap(
     tsInstance: TypeScript,
@@ -1157,7 +1202,8 @@ function buildFileMixinContext(
                 factoryImport    : undefined,
                 requiredBase     : undefined,
                 dependencies     : [],
-                declaration      : statement
+                declaration      : statement,
+                missingRuntimeImport : undefined
             }
 
             context.byLocalName.set(name, ref)
@@ -1238,7 +1284,13 @@ function buildFileMixinContext(
                     },
                     requiredBase,
                     dependencies     : registered.dependencies,
-                    declaration      : undefined
+                    declaration      : undefined,
+                    missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
+                        ? {
+                            specifier    : statement.moduleSpecifier.text,
+                            importedName : registered.defaultExport ? "default" : registered.name
+                        }
+                        : undefined
                 }
 
                 context.byLocalName.set(localName, ref)
@@ -1299,9 +1351,15 @@ function buildFileMixinContext(
                             importedName : registered.requiredBaseName,
                             localName    : registered.name + "$requiredBase"
                         }
-                    },
+                },
                 dependencies     : registered.dependencies,
-                declaration      : undefined
+                declaration      : undefined,
+                missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
+                    ? {
+                        specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                        importedName : registered.defaultExport ? "default" : registered.name
+                    }
+                    : undefined
             })
 
             queue.push(...registered.dependencies)
@@ -1939,10 +1997,20 @@ function expandConsumerClass(
             linearized,
             generatedHeritageTypeRange
         )
+    const missingRuntimeImportValidations = createMissingRuntimeImportValidations(
+        tsInstance,
+        declaration,
+        directMixinRefs,
+        mixinHeritage
+    )
+    const consumerValidations = [
+        ...missingRuntimeImportValidations,
+        ...requiredBaseValidations
+    ]
     const checkedTypeParameters = appendRequiredBaseValidationTypeParameters(
         tsInstance,
         declaration.typeParameters,
-        requiredBaseValidations
+        consumerValidations
     )
 
     const baseInterface = preserveGeneratedDeclarationRange(tsInstance, factory.createInterfaceDeclaration(
@@ -1966,7 +2034,7 @@ function expandConsumerClass(
         appendRequiredBaseValidationTypeParameters(
             tsInstance,
             declaration.typeParameters,
-            requiredBaseValidations
+            consumerValidations
         ),
         [ consumerBaseClassHeritage(
             tsInstance,
@@ -1991,7 +2059,7 @@ function expandConsumerClass(
             baseName,
             generatedHeritageRange,
             generatedHeritageTypeRange,
-            requiredBaseValidations.map((validation) => validation.typeArgument)
+            consumerValidations.map((validation) => validation.typeArgument)
         ),
         declaration.members
     )
@@ -2458,6 +2526,55 @@ function createRequiredBaseValidations(
     }
 
     return validations
+}
+
+function createMissingRuntimeImportValidations(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    mixinRefs: ResolvedMixinRef[],
+    mixinHeritage: ts.ExpressionWithTypeArguments[]
+): RequiredBaseValidation[] {
+    const validations: RequiredBaseValidation[] = []
+
+    for (let index = 0; index < mixinRefs.length; index++) {
+        const ref = mixinRefs[index]
+
+        if (ref.missingRuntimeImport === undefined) {
+            continue
+        }
+
+        const heritageType = mixinHeritage[index]
+        const range = heritageType ?? declaration
+
+        validations.push(createConsumerDiagnosticValidation(
+            tsInstance,
+            declaration,
+            `__mixinMissingRuntimeValue${validations.length}`,
+            missingRuntimeImportDiagnosticMessage(declaration, ref),
+            range
+        ))
+    }
+
+    return validations
+}
+
+function missingRuntimeImportDiagnosticMessage(
+    declaration: ts.ClassDeclaration,
+    mixinRef: ResolvedMixinRef
+): string {
+    const consumerName = declaration.name?.text ?? "<anonymous consumer>"
+    const missingImport = mixinRef.missingRuntimeImport
+
+    if (missingImport === undefined) {
+        throw new Error("Missing runtime import diagnostic requires missing runtime metadata")
+    }
+
+    return "Missing mixin runtime value. " +
+        `Consumer ${consumerName} implements ${mixinRef.className}, and ${mixinRef.className} is marked as a runtime mixin class in declarations from "${missingImport.specifier}". ` +
+        "However, the transformer could not find a JavaScript runtime module for that declaration file. " +
+        "Mixin classes must be available as runtime values so mixinChain(...) can apply them. " +
+        `Fix: publish the JavaScript export for ${mixinRef.className}, expose it from "${missingImport.specifier}", ` +
+        `import ${mixinRef.className} as a value, or remove ${mixinRef.className} from the implements list.`
 }
 
 function appendRequiredBaseValidationTypeParameters(

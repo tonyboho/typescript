@@ -50,6 +50,13 @@ const unsupportedBaseDiagnosticParts = [
     "assign the expression to a named class or const"
 ]
 
+const missingRuntimeImportDiagnosticParts = [
+    "Missing mixin runtime value",
+    "Consumer Consumer implements BrokenMixin",
+    "broken-mixin-package",
+    "could not find a JavaScript runtime module"
+]
+
 const diagnosticMixinsText = trimIndent(`
     import { mixin } from "ts-mixin-class"
 
@@ -193,6 +200,25 @@ const unsupportedBaseDiagnosticText = trimIndent(`
     }
 
     class Consumer extends makeBase() implements SourceMixin {
+    }
+`)
+
+const brokenMixinDeclarationText = trimIndent(`
+    import type { RuntimeMixinClass } from "ts-mixin-class"
+
+    export interface BrokenMixin {
+        brokenMethod(): string
+    }
+
+    export declare const BrokenMixin: RuntimeMixinClass & {
+        new (...args: any[]): BrokenMixin
+    }
+`)
+
+const missingRuntimeImportConsumerText = trimIndent(`
+    import type { BrokenMixin } from "broken-mixin-package"
+
+    class Consumer implements BrokenMixin {
     }
 `)
 
@@ -360,6 +386,55 @@ it("tsserver semantic diagnostics report unsupported mixin consumer base express
         const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
 
         assertDiagnosticParts(t, messages, unsupportedBaseDiagnosticParts)
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver semantic diagnostics report declaration mixins without runtime values", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        extraFiles            : [
+            {
+                fileName : "node_modules/broken-mixin-package/package.json",
+                text     : JSON.stringify({
+                    name    : "broken-mixin-package",
+                    type    : "module",
+                    exports : {
+                        "." : {
+                            types : "./index.d.ts"
+                        }
+                    }
+                }, null, 4)
+            }
+        ],
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : missingRuntimeImportConsumerText
+            },
+            {
+                fileName : "node_modules/broken-mixin-package/index.d.ts",
+                text     : brokenMixinDeclarationText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
+        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
+            t,
+            await runTypeScriptServerRequest(
+                fixture.directory,
+                sourceFile,
+                missingRuntimeImportConsumerText,
+                "semanticDiagnosticsSync",
+                { file : sourceFile }
+            )
+        )
+        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
+
+        assertDiagnosticParts(t, messages, missingRuntimeImportDiagnosticParts)
     } finally {
         await fixture.dispose()
     }

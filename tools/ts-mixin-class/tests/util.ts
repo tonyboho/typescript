@@ -27,6 +27,7 @@ type ExecFileFailure = Error & {
 
 export type TypeScriptFixtureOptions = {
     sourceFiles : TypeScriptFixtureSourceFile[],
+    extraFiles? : TypeScriptFixtureSourceFile[],
     experimentalDecorators : boolean,
     compilerOptions? : Record<string, unknown>,
     compilerPlugins? : Record<string, unknown>[],
@@ -69,7 +70,7 @@ export async function createTypeScriptFixture(options: TypeScriptFixtureOptions)
         options.compilerPlugins
     ))
 
-    for (const { fileName, text } of options.sourceFiles) {
+    for (const { fileName, text } of [ ...options.sourceFiles, ...(options.extraFiles ?? []) ]) {
         const sourceFilePath = path.join(directory, fileName)
 
         await mkdir(path.dirname(sourceFilePath), { recursive : true })

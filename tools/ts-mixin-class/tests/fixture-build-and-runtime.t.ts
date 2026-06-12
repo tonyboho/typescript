@@ -169,3 +169,66 @@ it("rejects inconsistent diamond requirements during transform", async (t: Test)
         await fixture.dispose()
     }
 })
+
+it("reports imported declaration mixins without runtime values", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        extraFiles            : [
+            {
+                fileName : "node_modules/broken-mixin-package/package.json",
+                text     : JSON.stringify({
+                    name    : "broken-mixin-package",
+                    type    : "module",
+                    exports : {
+                        "." : {
+                            types : "./index.d.ts"
+                        }
+                    }
+                }, null, 4)
+            }
+        ],
+        sourceFiles            : [
+            {
+                fileName : "node_modules/broken-mixin-package/index.d.ts",
+                text     : `
+                    import type { RuntimeMixinClass } from "ts-mixin-class"
+
+                    export interface BrokenMixin {
+                        brokenMethod(): string
+                    }
+
+                    export declare const BrokenMixin: RuntimeMixinClass & {
+                        new (...args: any[]): BrokenMixin
+                    }
+                `
+            },
+            {
+                fileName : "consumer.ts",
+                text     : `
+                    import type { BrokenMixin } from "broken-mixin-package"
+
+                    class Consumer implements BrokenMixin {
+                    }
+
+                    void Consumer
+                `
+            }
+        ]
+    })
+
+    try {
+        const result = await runCommand(
+            "node",
+            [ path.join(packageRoot, "node_modules", "typescript", "bin", "tsc"), "-p", fixture.tsconfigFile ],
+            fixture.directory
+        )
+        const output = commandOutput(result)
+
+        t.true(result.exitCode !== 0, "Broken declaration-only mixin package fails to build")
+        t.true(output.includes("Missing mixin runtime value"), output)
+        t.true(output.includes("BrokenMixin"), output)
+        t.true(output.includes("broken-mixin-package"), output)
+    } finally {
+        await fixture.dispose()
+    }
+})
