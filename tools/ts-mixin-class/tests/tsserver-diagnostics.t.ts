@@ -57,6 +57,14 @@ const missingRuntimeImportDiagnosticParts = [
     "could not find a JavaScript runtime module"
 ]
 
+const staticCollisionDiagnosticParts = [
+    "Static mixin member collision",
+    "BadStaticCollisionConsumer",
+    "StaticCollisionLeftMixin",
+    "StaticCollisionRightMixin",
+    "shared"
+]
+
 const diagnosticMixinsText = trimIndent(`
     import { mixin } from "ts-mixin-class"
 
@@ -483,6 +491,7 @@ it("tsserver semantic diagnostics report copied fixture type-errors without expe
 
         assertDiagnosticParts(t, messages, requiredBaseDiagnosticParts)
         assertDiagnosticParts(t, messages, linearizationDiagnosticParts)
+        assertDiagnosticParts(t, messages, staticCollisionDiagnosticParts)
     } finally {
         await fixture.dispose()
     }
@@ -497,9 +506,10 @@ it("fixture type-errors keeps expect-error suppressions for both IDE diagnostics
         .split("\n")
         .filter((line) => line.includes("@ts-expect-error"))
 
-    t.equal(expectErrorLines.length, 2, "Fixture has one suppression per expected diagnostic")
+    t.equal(expectErrorLines.length, 3, "Fixture has one suppression per expected diagnostic")
     t.true(expectErrorLines.some((line) => line.includes("RequiredMixin")), expectErrorLines.join("\n"))
     t.true(expectErrorLines.some((line) => line.includes("BadLinearizationMixin")), expectErrorLines.join("\n"))
+    t.true(expectErrorLines.some((line) => line.includes("StaticCollisionLeftMixin")), expectErrorLines.join("\n"))
 })
 
 function removeExpectErrorLines(source: string): string {

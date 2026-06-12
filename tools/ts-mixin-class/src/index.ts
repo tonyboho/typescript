@@ -13,15 +13,18 @@ type NodeFactoryWithCloneNode = ts.NodeFactory & {
 export type MixinClassTransformerConfig = PluginConfig & {
     packageName? : string,
     decoratorName? : string,
-    mode? : MixinClassTransformerMode
+    mode? : MixinClassTransformerMode,
+    staticCollisionCheck? : StaticCollisionCheckMode | boolean
 }
 
 export type MixinClassTransformerMode = "emit" | "ide"
+export type StaticCollisionCheckMode = false | "never" | "strict"
 
 type TransformOptions = {
     packageName : string,
     decoratorName : string,
-    sourceView : boolean
+    sourceView : boolean,
+    staticCollisionCheck : StaticCollisionCheckMode
 }
 
 type MixinDecoratorImports = {
@@ -93,6 +96,12 @@ type RequiredBaseRequirement = {
     name     : string
 }
 
+type StaticSource = {
+    name : string,
+    typeNode : ts.TypeNode,
+    staticNames : Set<string> | undefined
+}
+
 type MixinDeclarationDiagnostic = {
     node    : ts.Node,
     message : string
@@ -105,9 +114,10 @@ class DependencyLinearizationError extends Error {
 }
 
 const defaultTransformOptions: TransformOptions = {
-    packageName   : "ts-mixin-class",
-    decoratorName : "mixin",
-    sourceView    : false
+    packageName          : "ts-mixin-class",
+    decoratorName        : "mixin",
+    sourceView           : false,
+    staticCollisionCheck : "never"
 }
 
 const anyConstructorName = "AnyConstructor"
@@ -116,6 +126,8 @@ const defineMixinClassName = "defineMixinClass"
 const mixinChainName = "mixinChain"
 const mixinFactoryName = "MixinFactory"
 const runtimeMixinClassName = "RuntimeMixinClass"
+const staticNeverConflictKeysName = "StaticNeverConflictKeys"
+const staticStrictConflictKeysName = "StaticStrictConflictKeys"
 const metadataBaseImportName = "base"
 const metadataBaseLocalName = "__mixinBase"
 const mixinFactorySuffix = "$mixin"
@@ -133,6 +145,22 @@ function generatedName(name: string, suffix: string): string {
 export type AnyConstructor<T extends object = object> = new (...args: any[]) => T
 
 export type ClassStatics<C> = Omit<C, "prototype">
+
+export type StaticNeverConflictKeys<Left, Right> = {
+    [Key in Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]:
+        [ ClassStatics<Left>[Key] & ClassStatics<Right>[Key] ] extends [ never ]
+            ? Key
+            : never
+}[Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]
+
+export type StaticStrictConflictKeys<Left, Right> = {
+    [Key in Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]:
+        [ ClassStatics<Left>[Key] ] extends [ ClassStatics<Right>[Key] ]
+            ? [ ClassStatics<Right>[Key] ] extends [ ClassStatics<Left>[Key] ]
+                ? never
+                : Key
+            : Key
+}[Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]
 
 export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
 
@@ -372,10 +400,25 @@ function setClassName(classConstructor: AnyConstructor<any>, name: string): void
 
 function resolveTransformOptions(config: MixinClassTransformerConfig): TransformOptions {
     return {
-        packageName   : config.packageName ?? defaultTransformOptions.packageName,
-        decoratorName : config.decoratorName ?? defaultTransformOptions.decoratorName,
-        sourceView    : false
+        packageName          : config.packageName ?? defaultTransformOptions.packageName,
+        decoratorName        : config.decoratorName ?? defaultTransformOptions.decoratorName,
+        sourceView           : false,
+        staticCollisionCheck : normalizeStaticCollisionCheck(config.staticCollisionCheck)
     }
+}
+
+function normalizeStaticCollisionCheck(
+    value: MixinClassTransformerConfig["staticCollisionCheck"]
+): StaticCollisionCheckMode {
+    if (value === undefined) {
+        return defaultTransformOptions.staticCollisionCheck
+    }
+
+    if (value === true) {
+        return "strict"
+    }
+
+    return value
 }
 
 export default function transformProgram(
@@ -2003,9 +2046,21 @@ function expandConsumerClass(
         directMixinRefs,
         mixinHeritage
     )
+    const staticCollisionValidations = createStaticCollisionValidations(
+        tsInstance,
+        sourceFile,
+        declaration,
+        extendsType,
+        implicitRequiredBase,
+        emptyBaseName,
+        linearized,
+        generatedHeritageTypeRange,
+        options.staticCollisionCheck
+    )
     const consumerValidations = [
+        ...requiredBaseValidations,
         ...missingRuntimeImportValidations,
-        ...requiredBaseValidations
+        ...staticCollisionValidations
     ]
     const checkedTypeParameters = appendRequiredBaseValidationTypeParameters(
         tsInstance,
@@ -2575,6 +2630,205 @@ function missingRuntimeImportDiagnosticMessage(
         "Mixin classes must be available as runtime values so mixinChain(...) can apply them. " +
         `Fix: publish the JavaScript export for ${mixinRef.className}, expose it from "${missingImport.specifier}", ` +
         `import ${mixinRef.className} as a value, or remove ${mixinRef.className} from the implements list.`
+}
+
+function createStaticCollisionValidations(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined,
+    mixinRefs: ResolvedMixinRef[],
+    generatedRange: ts.TextRange,
+    mode: StaticCollisionCheckMode
+): RequiredBaseValidation[] {
+    if (mode === false) {
+        return []
+    }
+
+    const sources = [
+        ...consumerBaseStaticSources(tsInstance, sourceFile, extendsType, implicitRequiredBase, emptyBaseName),
+        ...mixinRefs.flatMap((ref) => {
+            return mixinStaticSource(tsInstance, ref)
+        })
+    ]
+    const validations: RequiredBaseValidation[] = []
+
+    for (let leftIndex = 0; leftIndex < sources.length; leftIndex++) {
+        for (let rightIndex = leftIndex + 1; rightIndex < sources.length; rightIndex++) {
+            const left = sources[leftIndex]
+            const right = sources[rightIndex]
+            const knownOverlap = knownStaticNameOverlap(left, right)
+
+            if (knownOverlap !== undefined && knownOverlap.length === 0) {
+                continue
+            }
+
+            validations.push({
+                typeParameter : preserveTextRange(tsInstance, tsInstance.factory.createTypeParameterDeclaration(
+                    undefined,
+                    uniqueGeneratedTypeParameterName(declaration, `__mixinStaticCollision${validations.length}`),
+                    tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
+                    undefined
+                ), generatedRange),
+                typeArgument : preserveTextRange(
+                    tsInstance,
+                    createStaticCollisionDiagnosticType(
+                        tsInstance,
+                        declaration,
+                        left,
+                        right,
+                        knownOverlap,
+                        mode
+                    ),
+                    generatedRange
+                )
+            })
+        }
+    }
+
+    return validations
+}
+
+function consumerBaseStaticSources(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined
+): StaticSource[] {
+    const baseType = extendsType ?? implicitRequiredBase
+
+    if (baseType === undefined) {
+        if (emptyBaseName === undefined) {
+            return []
+        }
+
+        return [ {
+            name        : emptyBaseName,
+            typeNode    : tsInstance.factory.createTypeQueryNode(tsInstance.factory.createIdentifier(emptyBaseName)),
+            staticNames : new Set()
+        } ]
+    }
+
+    return [ {
+        name        : heritageTypeText(tsInstance, sourceFile, baseType),
+        typeNode    : tsInstance.factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression)),
+        staticNames : staticNamesOfBaseExpression(tsInstance, sourceFile, baseType.expression)
+    } ]
+}
+
+function mixinStaticSource(
+    tsInstance: TypeScript,
+    ref: ResolvedMixinRef
+): StaticSource[] {
+    if (ref.localValueName === undefined) {
+        return []
+    }
+
+    return [ {
+        name        : ref.className,
+        typeNode    : tsInstance.factory.createTypeQueryNode(tsInstance.factory.createIdentifier(ref.localValueName)),
+        staticNames : ref.declaration === undefined ? undefined : staticMemberNames(tsInstance, ref.declaration)
+    } ]
+}
+
+function staticNamesOfBaseExpression(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    expression: ts.Expression
+): Set<string> | undefined {
+    if (!tsInstance.isIdentifier(expression)) {
+        return undefined
+    }
+
+    const declaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
+        return tsInstance.isClassDeclaration(statement) && statement.name?.text === expression.text
+    })
+
+    return declaration === undefined ? undefined : staticMemberNames(tsInstance, declaration)
+}
+
+function staticMemberNames(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): Set<string> {
+    const names = new Set<string>()
+
+    for (const member of declaration.members) {
+        if (!hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) || !isNamedClassElement(member)) {
+            continue
+        }
+
+        if (tsInstance.isIdentifier(member.name) ||
+            tsInstance.isStringLiteral(member.name) ||
+            tsInstance.isNumericLiteral(member.name)
+        ) {
+            names.add(member.name.text)
+        }
+    }
+
+    return names
+}
+
+function knownStaticNameOverlap(
+    left: StaticSource,
+    right: StaticSource
+): string[] | undefined {
+    if (left.staticNames === undefined || right.staticNames === undefined) {
+        return undefined
+    }
+
+    return [ ...left.staticNames ].filter((name) => right.staticNames?.has(name) === true)
+}
+
+function createStaticCollisionDiagnosticType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    left: StaticSource,
+    right: StaticSource,
+    knownOverlap: string[] | undefined,
+    mode: Exclude<StaticCollisionCheckMode, false>
+): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    return factory.createConditionalTypeNode(
+        factory.createTupleTypeNode([
+            factory.createTypeReferenceNode(staticConflictKeysName(mode), [
+                cloneNode(tsInstance, left.typeNode),
+                cloneNode(tsInstance, right.typeNode)
+            ])
+        ]),
+        factory.createTupleTypeNode([
+            factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword)
+        ]),
+        factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
+        factory.createLiteralTypeNode(factory.createStringLiteral(
+            staticCollisionDiagnosticMessage(declaration, left, right, knownOverlap)
+        ))
+    )
+}
+
+function staticConflictKeysName(mode: Exclude<StaticCollisionCheckMode, false>): string {
+    return mode === "strict" ? staticStrictConflictKeysName : staticNeverConflictKeysName
+}
+
+function staticCollisionDiagnosticMessage(
+    declaration: ts.ClassDeclaration,
+    left: StaticSource,
+    right: StaticSource,
+    knownOverlap: string[] | undefined
+): string {
+    const consumerName = declaration.name?.text ?? "<anonymous consumer>"
+    const names = knownOverlap === undefined || knownOverlap.length === 0
+        ? "one or more static members"
+        : knownOverlap.join(", ")
+
+    return "Static mixin member collision. " +
+        `Consumer ${consumerName} combines ${left.name} and ${right.name}, which both declare incompatible static member(s): ${names}. ` +
+        "Runtime inheritance can only keep one implementation for a static name, so this would make the generated class misleadingly typed. " +
+        "Fix: rename one static member, make the static member types compatible, or remove one mixin from the implements list."
 }
 
 function appendRequiredBaseValidationTypeParameters(
@@ -3155,6 +3409,15 @@ function cloneOptionalNodeArray<Node extends ts.Node>(
 
 function createHelperTypeImport(tsInstance: TypeScript, options: TransformOptions): ts.ImportDeclaration {
     const factory = tsInstance.factory
+    const staticConflictImport = options.staticCollisionCheck === false
+        ? []
+        : [
+            factory.createImportSpecifier(
+                true,
+                undefined,
+                factory.createIdentifier(staticConflictKeysName(options.staticCollisionCheck))
+            )
+        ]
 
     return factory.createImportDeclaration(
         undefined,
@@ -3167,6 +3430,7 @@ function createHelperTypeImport(tsInstance: TypeScript, options: TransformOption
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(anyConstructorName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(classStaticsName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(mixinFactoryName)),
+                ...staticConflictImport,
                 factory.createImportSpecifier(
                     true,
                     factory.createIdentifier(metadataBaseImportName),

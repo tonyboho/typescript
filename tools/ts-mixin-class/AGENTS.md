@@ -50,6 +50,11 @@ Implemented snapshot:
   stay introspectable without showing `$mixin`-style fields as normal public API
   members. Fixture tests exercise user-facing introspection for factory, requirements,
   and required-base metadata.
+- Static collision diagnostics are configurable through `staticCollisionCheck`.
+  Default `"never"` mode uses a cheaper `StaticNeverConflictKeys` type-level check
+  that catches impossible static field/property intersections. `"strict"` enables
+  the stronger assignability-based `StaticStrictConflictKeys` check, including
+  method-shaped static collisions. `false` disables these diagnostics.
 - Declaration package-boundary coverage includes named and default-exported mixins.
   Tests assert that required generated factories are exported in `.d.ts`, default mixin
   declarations preserve `export default`, and downstream consumers can import default

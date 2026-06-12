@@ -171,3 +171,116 @@ it("reports unsupported mixin consumer base expressions with a custom diagnostic
     t.true(messages.includes("Only named base classes such as Base or ns.Base are supported for now"), messages)
     t.true(messages.includes("assign the expression to a named class or const"), messages)
 })
+
+it("reports conflicting static members between consumed mixins", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class LeftStaticMixin {
+            static shared: string = "left"
+        }
+
+        @mixin()
+        class RightStaticMixin {
+            static shared: number = 1
+        }
+
+        class Consumer implements LeftStaticMixin, RightStaticMixin {
+        }
+    `))
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.true(messages.includes("Static mixin member collision"), messages)
+    t.true(messages.includes("Consumer"), messages)
+    t.true(messages.includes("LeftStaticMixin"), messages)
+    t.true(messages.includes("RightStaticMixin"), messages)
+    t.true(messages.includes("shared"), messages)
+})
+
+it("reports conflicting static members between consumer base and mixins", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        class Base {
+            static shared: string = "base"
+        }
+
+        @mixin()
+        class StaticMixin {
+            static shared: number = 1
+        }
+
+        class Consumer extends Base implements StaticMixin {
+        }
+    `))
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.true(messages.includes("Static mixin member collision"), messages)
+    t.true(messages.includes("Consumer"), messages)
+    t.true(messages.includes("Base"), messages)
+    t.true(messages.includes("StaticMixin"), messages)
+    t.true(messages.includes("shared"), messages)
+})
+
+it("reports method-shaped static collisions only in strict mode", async (t: Test) => {
+    const sourceFile = createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class LeftStaticMixin {
+            static shared (): string {
+                return "left"
+            }
+        }
+
+        @mixin()
+        class RightStaticMixin {
+            static shared (): number {
+                return 1
+            }
+        }
+
+        class Consumer implements LeftStaticMixin, RightStaticMixin {
+        }
+    `)
+    const defaultDiagnostics = typecheckText(printSourceFile(ts, transformSourceFile(ts, sourceFile)))
+    const strictDiagnostics = typecheckText(printSourceFile(ts, transformSourceFile(ts, sourceFile, {
+        staticCollisionCheck : "strict"
+    })))
+    const defaultMessages = defaultDiagnostics.join("\n")
+    const strictMessages = strictDiagnostics.join("\n")
+
+    t.false(defaultMessages.includes("Static mixin member collision"), defaultMessages)
+    t.true(strictMessages.includes("Static mixin member collision"), strictMessages)
+    t.true(strictMessages.includes("shared"), strictMessages)
+})
+
+it("can disable static collision diagnostics", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class LeftStaticMixin {
+            static shared: string = "left"
+        }
+
+        @mixin()
+        class RightStaticMixin {
+            static shared: number = 1
+        }
+
+        class Consumer implements LeftStaticMixin, RightStaticMixin {
+        }
+
+        void Consumer
+    `), {
+        staticCollisionCheck : false
+    })
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.false(messages.includes("Static mixin member collision"), messages)
+})

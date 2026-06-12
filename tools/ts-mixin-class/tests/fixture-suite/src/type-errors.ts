@@ -32,4 +32,18 @@ class BadLinearizationMixin implements LinearizationX, LinearizationY {
 class BadLinearizationConsumer implements BadLinearizationMixin {
 }
 
-void [ BadRequiredConsumer, BadLinearizationConsumer ]
+@mixin()
+class StaticCollisionLeftMixin {
+    static shared: string = "left"
+}
+
+@mixin()
+class StaticCollisionRightMixin {
+    static shared: number = 1
+}
+
+// @ts-expect-error StaticCollisionLeftMixin and StaticCollisionRightMixin have incompatible static members.
+class BadStaticCollisionConsumer implements StaticCollisionLeftMixin, StaticCollisionRightMixin {
+}
+
+void [ BadRequiredConsumer, BadLinearizationConsumer, BadStaticCollisionConsumer ]
