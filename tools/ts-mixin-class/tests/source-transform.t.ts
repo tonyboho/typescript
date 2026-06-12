@@ -82,6 +82,29 @@ it("expands an imported class-level @mixin() class into interface + factory + co
     )
 })
 
+it("expands a named default-exported mixin class", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        export default class DefaultMixin {
+            value: string = "default"
+
+            method (): string {
+                return this.value
+            }
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface DefaultMixin"), "Default mixin interface is generated")
+    t.true(printed.includes("export const DefaultMixin$mixin"), "Default mixin factory is exported for generated imports")
+    t.true(printed.includes("const DefaultMixin = defineMixinClass"), "Default mixin value stays local")
+    t.true(printed.includes("export default DefaultMixin"), "Default export points at the generated runtime value")
+    t.false(printed.includes("export const DefaultMixin ="), "Default mixin is not accidentally exported as a named value")
+    t.expect(typecheckText(printed)).toEqual([])
+})
+
 it("supports aliased and namespace decorator imports", async (t: Test) => {
     const aliased = transformSourceFile(ts, createSourceFile(`
         import { mixin as mix } from "ts-mixin-class"
@@ -655,6 +678,69 @@ it("reports unsupported mixin class declarations", async (t: Test) => {
     t.true(messages.includes("Mixin class MissingMethodReturnTypeMixin method method must have an explicit return type annotation"), messages)
     t.true(messages.includes("Mixin class MissingParameterTypeMixin method parameter value must have an explicit type annotation"), messages)
     t.true(messages.includes("Mixin class MissingAccessorTypeMixin accessor value must have an explicit type annotation"), messages)
+})
+
+it("reports anonymous default mixin classes with a custom diagnostic", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        export default class {
+            value: string = "x"
+        }
+    `))
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.true(messages.includes("Invalid mixin class declaration"), messages)
+    t.true(messages.includes("default-exported mixin class must be named"), messages)
+    t.true(messages.includes("export default class MyMixin"), messages)
+})
+
+it("reports anonymous mixin consumer class declarations with a custom diagnostic", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceMixin {
+            value: string = "x"
+        }
+
+        export default class implements SourceMixin {
+        }
+    `))
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.true(messages.includes("Invalid mixin consumer declaration"), messages)
+    t.true(messages.includes("A mixin consumer class must be named"), messages)
+    t.true(messages.includes("export default class Consumer"), messages)
+})
+
+it("reports unsupported mixin consumer base expressions with a custom diagnostic", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        function makeBase (): new () => object {
+            return class {
+            }
+        }
+
+        @mixin()
+        class SourceMixin {
+            value: string = "x"
+        }
+
+        class Consumer extends makeBase() implements SourceMixin {
+        }
+    `))
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.true(messages.includes("Unsupported mixin consumer base expression"), messages)
+    t.true(messages.includes("Consumer extends makeBase()"), messages)
+    t.true(messages.includes("Only named base classes such as Base or ns.Base are supported for now"), messages)
+    t.true(messages.includes("assign the expression to a named class or const"), messages)
 })
 
 function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration | undefined {

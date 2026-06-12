@@ -75,6 +75,19 @@ const invalidMixinDiagnosticParts = [
     "Mixin class MissingAccessorTypeMixin accessor value must have an explicit type annotation"
 ]
 
+const anonymousConsumerDiagnosticParts = [
+    "Invalid mixin consumer declaration",
+    "A mixin consumer class must be named",
+    "export default class Consumer"
+]
+
+const unsupportedBaseDiagnosticParts = [
+    "Unsupported mixin consumer base expression",
+    "Consumer extends makeBase()",
+    "Only named base classes such as Base or ns.Base are supported for now",
+    "assign the expression to a named class or const"
+]
+
 const sourceText = trimIndent(`
     import { mixin } from "ts-mixin-class"
 
@@ -316,6 +329,35 @@ const invalidMixinDiagnosticText = trimIndent(`
         get value() {
             return "x"
         }
+    }
+`)
+
+const anonymousConsumerDiagnosticText = trimIndent(`
+    import { mixin } from "ts-mixin-class"
+
+    @mixin()
+    class SourceMixin {
+        value: string = "x"
+    }
+
+    export default class implements SourceMixin {
+    }
+`)
+
+const unsupportedBaseDiagnosticText = trimIndent(`
+    import { mixin } from "ts-mixin-class"
+
+    function makeBase(): new () => object {
+        return class {
+        }
+    }
+
+    @mixin()
+    class SourceMixin {
+        value: string = "x"
+    }
+
+    class Consumer extends makeBase() implements SourceMixin {
     }
 `)
 
@@ -720,6 +762,74 @@ it("tsserver semantic diagnostics report invalid mixin declarations with custom 
         const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
 
         assertDiagnosticParts(t, messages, invalidMixinDiagnosticParts)
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver semantic diagnostics report anonymous mixin consumers with a custom message", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        compilerOptions        : {
+            declaration : true
+        },
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : anonymousConsumerDiagnosticText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
+        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
+            t,
+            await runTypeScriptServerRequest(
+                fixture.directory,
+                sourceFile,
+                anonymousConsumerDiagnosticText,
+                "semanticDiagnosticsSync",
+                { file : sourceFile }
+            )
+        )
+        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
+
+        assertDiagnosticParts(t, messages, anonymousConsumerDiagnosticParts)
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver semantic diagnostics report unsupported mixin consumer base expressions with a custom message", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        compilerOptions        : {
+            declaration : true
+        },
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : unsupportedBaseDiagnosticText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
+        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
+            t,
+            await runTypeScriptServerRequest(
+                fixture.directory,
+                sourceFile,
+                unsupportedBaseDiagnosticText,
+                "semanticDiagnosticsSync",
+                { file : sourceFile }
+            )
+        )
+        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
+
+        assertDiagnosticParts(t, messages, unsupportedBaseDiagnosticParts)
     } finally {
         await fixture.dispose()
     }

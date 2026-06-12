@@ -35,6 +35,7 @@ type MixinDecoratorImports = {
 export type RegisteredMixin = {
     fileName     : string,
     name         : string,
+    defaultExport : boolean,
     // ключи реестра зависимостей (mixin-записи из implements)
     dependencies : string[],
     requiredBaseName : string | undefined
@@ -45,6 +46,12 @@ export type MixinRegistry = Map<string, RegisteredMixin>
 export type CrossFileContext = {
     registry : MixinRegistry,
     resolveModuleFileName : (specifier: string, containingFile: string) => string | undefined
+}
+
+type ImportedNameBinding = {
+    resolvedFileName : string,
+    importedName     : string,
+    typeOnly         : boolean
 }
 
 // Ссылка на миксин с точки зрения трансформируемого файла
@@ -576,8 +583,23 @@ function preserveGeneratedDeclarationRange<Node extends ts.Node>(
     original: ts.Node
 ): Node {
     tsInstance.setOriginalNode(node, original)
+    preserveGeneratedOriginalNodes(tsInstance, node, original)
 
     return preserveTextRange(tsInstance, node, range)
+}
+
+function preserveGeneratedOriginalNodes(
+    tsInstance: TypeScript,
+    node: ts.Node,
+    original: ts.Node
+): void {
+    tsInstance.forEachChild(node, (child) => {
+        if (tsInstance.getParseTreeNode(child) === undefined) {
+            tsInstance.setOriginalNode(child, original)
+        }
+
+        preserveGeneratedOriginalNodes(tsInstance, child, original)
+    })
 }
 
 function cloneSourceFileForTransform(
@@ -660,7 +682,8 @@ export function buildMixinRegistry(
                     .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
                     .map((expression) => expression.text),
                 requiredBaseName     : requiredBaseIdentifierName(tsInstance, statement),
-                declarationHeritage  : false
+                declarationHeritage  : false,
+                defaultExport        : hasModifier(tsInstance, statement, tsInstance.SyntaxKind.DefaultKeyword)
             })
         }
     }
@@ -671,9 +694,16 @@ export function buildMixinRegistry(
         registry.set(registryKey(candidate.sourceFile.fileName, candidate.name), {
             fileName          : candidate.sourceFile.fileName,
             name              : candidate.name,
+            defaultExport     : candidate.defaultExport,
             dependencies      : [],
             requiredBaseName  : candidate.requiredBaseName
         })
+
+        if (candidate.defaultExport) {
+            registry.set(registryKey(candidate.sourceFile.fileName, "default"), registry.get(
+                registryKey(candidate.sourceFile.fileName, candidate.name)
+            )!)
+        }
     }
 
     const importMaps = new Map<string, Map<string, { resolvedFileName: string, importedName: string }>>()
@@ -726,7 +756,8 @@ type Candidate = {
     name                 : string,
     dependencyNames      : string[],
     requiredBaseName     : string | undefined,
-    declarationHeritage  : boolean
+    declarationHeritage  : boolean,
+    defaultExport        : boolean
 }
 
 function shouldSkipRegistrySourceFile(sourceFile: ts.SourceFile): boolean {
@@ -770,7 +801,8 @@ function collectDeclarationFileMixinCandidates(
                 name                 : declaration.name.text,
                 dependencyNames      : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text)),
                 requiredBaseName     : undefined,
-                declarationHeritage  : true
+                declarationHeritage  : true,
+                defaultExport        : false
             })
         }
     }
@@ -828,8 +860,8 @@ function buildImportedNameMap(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined
-): Map<string, { resolvedFileName: string, importedName: string }> {
-    const importMap = new Map<string, { resolvedFileName: string, importedName: string }>()
+): Map<string, ImportedNameBinding> {
+    const importMap = new Map<string, ImportedNameBinding>()
 
     if (resolveModuleFileName === undefined) {
         return importMap
@@ -842,11 +874,8 @@ function buildImportedNameMap(
             continue
         }
 
-        const namedBindings = statement.importClause?.namedBindings
-
-        if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
-            continue
-        }
+        const importClause = statement.importClause
+        const namedBindings = importClause?.namedBindings
 
         const resolvedFileName = resolveModuleFileName(statement.moduleSpecifier.text, sourceFile.fileName)
 
@@ -854,10 +883,23 @@ function buildImportedNameMap(
             continue
         }
 
+        if (importClause?.name !== undefined) {
+            importMap.set(importClause.name.text, {
+                resolvedFileName,
+                importedName : "default",
+                typeOnly     : importClause.isTypeOnly
+            })
+        }
+
+        if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
+            continue
+        }
+
         for (const element of namedBindings.elements) {
             importMap.set(element.name.text, {
                 resolvedFileName,
-                importedName : element.propertyName?.text ?? element.name.text
+                importedName : element.propertyName?.text ?? element.name.text,
+                typeOnly     : importClause?.isTypeOnly === true || element.isTypeOnly
             })
         }
     }
@@ -866,7 +908,7 @@ function buildImportedNameMap(
 }
 
 function importedRequiredBaseRef(
-    importMap: Map<string, { resolvedFileName: string, importedName: string }>,
+    importMap: Map<string, ImportedNameBinding>,
     resolvedFileName: string,
     specifier: string,
     importedName: string,
@@ -914,13 +956,63 @@ export function transformSourceFile(
         tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions, crossFile
     )
 
-    if (context.byLocalName.size === 0) {
+    const hasAnonymousMixinDiagnostics = sourceFile.statements.some((statement) => {
+        return tsInstance.isClassDeclaration(statement) &&
+            statement.name === undefined &&
+            hasMixinDecorator(tsInstance, statement, mixinDecoratorImports, resolvedOptions)
+    })
+    const hasAnonymousConsumerDiagnostics = sourceFile.statements.some((statement) => {
+        return tsInstance.isClassDeclaration(statement) &&
+            statement.name === undefined &&
+            consumedMixins(tsInstance, statement, context).length > 0
+    })
+
+    if (context.byLocalName.size === 0 && !hasAnonymousMixinDiagnostics && !hasAnonymousConsumerDiagnostics) {
         return sourceFile
     }
 
     let expandedAnything = false
 
     const expandedStatements = sourceFile.statements.flatMap((statement): ts.Statement[] => {
+        if (tsInstance.isClassDeclaration(statement) && statement.name === undefined &&
+            hasMixinDecorator(tsInstance, statement, mixinDecoratorImports, resolvedOptions)
+        ) {
+            expandedAnything = true
+            return [
+                ...createMixinDeclarationDiagnosticAliases(
+                    tsInstance,
+                    "AnonymousDefaultMixin",
+                    [ {
+                        node    : statement,
+                        message : "Invalid mixin class declaration. A default-exported mixin class must be named. " +
+                            "Write `export default class MyMixin` so the transformer can generate stable interface, factory, registry, and declaration names."
+                    } ],
+                    statement
+                ),
+                statement
+            ]
+        }
+
+        if (tsInstance.isClassDeclaration(statement) && statement.name === undefined &&
+            consumedMixins(tsInstance, statement, context).length > 0
+        ) {
+            expandedAnything = true
+            return [
+                ...createMixinDeclarationDiagnosticAliases(
+                    tsInstance,
+                    "AnonymousMixinConsumer",
+                    [ {
+                        node    : statement,
+                        message : "Invalid mixin consumer declaration. A mixin consumer class must be named. " +
+                            "Write `class Consumer implements Mixin` or `export default class Consumer implements Mixin` " +
+                            "so the transformer can generate stable intermediate base, diagnostic, and declaration names."
+                    } ],
+                    statement
+                ),
+                statement
+            ]
+        }
+
         if (tsInstance.isClassDeclaration(statement) && statement.name !== undefined) {
             const ref = context.byLocalName.get(statement.name.text)
 
@@ -1030,7 +1122,7 @@ function buildFileMixinContext(
             }
 
             if (statement.name === undefined) {
-                throw new MixinTransformError(sourceFile, statement, "A mixin class must have a name")
+                continue
             }
 
             const name = statement.name.text
@@ -1061,14 +1153,20 @@ function buildFileMixinContext(
                 continue
             }
 
-            const namedBindings = statement.importClause?.namedBindings
+            const importClause = statement.importClause
+            const namedBindings = importClause?.namedBindings
+            const localNames = [
+                ...(importClause?.name === undefined ? [] : [ importClause.name.text ]),
+                ...(namedBindings !== undefined && tsInstance.isNamedImports(namedBindings)
+                    ? namedBindings.elements.map((element) => element.name.text)
+                    : [])
+            ]
 
-            if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
+            if (localNames.length === 0) {
                 continue
             }
 
-            for (const element of namedBindings.elements) {
-                const localName = element.name.text
+            for (const localName of localNames) {
                 const imported  = importMap.get(localName)
 
                 if (imported === undefined || context.byLocalName.has(localName)) {
@@ -1081,6 +1179,21 @@ function buildFileMixinContext(
                 if (registered === undefined) {
                     continue
                 }
+                const localValueName = imported.typeOnly ? localName + "$mixinValue" : localName
+
+                if (imported.typeOnly) {
+                    const importedValueName = registered.defaultExport ? "default" : registered.name
+
+                    context.usedFactoryImports.set(
+                        `${statement.moduleSpecifier.text}:${importedValueName}:${localValueName}`,
+                        {
+                            specifier    : statement.moduleSpecifier.text,
+                            importedName : importedValueName,
+                            localName    : localValueName
+                        }
+                    )
+                }
+
                 const requiredBase = registered.requiredBaseName === undefined
                     ? undefined
                     : importedRequiredBaseRef(
@@ -1094,11 +1207,11 @@ function buildFileMixinContext(
                 const ref: ResolvedMixinRef = {
                     key,
                     className        : registered.name,
-                    localValueName   : localName,
+                    localValueName,
                     localFactoryName : localName + mixinFactorySuffix,
                     factoryImport    : {
                         specifier    : statement.moduleSpecifier.text,
-                        importedName : imported.importedName + mixinFactorySuffix
+                        importedName : registered.name + mixinFactorySuffix
                     },
                     requiredBase,
                     dependencies     : registered.dependencies,
@@ -1370,7 +1483,11 @@ function expandMixinClass(
         throw new Error(`Mixin class ${ref.className} has no declaration in the transformed file`)
     }
 
+    const defaultExport = hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.DefaultKeyword)
     const exportModifiers = exportModifiersOf(tsInstance, declaration)
+    const factoryExportModifiers = hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.ExportKeyword)
+        ? [ factory.createToken(tsInstance.SyntaxKind.ExportKeyword) ]
+        : undefined
     const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
     const requiredBase    = requiredBaseType(tsInstance, declaration)
     const diagnostics     = collectMixinClassDiagnostics(tsInstance, sourceFile, declaration)
@@ -1399,7 +1516,7 @@ function expandMixinClass(
     ), interfaceDeclarationRange(declaration, interfaceMembers))
 
     const factoryStatement = preserveTextRange(tsInstance, factory.createVariableStatement(
-        exportModifiers,
+        factoryExportModifiers,
         factory.createVariableDeclarationList([
             factory.createVariableDeclaration(
                 ref.localFactoryName,
@@ -1467,7 +1584,15 @@ function expandMixinClass(
         ], tsInstance.NodeFlags.Const)
     ), generatedTextRange(sourceFile, declaration.end))
 
-    return [ interfaceDeclaration, ...diagnosticAliases, factoryStatement, valueStatement ]
+    const defaultExportStatement = defaultExport
+        ? [ preserveTextRange(tsInstance, factory.createExportAssignment(
+            undefined,
+            undefined,
+            factory.createIdentifier(ref.className)
+        ), generatedTextRange(sourceFile, declaration.end)) ]
+        : []
+
+    return [ interfaceDeclaration, ...diagnosticAliases, factoryStatement, valueStatement, ...defaultExportStatement ]
 }
 
 function createMixinDeclarationDiagnosticAliases(
@@ -1751,12 +1876,6 @@ function expandConsumerClass(
 
         throw error
     }
-    const implicitRequiredBase = extendsType === undefined
-        ? firstRequiredBaseType(tsInstance, context, linearized)
-        : undefined
-    const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
-        ? name + consumerEmptyBaseSuffix
-        : undefined
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
     const originalExtendsClause = extendsClause(tsInstance, declaration)
     const generatedHeritageRange = originalExtendsClause ?? generatedTextRange(
@@ -1764,6 +1883,28 @@ function expandConsumerClass(
         declaration.heritageClauses?.pos ?? declaration.name.end
     )
     const generatedHeritageTypeRange = extendsType ?? generatedHeritageRange
+
+    if (extendsType !== undefined && !isSupportedBaseExpression(tsInstance, extendsType.expression)) {
+        return expandConsumerClassWithUnsupportedBaseDiagnostic(
+            tsInstance,
+            sourceFile,
+            declaration,
+            context,
+            directMixinRefs,
+            linearized,
+            options,
+            generatedRange,
+            generatedHeritageRange,
+            generatedHeritageTypeRange
+        )
+    }
+
+    const implicitRequiredBase = extendsType === undefined
+        ? firstRequiredBaseType(tsInstance, context, linearized)
+        : undefined
+    const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
+        ? name + consumerEmptyBaseSuffix
+        : undefined
     const requiredBaseValidations = extendsType === undefined
         ? []
         : createRequiredBaseValidations(
@@ -1842,6 +1983,94 @@ function expandConsumerClass(
         ) ]
 
     return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
+}
+
+function expandConsumerClassWithUnsupportedBaseDiagnostic(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    context: FileMixinContext,
+    directMixinRefs: ResolvedMixinRef[],
+    linearizedMixinRefs: ResolvedMixinRef[],
+    options: TransformOptions,
+    generatedRange: ts.TextRange,
+    generatedHeritageRange: ts.TextRange,
+    generatedHeritageTypeRange: ts.TextRange
+): ts.Statement[] {
+    const factory = tsInstance.factory
+
+    if (declaration.name === undefined) {
+        throw new MixinTransformError(sourceFile, declaration, "A mixin consumer class must have a name")
+    }
+
+    const name          = declaration.name.text
+    const baseName      = name + consumerBaseSuffix
+    const extendsType   = extendsClause(tsInstance, declaration)?.types[0]
+    const mixinHeritage = consumedMixins(tsInstance, declaration, context)
+
+    if (extendsType === undefined) {
+        throw new MixinTransformError(sourceFile, declaration, "Unsupported base diagnostic requires an extends clause")
+    }
+
+    const diagnosticValidation = createConsumerDiagnosticValidation(
+        tsInstance,
+        declaration,
+        "__mixinUnsupportedBaseExpression",
+        unsupportedBaseDiagnosticMessage(tsInstance, sourceFile, declaration, extendsType),
+        generatedHeritageTypeRange
+    )
+    const checkedTypeParameters = appendRequiredBaseValidationTypeParameters(
+        tsInstance,
+        declaration.typeParameters,
+        [ diagnosticValidation ]
+    )
+
+    const baseInterface = preserveGeneratedDeclarationRange(tsInstance, factory.createInterfaceDeclaration(
+        undefined,
+        baseName,
+        checkedTypeParameters,
+        [ factory.createHeritageClause(
+            tsInstance.SyntaxKind.ExtendsKeyword,
+            mixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+        ) ],
+        []
+    ), generatedRange, declaration)
+
+    const baseClass = preserveGeneratedDeclarationRange(tsInstance, factory.createClassDeclaration(
+        undefined,
+        baseName,
+        appendRequiredBaseValidationTypeParameters(
+            tsInstance,
+            declaration.typeParameters,
+            [ diagnosticValidation ]
+        ),
+        [ unsupportedBaseConsumerHeritage(
+            tsInstance,
+            extendsType,
+            directMixinRefs,
+            linearizedMixinRefs,
+            options
+        ) ],
+        []
+    ), generatedRange, declaration)
+
+    const updatedConsumer = factory.updateClassDeclaration(
+        declaration,
+        declaration.modifiers,
+        declaration.name,
+        declaration.typeParameters,
+        consumerHeritageClauses(
+            tsInstance,
+            declaration,
+            baseName,
+            generatedHeritageRange,
+            generatedHeritageTypeRange,
+            [ diagnosticValidation.typeArgument ]
+        ),
+        declaration.members
+    )
+
+    return [ baseInterface, baseClass, updatedConsumer ]
 }
 
 function expandConsumerClassWithLinearizationDiagnostic(
@@ -1947,12 +2176,28 @@ function createLinearizationDiagnosticValidation(
     message: string,
     generatedRange: ts.TextRange
 ): RequiredBaseValidation {
+    return createConsumerDiagnosticValidation(
+        tsInstance,
+        declaration,
+        "__mixinLinearizationError",
+        message,
+        generatedRange
+    )
+}
+
+function createConsumerDiagnosticValidation(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    parameterBaseName: string,
+    message: string,
+    generatedRange: ts.TextRange
+): RequiredBaseValidation {
     const factory = tsInstance.factory
 
     return {
         typeParameter : preserveTextRange(tsInstance, factory.createTypeParameterDeclaration(
             undefined,
-            uniqueGeneratedTypeParameterName(declaration, "__mixinLinearizationError"),
+            uniqueGeneratedTypeParameterName(declaration, parameterBaseName),
             factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
             undefined
         ), generatedRange),
@@ -1962,6 +2207,21 @@ function createLinearizationDiagnosticValidation(
             generatedRange
         )
     }
+}
+
+function unsupportedBaseDiagnosticMessage(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    extendsType: ts.ExpressionWithTypeArguments
+): string {
+    const consumerName = declaration.name?.text ?? "<anonymous consumer>"
+    const actualBase = heritageTypeText(tsInstance, sourceFile, extendsType)
+
+    return "Unsupported mixin consumer base expression. " +
+        `${consumerName} extends ${actualBase}. ` +
+        "Only named base classes such as Base or ns.Base are supported for now. " +
+        "Fix: assign the expression to a named class or const and extend that name."
 }
 
 function linearizationDiagnosticMessage(
@@ -1981,6 +2241,41 @@ function linearizationDiagnosticMessage(
         `Conflicting order requirements: ${pending || "<unknown>"}. ` +
         "This means the mixins require incompatible inheritance order, for example A before B and B before A. " +
         "Fix it by changing the implements order, removing one conflicting mixin, or splitting the incompatible mixins."
+}
+
+function unsupportedBaseConsumerHeritage(
+    tsInstance: TypeScript,
+    extendsType: ts.ExpressionWithTypeArguments,
+    directMixinRefs: ResolvedMixinRef[],
+    linearizedMixinRefs: ResolvedMixinRef[],
+    options: TransformOptions
+): ts.HeritageClause {
+    const factory = tsInstance.factory
+
+    if (options.sourceView) {
+        return factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+            cloneExpressionWithTypeArguments(tsInstance, extendsType)
+        ])
+    }
+
+    return factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+        factory.createExpressionWithTypeArguments(
+            factory.createParenthesizedExpression(
+                factory.createAsExpression(
+                    factory.createAsExpression(
+                        createMixinChainExpression(
+                            tsInstance,
+                            directMixinRefs,
+                            cloneNode(tsInstance, extendsType.expression)
+                        ),
+                        factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
+                    ),
+                    createUnsupportedBaseConsumerCastType(tsInstance, linearizedMixinRefs)
+                )
+            ),
+            undefined
+        )
+    ])
 }
 
 function consumerBaseClassHeritage(
@@ -2310,6 +2605,25 @@ function createConsumerBaseCastType(
     return types.length === 1 ? types[0] : factory.createIntersectionTypeNode(types)
 }
 
+function createUnsupportedBaseConsumerCastType(
+    tsInstance: TypeScript,
+    mixinRefs: ResolvedMixinRef[]
+): ts.TypeNode {
+    const factory = tsInstance.factory
+    const types = [
+        factory.createTypeReferenceNode(anyConstructorName, undefined),
+        ...mixinRefs
+            .filter((ref) => ref.localValueName !== undefined)
+            .map((ref) => {
+                return factory.createTypeReferenceNode(classStaticsName, [
+                    factory.createTypeQueryNode(factory.createIdentifier(ref.localValueName as string))
+                ])
+            })
+    ]
+
+    return types.length === 1 ? types[0] : factory.createIntersectionTypeNode(types)
+}
+
 function createConsumerBaseHeadType(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
@@ -2333,6 +2647,16 @@ function createConsumerBaseHeadType(
             factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
         ])
     ])
+}
+
+function isSupportedBaseExpression(tsInstance: TypeScript, expression: ts.Expression): boolean {
+    if (tsInstance.isIdentifier(expression)) {
+        return true
+    }
+
+    return tsInstance.isPropertyAccessExpression(expression) &&
+        tsInstance.isIdentifier(expression.name) &&
+        isSupportedBaseExpression(tsInstance, expression.expression)
 }
 
 function consumerHeritageClauses(
@@ -2781,12 +3105,10 @@ function exportModifiersOf(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration
 ): ts.Modifier[] | undefined {
-    if (!hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.ExportKeyword)) {
+    if (!hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.ExportKeyword) ||
+        hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.DefaultKeyword)
+    ) {
         return undefined
-    }
-
-    if (hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.DefaultKeyword)) {
-        throw new Error("A `export default` mixin class is not supported")
     }
 
     return [ tsInstance.factory.createToken(tsInstance.SyntaxKind.ExportKeyword) ]
