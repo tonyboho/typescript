@@ -1,35 +1,144 @@
 # ts-mixin-class
 
-TypeScript program transformer for class-level mixins.
+`ts-mixin-class` adds practical multiple inheritance to TypeScript classes.
 
-Mark reusable class bodies with `@mixin()` and list them from a consumer class in
-`implements`:
+You write normal classes, mark reusable inheritance units with `@mixin()`, and list
+the mixins from a consumer class in `implements`. The transformer turns that into a
+linear runtime inheritance chain before TypeScript checks and emits the program.
+
+The inheritance order is resolved with C3 linearization, the same method-resolution
+order algorithm used by Python. That gives predictable `super` calls, deduplicates
+diamond-shaped dependencies, and rejects incompatible ordering requirements.
 
 ```ts
 import { mixin } from "ts-mixin-class"
 
 @mixin()
-class SourceMixin {
-    value: string = "value"
+class Named {
+    name: string = "Ada"
 
-    method (): string {
+    label(): string {
+        return this.name
+    }
+}
+
+@mixin()
+class Timestamped {
+    createdAt: Date = new Date()
+
+    age(): number {
+        return Date.now() - this.createdAt.getTime()
+    }
+}
+
+class User implements Named, Timestamped {
+    describe(): string {
+        return `${super.label()} / ${super.age()}ms`
+    }
+}
+
+const user = new User()
+
+user.label()
+user.age()
+user instanceof Named
+user instanceof Timestamped
+```
+
+## Required Bases
+
+A mixin can declare a required consumer base with `extends`:
+
+```ts
+class ModelBase {
+    id: string = ""
+}
+
+@mixin()
+class Persisted extends ModelBase {
+    save(): string {
+        return this.id
+    }
+}
+
+class DomainModel extends ModelBase {
+    collection: string = "users"
+}
+
+class UserModel extends DomainModel implements Persisted {
+}
+```
+
+For a mixin class, `extends ModelBase` means “this mixin can only be applied to
+`ModelBase` or one of its descendants”. It does not permanently lock the mixin to that
+exact runtime base. Both typecheck and runtime enforce this requirement.
+
+## Mixin Classes Are Classes
+
+Mixin values are still full class values. You can instantiate them directly, access their
+static members, and use them with `instanceof`:
+
+```ts
+const named = new Named()
+
+named.label()
+named instanceof Named
+```
+
+For a required-base mixin, the standalone mixin class is built on its canonical required
+base:
+
+```ts
+const persisted = new Persisted()
+
+persisted instanceof ModelBase
+persisted instanceof Persisted
+```
+
+## Generics
+
+Generics are fully supported for mixins, consumers, `super`, and the resulting instance
+type.
+
+```ts
+@mixin()
+class StoredValue<T> {
+    value: T | undefined
+
+    getValue(): T | undefined {
         return this.value
     }
 }
 
-class Consumer implements SourceMixin {
-    useMixin (): string {
-        return super.method()
+@mixin()
+class ValueLabel<T> implements StoredValue<T> {
+    label(): string {
+        return String(super.getValue())
     }
 }
+
+class Box<T> implements StoredValue<T>, ValueLabel<T> {
+}
+
+const box = new Box<number>()
+
+box.value = 42
+
+const value: number | undefined = box.getValue()
+const label: string = box.label()
 ```
 
-The transformer expands mixin classes into an interface, a runtime factory, and a
-canonical runtime value. Consumers are compiled through an intermediate base class and
-`mixinChain(...)`, so `this`, `super`, statics, `instanceof`, required bases, and generic
-`implements` types work across the generated inheritance chain.
+## Construction
 
-Construction is opt-in through `Base`:
+Constructor signatures for mixins are intentionally not defined. Different mixins may
+need different constructor inputs, and a single classic constructor signature cannot
+generally represent a C3-linearized mixin chain.
+
+Instead, mixins use a cooperative initialization pattern, similar in spirit to Python's
+[`super()` cooperative multiple inheritance](https://docs.python.org/3/library/functions.html#super).
+To opt in, put `Base` in the consumer's base chain, either directly, through an
+application base class, or as the required base for mixins that depend on this protocol.
+Construction then goes through `Base.new(config)`:
 
 ```ts
 import { Base } from "ts-mixin-class"
@@ -41,6 +150,233 @@ class Model extends Base {
 const model = Model.new({ id : "42" })
 ```
 
-`constructionConfig: "public-only"` is the default and builds the `new(...)` config type
-from explicitly `public` instance fields. `constructionConfig: "instance-type"` uses
-the broader `Partial<Consumer<T>>` shape.
+`Base.new(config)` creates an empty instance with `new this()` and then calls
+`initialize(config)`. The default `initialize` implementation assigns config
+properties onto the instance.
+
+Override `initialize` when a class needs derived state or validation after config
+assignment. Use the exported `Config<T>` helper for the argument type:
+
+```ts
+import { Base, type Config } from "ts-mixin-class"
+
+class User extends Base {
+    public firstName: string = ""
+    public lastName: string = ""
+
+    fullName: string = ""
+
+    override initialize(config?: Config<this>): void {
+        super.initialize(config)
+
+        this.fullName = `${this.firstName} ${this.lastName}`.trim()
+    }
+}
+
+const user = User.new({
+    firstName : "Ada",
+    lastName  : "Lovelace"
+})
+```
+
+The transformer adds a typed static `new(...)` adapter only when the consumer base chain
+extends `Base`.
+
+`constructionConfig` controls the generated config type:
+
+- `public-only` is the default. It includes explicitly `public` instance fields from
+  the base, consumer, and consumed mixins. Fields without `?` are required in the config
+  type; fields with `?` are optional. Definite-assignment fields such as `public id!: T`
+  are required.
+- `instance-type` uses the broader `Partial<Consumer<T>>` shape.
+
+Generic consumers can also use `Base.new(config)`. The generated static adapter keeps
+generic parameters, so the type can be written explicitly or inferred from the config
+object:
+
+```ts
+@mixin()
+class BoxFlags {
+    public touched: boolean = false
+}
+
+class ConfiguredBox<T> extends Base implements BoxFlags {
+    public value!: T
+}
+
+const explicit = ConfiguredBox.new<number>({
+    value   : 1,
+    touched : true
+})
+
+const inferred = ConfiguredBox.new({
+    value   : "Ada",
+    touched : true
+})
+
+const numericValue: number = explicit.value
+const stringValue: string = inferred.value
+```
+
+`Config<this>` is intentionally a broader helper than the generated `new(...)` config
+type. It is useful for implementing `initialize`, but it cannot see AST-only information
+such as “this field was explicitly marked `public`” or whether a property came from the
+generated `public-only` config list. The strict required/optional contract is enforced at
+the `new(...)` call site.
+
+## Runtime Metadata
+
+Mixin runtime metadata is available through exported unique symbols:
+
+```ts
+import { base, factory, requirements } from "ts-mixin-class"
+
+SomeMixin[factory]
+SomeMixin[requirements]
+SomeMixin[base]
+```
+
+The symbols keep introspection possible without adding string-named helper fields to the
+ordinary public API surface of the class.
+
+## Limitations
+
+These are current architectural constraints, not accidental missing tests:
+
+- Mixin consumers must be named top-level class declarations. Anonymous consumers,
+  class expressions, and nested consumer declarations are rejected with custom
+  diagnostics.
+- Dynamic consumer base expressions such as `extends makeBase()` are not supported yet.
+  Use a named base class for now.
+- Mixin classes cannot declare constructors. Use field initializers and the `Base.new`
+  construction protocol for config-style initialization.
+- Mixin class members cannot be `private`, `protected`, `#private`, or abstract.
+- Mixin class properties, methods, accessors, and method parameters need explicit type
+  annotations.
+- Arbitrary constructor signatures from bases and mixins are not modeled.
+- Generated helper names use a double-underscore prefix, but collisions with user
+  declarations such as `__Source$mixin` are not scanned yet.
+
+## Future Work
+
+- Support dynamic consumer base expressions while preserving evaluation order, instance
+  typing, static typing, declaration emit, and runtime behavior.
+- Provide an exact generated type for `initialize(config)`. Today `Config<this>` is a
+  broad structural helper: it can filter methods out of the instance type, but it cannot
+  know which fields were selected by the transformer for `constructionConfig:
+  "public-only"`, and it cannot reproduce the exact required/optional split from the
+  generated `new(...)` adapter. A future design could expose a generated per-class config
+  type or constructor-based helper so user overrides can write something like
+  `initialize(config?: ExactConfig<typeof User>)` and get exactly the same shape as
+  `User.new(...)`.
+- Add explicit collision diagnostics for generated helper names and injected helper
+  imports.
+- Continue IDE dogfooding. Existing coverage includes definition, quick info, find
+  references, rename, source-position preservation, and semantic diagnostics.
+
+## Technical Notes
+
+The package is a `ts-patch` ProgramTransformer. It transforms source files before
+TypeScript typechecks and emits them.
+
+At a high level:
+
+- `@mixin()` classes expand into an interface, a runtime factory, and a canonical runtime
+  value.
+- Consumers expand through a generated intermediate base class and `mixinChain(...)`.
+- Declaration merging provides the instance type of consumed mixins.
+- The runtime helper handles C3 linearization, canonical mixin reuse, required-base
+  checks, and `Symbol.hasInstance`.
+
+For example, each mixin class is split into a type surface and a runtime factory:
+
+```ts
+@mixin()
+class Named {
+    name: string = ""
+
+    label(): string {
+        return this.name
+    }
+}
+
+@mixin()
+class Timestamped {
+    createdAt: Date = new Date()
+
+    age(): number {
+        return Date.now() - this.createdAt.getTime()
+    }
+}
+```
+
+becomes conceptually:
+
+```ts
+interface Named {
+    name: string
+    label(): string
+}
+
+const __Named$mixin = (base: AnyConstructor) => class extends base {
+    name: string = ""
+
+    label(): string {
+        return this.name
+    }
+}
+
+const Named = defineMixinClass("Named", __Named$mixin)
+
+interface Timestamped {
+    createdAt: Date
+    age(): number
+}
+
+const __Timestamped$mixin = (base: AnyConstructor) => class extends base {
+    createdAt: Date = new Date()
+
+    age(): number {
+        return Date.now() - this.createdAt.getTime()
+    }
+}
+
+const Timestamped = defineMixinClass("Timestamped", __Timestamped$mixin)
+```
+
+A consumer then gets an intermediate base with declaration merging:
+
+```ts
+class User implements Named, Timestamped {
+    read(): string {
+        return `${super.label()} / ${super.age()}ms`
+    }
+}
+```
+
+becomes conceptually:
+
+```ts
+interface __User$base extends Named, Timestamped {
+}
+
+class __User$base extends (
+    mixinChain(Object, Named, Timestamped) as unknown as
+        AnyConstructor &
+        ClassStatics<typeof Named> &
+        ClassStatics<typeof Timestamped>
+) {
+}
+
+class User extends __User$base implements Named, Timestamped {
+    read(): string {
+        return `${super.label()} / ${super.age()}ms`
+    }
+}
+```
+
+The transformer has two source-file modes:
+
+- Emit builds print and reparse the transformed file.
+- IDE/tsserver mode keeps the original source text and overlays a transformed AST with
+  preserved source ranges, so editor navigation still points at the user-written code.

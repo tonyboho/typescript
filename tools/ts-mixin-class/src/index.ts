@@ -45,7 +45,7 @@ export type RegisteredMixin = {
     // ключи реестра зависимостей (mixin-записи из implements)
     dependencies : string[],
     requiredBaseName : string | undefined,
-    configPropertyNames : string[]
+    configProperties : ConfigProperty[]
 }
 
 export type MixinRegistry = Map<string, RegisteredMixin>
@@ -77,7 +77,7 @@ type ResolvedMixinRef = {
     } | undefined,
     dependencies     : string[],
     declaration      : ts.ClassDeclaration | undefined
-    configPropertyNames : string[]
+    configProperties : ConfigProperty[]
     missingRuntimeImport : {
         specifier : string,
         importedName : string
@@ -105,6 +105,11 @@ type StaticSource = {
     name : string,
     typeNode : ts.TypeNode,
     staticNames : Set<string> | undefined
+}
+
+type ConfigProperty = {
+    name     : string,
+    optional : boolean
 }
 
 type MixinDeclarationDiagnostic = {
@@ -924,7 +929,7 @@ export function buildMixinRegistry(
                     .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
                     .map((expression) => expression.text),
                 requiredBaseName     : requiredBaseIdentifierName(tsInstance, statement),
-                configPropertyNames  : instanceConfigPropertyNames(tsInstance, statement, true),
+                configProperties     : instanceConfigProperties(tsInstance, statement, true),
                 declarationHeritage  : false,
                 defaultExport        : hasModifier(tsInstance, statement, tsInstance.SyntaxKind.DefaultKeyword)
             })
@@ -940,7 +945,7 @@ export function buildMixinRegistry(
             defaultExport     : candidate.defaultExport,
             dependencies      : [],
             requiredBaseName  : candidate.requiredBaseName,
-            configPropertyNames : candidate.configPropertyNames
+            configProperties    : candidate.configProperties
         })
 
         if (candidate.defaultExport) {
@@ -1000,7 +1005,7 @@ type Candidate = {
     name                 : string,
     dependencyNames      : string[],
     requiredBaseName     : string | undefined,
-    configPropertyNames  : string[],
+    configProperties     : ConfigProperty[],
     declarationHeritage  : boolean,
     defaultExport        : boolean
 }
@@ -1058,7 +1063,7 @@ function collectDeclarationFileMixinCandidates(
                 name                 : declaration.name.text,
                 dependencyNames      : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text)),
                 requiredBaseName     : undefined,
-                configPropertyNames  : interfaceConfigPropertyNames(tsInstance, interfaces.get(declaration.name.text)),
+                configProperties     : interfaceConfigProperties(tsInstance, interfaces.get(declaration.name.text)),
                 declarationHeritage  : true,
                 defaultExport
             })
@@ -1105,29 +1110,37 @@ function interfaceExtendsNames(
         .map((expression) => expression.text)
 }
 
-function interfaceConfigPropertyNames(
+function interfaceConfigProperties(
     tsInstance: TypeScript,
     declaration: ts.InterfaceDeclaration | undefined
-): string[] {
+): ConfigProperty[] {
     if (declaration === undefined) {
         return []
     }
 
-    return uniqueStrings(declaration.members
+    return uniqueConfigProperties(declaration.members
         .filter((member): member is ts.PropertySignature => {
             return tsInstance.isPropertySignature(member) && member.name !== undefined
         })
-        .map((member) => propertyNameText(tsInstance, member.name))
-        .filter((name): name is string => name !== undefined)
+        .flatMap((member) => {
+            const name = propertyNameText(tsInstance, member.name)
+
+            return name === undefined
+                ? []
+                : [ {
+                    name,
+                    optional : member.questionToken !== undefined
+                } ]
+        })
     )
 }
 
-function instanceConfigPropertyNames(
+function instanceConfigProperties(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
     requirePublicModifier = false
-): string[] {
-    return uniqueStrings(declaration.members
+): ConfigProperty[] {
+    return uniqueConfigProperties(declaration.members
         .filter((member): member is ts.PropertyDeclaration => {
             return tsInstance.isPropertyDeclaration(member) &&
                 !hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) &&
@@ -1135,8 +1148,16 @@ function instanceConfigPropertyNames(
                 !hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) &&
                 (!requirePublicModifier || hasModifier(tsInstance, member, tsInstance.SyntaxKind.PublicKeyword))
         })
-        .map((member) => propertyNameText(tsInstance, member.name))
-        .filter((name): name is string => name !== undefined)
+        .flatMap((member) => {
+            const name = propertyNameText(tsInstance, member.name)
+
+            return name === undefined
+                ? []
+                : [ {
+                    name,
+                    optional : member.questionToken !== undefined
+                } ]
+        })
     )
 }
 
@@ -1150,6 +1171,21 @@ function propertyNameText(tsInstance: TypeScript, name: ts.PropertyName): string
 
 function uniqueStrings(values: string[]): string[] {
     return [ ...new Set(values) ]
+}
+
+function uniqueConfigProperties(values: ConfigProperty[]): ConfigProperty[] {
+    const byName = new Map<string, ConfigProperty>()
+
+    for (const value of values) {
+        const existing = byName.get(value.name)
+
+        byName.set(value.name, {
+            name     : value.name,
+            optional : (existing?.optional ?? true) && value.optional
+        })
+    }
+
+    return [ ...byName.values() ]
 }
 
 function registryKey(fileName: string, name: string): string {
@@ -1481,7 +1517,7 @@ function buildFileMixinContext(
                 requiredBase     : undefined,
                 dependencies     : [],
                 declaration      : statement,
-                configPropertyNames : instanceConfigPropertyNames(tsInstance, statement, true),
+                configProperties : instanceConfigProperties(tsInstance, statement, true),
                 missingRuntimeImport : undefined
             }
 
@@ -1564,7 +1600,7 @@ function buildFileMixinContext(
                     requiredBase,
                     dependencies     : registered.dependencies,
                     declaration      : undefined,
-                    configPropertyNames : registered.configPropertyNames,
+                    configProperties : registered.configProperties,
                     missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
                         ? {
                             specifier    : statement.moduleSpecifier.text,
@@ -1634,7 +1670,7 @@ function buildFileMixinContext(
                 },
                 dependencies     : registered.dependencies,
                 declaration      : undefined,
-                configPropertyNames : registered.configPropertyNames,
+                configProperties : registered.configProperties,
                 missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
                     ? {
                         specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
@@ -1824,7 +1860,7 @@ function parameterNameForDiagnostic(
 // ---------------------------------------------------------------------------
 // Трансформация mixin-класса
 //
-// Mixin-класс разворачивается в три декларации (см. SPEC.md):
+// Mixin-класс разворачивается в три декларации:
 //
 //     interface X<T> { ...сигнатуры инстанс-членов... }
 //     const __X$mixin = <T>(base: AnyConstructor) => class extends base { ...тело... }
@@ -2182,7 +2218,7 @@ function createBaseParameter(
 // ---------------------------------------------------------------------------
 // Трансформация класса-потребителя
 //
-// Потребитель разворачивается в промежуточную базу с declaration merging (SPEC.md):
+// Потребитель разворачивается в промежуточную базу с declaration merging:
 //
 //     interface __X$base<A> extends Mixin1<...>, Mixin2<...> {}
 //     class __X$base<A> extends (mixinChain(Base, Mixin1, Mixin2) as unknown as
@@ -2809,7 +2845,7 @@ function createConstructionConfigType(
         ])
     }
 
-    const propertyNames = staticConstructionConfigPropertyNames(
+    const properties = staticConstructionConfigProperties(
         tsInstance,
         sourceFile,
         declaration,
@@ -2817,41 +2853,84 @@ function createConstructionConfigType(
         implicitRequiredBase,
         mixinRefs
     )
-
-    return factory.createTypeReferenceNode("Partial", [
-        factory.createTypeReferenceNode("Pick", [
-            createConsumerInstanceType(tsInstance, declaration),
-            propertyNames.length === 0
-                ? factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword)
-                : propertyNames.length === 1
-                    ? factory.createLiteralTypeNode(factory.createStringLiteral(propertyNames[0]))
-                    : factory.createUnionTypeNode(propertyNames.map((propertyName) => {
-                        return factory.createLiteralTypeNode(factory.createStringLiteral(propertyName))
-                    }))
+    const requiredNames = properties
+        .filter((property) => !property.optional)
+        .map((property) => property.name)
+    const optionalNames = properties
+        .filter((property) => property.optional)
+        .map((property) => property.name)
+    const consumerType = createConsumerInstanceType(tsInstance, declaration)
+    const requiredType = requiredNames.length === 0
+        ? undefined
+        : factory.createTypeReferenceNode("Pick", [
+            consumerType,
+            literalKeyUnionType(tsInstance, requiredNames)
         ])
+    const optionalType = optionalNames.length === 0
+        ? undefined
+        : factory.createTypeReferenceNode("Partial", [
+            factory.createTypeReferenceNode("Pick", [
+                createConsumerInstanceType(tsInstance, declaration),
+                literalKeyUnionType(tsInstance, optionalNames)
+            ])
+        ])
+
+    if (requiredType === undefined && optionalType === undefined) {
+        return factory.createTypeReferenceNode("Partial", [
+            factory.createTypeReferenceNode("Pick", [
+                consumerType,
+                factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword)
+            ])
+        ])
+    }
+
+    if (requiredType === undefined) {
+        return optionalType as ts.TypeNode
+    }
+
+    if (optionalType === undefined) {
+        return requiredType
+    }
+
+    return factory.createIntersectionTypeNode([
+        requiredType,
+        optionalType
     ])
 }
 
-function staticConstructionConfigPropertyNames(
+function staticConstructionConfigProperties(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
     implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
     mixinRefs: ResolvedMixinRef[]
-): string[] {
-    return uniqueStrings([
-        ...baseConfigPropertyNames(tsInstance, sourceFile, extendsType ?? implicitRequiredBase),
-        ...mixinRefs.flatMap((ref) => ref.configPropertyNames),
-        ...instanceConfigPropertyNames(tsInstance, declaration, true)
+): ConfigProperty[] {
+    return uniqueConfigProperties([
+        ...baseConfigProperties(tsInstance, sourceFile, extendsType ?? implicitRequiredBase),
+        ...mixinRefs.flatMap((ref) => ref.configProperties),
+        ...instanceConfigProperties(tsInstance, declaration, true)
     ])
 }
 
-function baseConfigPropertyNames(
+function literalKeyUnionType(
+    tsInstance: TypeScript,
+    names: string[]
+): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    return names.length === 1
+        ? factory.createLiteralTypeNode(factory.createStringLiteral(names[0]))
+        : factory.createUnionTypeNode(names.map((name) => {
+            return factory.createLiteralTypeNode(factory.createStringLiteral(name))
+        }))
+}
+
+function baseConfigProperties(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     baseType: ts.ExpressionWithTypeArguments | undefined
-): string[] {
+): ConfigProperty[] {
     if (baseType === undefined || !tsInstance.isIdentifier(baseType.expression)) {
         return []
     }
@@ -2861,7 +2940,7 @@ function baseConfigPropertyNames(
         return tsInstance.isClassDeclaration(statement) && statement.name?.text === baseName
     })
 
-    return baseDeclaration === undefined ? [] : instanceConfigPropertyNames(tsInstance, baseDeclaration, true)
+    return baseDeclaration === undefined ? [] : instanceConfigProperties(tsInstance, baseDeclaration, true)
 }
 
 function createConsumerInstanceType(

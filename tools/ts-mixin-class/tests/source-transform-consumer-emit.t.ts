@@ -155,25 +155,30 @@ it("generates public-only static construction config overloads by default", asyn
 
         class GenericBase<T> extends Base {
             public baseValue: T | undefined
+            public optionalBaseValue?: T
             skippedBaseValue: T | undefined
         }
 
         @mixin()
         class SourceClass<T> {
             public mixinValue: T | undefined
+            public optionalMixinValue?: T
             skippedMixinValue: T | undefined
             mixinMethod (): T | undefined { return this.mixinValue }
         }
 
         class Consumer<T> extends GenericBase<T> implements SourceClass<T> {
             public ownValue: T | undefined
+            public optionalOwnValue?: T
             skippedOwnValue: T | undefined
         }
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("static new<T>(props?: Partial<Pick<Consumer<T>, \"baseValue\" | \"mixinValue\" | \"ownValue\">>): Consumer<T>;"),
-        "Default public-only construction config uses explicitly public property names")
+    t.true(printed.includes(
+        "static new<T>(props?: Pick<Consumer<T>, \"baseValue\" | \"mixinValue\" | \"ownValue\"> & " +
+        "Partial<Pick<Consumer<T>, \"optionalBaseValue\" | \"optionalMixinValue\" | \"optionalOwnValue\">>): Consumer<T>;"
+    ), "Default public-only construction config preserves required and optional property names")
     t.false(printed.includes("\"mixinMethod\""),
         "Generated construction config does not include methods")
     t.false(printed.includes("\"skippedBaseValue\""),
