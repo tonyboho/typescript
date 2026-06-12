@@ -91,9 +91,10 @@ export type ClassStatics<C> = Omit<C, "prototype">
 
 export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
 
-export type RuntimeMixinClass = {
+export type RuntimeMixinClass<RequiredBase extends object = object> = {
     $mixin: MixinFactory,
-    $requirements: readonly RuntimeMixinClass[]
+    $requirements: readonly RuntimeMixinClass[],
+    $requiredBase: AnyConstructor<RequiredBase>
 }
 
 type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass
@@ -101,6 +102,7 @@ type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass
 type RuntimeMixinMetadata = {
     factory: MixinFactory,
     requirements: RuntimeMixinClassValue[],
+    requiredBase: AnyConstructor<any>,
     linearization: RuntimeMixinClassValue[] | undefined,
     applications: WeakMap<AnyConstructor<any>, AnyConstructor<any>>
 }
@@ -115,11 +117,12 @@ export function mixin(..._args: unknown[]): (..._decoratorArgs: unknown[]) => vo
 export function defineMixinClass(
     name: string,
     factory: MixinFactory,
-    requirements: readonly RuntimeMixinClassValue[] = []
+    requirements: readonly RuntimeMixinClassValue[] = [],
+    requiredBase: AnyConstructor<any> = Object
 ): RuntimeMixinClassValue {
     const requirementList = [ ...requirements ]
     const requirementLinearization = linearizeRuntimeRequirements(requirementList)
-    const base = applyRuntimeMixins(Object, requirementLinearization.slice().reverse())
+    const base = applyRuntimeMixins(requiredBase, requirementLinearization.slice().reverse())
     const mixinClass = factory(base) as RuntimeMixinClassValue
     const applications = new WeakMap<AnyConstructor<any>, AnyConstructor<any>>()
 
@@ -128,12 +131,14 @@ export function defineMixinClass(
     runtimeMixinMetadata.set(mixinClass, {
         factory,
         requirements   : requirementList,
+        requiredBase,
         linearization  : [ mixinClass, ...requirementLinearization ],
         applications
     })
 
     Object.defineProperty(mixinClass, "$mixin", { value : factory })
     Object.defineProperty(mixinClass, "$requirements", { value : requirementList })
+    Object.defineProperty(mixinClass, "$requiredBase", { value : requiredBase })
     Object.defineProperty(mixinClass, Symbol.hasInstance, {
         value(instance: unknown) {
             return hasRuntimeMixinInstance(instance, mixinClass)
@@ -172,6 +177,13 @@ function applyRuntimeMixin(
 ): AnyConstructor<any> {
     const metadata = runtimeMetadataOf(mixinClass)
     const cached = metadata.applications.get(base)
+
+    if (!classExtends(base, metadata.requiredBase)) {
+        throw new Error(
+            `Mixin class ${mixinClass.name || "<anonymous>"} requires base ` +
+            `${metadata.requiredBase.name || "<anonymous>"}`
+        )
+    }
 
     if (cached !== undefined) {
         return cached
@@ -255,6 +267,12 @@ function runtimeMetadataOf(mixinClass: RuntimeMixinClassValue): RuntimeMixinMeta
     }
 
     return metadata
+}
+
+function classExtends(base: AnyConstructor<any>, requiredBase: AnyConstructor<any>): boolean {
+    return requiredBase === Object ||
+        base === requiredBase ||
+        requiredBase.prototype.isPrototypeOf(base.prototype)
 }
 
 function registerAppliedMixins(
@@ -1080,13 +1098,6 @@ function validateMixinClass(
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration
 ): void {
-    if (extendsClause(tsInstance, declaration) !== undefined) {
-        throw new MixinTransformError(
-            sourceFile, declaration,
-            "A mixin class cannot use `extends` - declare dependencies with `implements` instead"
-        )
-    }
-
     if (hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.AbstractKeyword)) {
         throw new MixinTransformError(sourceFile, declaration, "An `abstract` mixin class is not supported yet")
     }
@@ -1147,9 +1158,10 @@ function expandMixinClass(
 
     const exportModifiers = exportModifiersOf(tsInstance, declaration)
     const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
+    const requiredBase    = requiredBaseType(tsInstance, declaration)
 
     if (options.sourceView) {
-        return [ declaration ]
+        return expandSourceViewMixinClass(tsInstance, sourceFile, declaration, context)
     }
 
     const interfaceMembers = buildInterfaceMembers(tsInstance, sourceFile, declaration)
@@ -1193,7 +1205,10 @@ function expandMixinClass(
                                     directDependencyRefs(tsInstance, declaration, context).map((dependencyRef) => {
                                         return mixinValueIdentifier(tsInstance, dependencyRef)
                                     })
-                                )
+                                ),
+                                ...(requiredBase === undefined
+                                    ? []
+                                    : [ cloneNode(tsInstance, requiredBase.expression) ])
                             ]
                         ),
                         factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
@@ -1221,7 +1236,7 @@ function expandMixinClass(
                                 factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
                             ])
                         ]),
-                        factory.createTypeReferenceNode(runtimeMixinClassName, undefined)
+                        createRuntimeMixinClassType(tsInstance, declaration)
                     ])
                 )
             )
@@ -1229,6 +1244,67 @@ function expandMixinClass(
     ), generatedTextRange(sourceFile, declaration.end))
 
     return [ interfaceDeclaration, factoryStatement, valueStatement ]
+}
+
+function expandSourceViewMixinClass(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    context: FileMixinContext
+): ts.Statement[] {
+    const factory = tsInstance.factory
+
+    if (declaration.name === undefined) {
+        throw new MixinTransformError(sourceFile, declaration, "A mixin class must have a name")
+    }
+
+    const requiredBase = requiredBaseType(tsInstance, declaration)
+    const dependencyHeritage = implementsTypes(tsInstance, declaration).filter((heritageType) => {
+        return tsInstance.isIdentifier(heritageType.expression) &&
+            context.byLocalName.has(heritageType.expression.text)
+    })
+
+    if (dependencyHeritage.length === 0) {
+        return [ declaration ]
+    }
+
+    const baseName       = declaration.name.text + consumerBaseSuffix
+    const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
+    const generatedRange = generatedTextRange(sourceFile, declaration.pos)
+    const generatedHeritageRange = generatedTextRange(sourceFile, declaration.heritageClauses?.pos ?? declaration.name.end)
+
+    const baseInterface = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
+        undefined,
+        baseName,
+        typeParameters,
+        [ factory.createHeritageClause(
+            tsInstance.SyntaxKind.ExtendsKeyword,
+            [
+                ...(requiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, requiredBase) ]),
+                ...dependencyHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+            ]
+        ) ],
+        []
+    ), generatedRange)
+
+    const baseClass = preserveTextRange(tsInstance, factory.createClassDeclaration(
+        undefined,
+        baseName,
+        typeParameters,
+        undefined,
+        []
+    ), generatedRange)
+
+    const updatedDeclaration = factory.updateClassDeclaration(
+        declaration,
+        declaration.modifiers,
+        declaration.name,
+        declaration.typeParameters,
+        consumerHeritageClauses(tsInstance, declaration, baseName, generatedHeritageRange),
+        declaration.members
+    )
+
+    return [ baseInterface, baseClass, updatedDeclaration ]
 }
 
 function createMixinFactoryExpression(
@@ -1293,6 +1369,20 @@ function mixinValueIdentifier(tsInstance: TypeScript, ref: ResolvedMixinRef): ts
     return tsInstance.factory.createIdentifier(ref.localValueName)
 }
 
+function createRuntimeMixinClassType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.TypeReferenceNode {
+    const requiredBase = requiredBaseType(tsInstance, declaration)
+
+    return tsInstance.factory.createTypeReferenceNode(
+        runtimeMixinClassName,
+        requiredBase === undefined
+            ? undefined
+            : [ heritageTypeToTypeReference(tsInstance, requiredBase) ]
+    )
+}
+
 // Параметр base фабрики: AnyConstructor, либо AnyConstructor<Dep1<...> & Dep2<...>>
 // для миксина с зависимостями - это даёт типизированный super внутри тела
 function createBaseParameter(
@@ -1302,12 +1392,17 @@ function createBaseParameter(
 ): ts.ParameterDeclaration {
     const factory = tsInstance.factory
 
-    const dependencyTypes = implementsTypes(tsInstance, declaration)
-        .filter((heritageType) => {
-            return tsInstance.isIdentifier(heritageType.expression) &&
-                context.byLocalName.has(heritageType.expression.text)
-        })
-        .map((heritageType) => heritageTypeToTypeReference(tsInstance, heritageType))
+    const dependencyTypes = [
+        ...(requiredBaseType(tsInstance, declaration) === undefined
+            ? []
+            : [ heritageTypeToTypeReference(tsInstance, requiredBaseType(tsInstance, declaration)!) ]),
+        ...implementsTypes(tsInstance, declaration)
+            .filter((heritageType) => {
+                return tsInstance.isIdentifier(heritageType.expression) &&
+                    context.byLocalName.has(heritageType.expression.text)
+            })
+            .map((heritageType) => heritageTypeToTypeReference(tsInstance, heritageType))
+    ]
 
     const baseInstanceType =
         dependencyTypes.length === 0 ? undefined :
@@ -1363,8 +1458,8 @@ function expandConsumerClass(
     const name           = declaration.name.text
     const baseName       = name + consumerBaseSuffix
     const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
+    const generatedTypeParameters = cloneOptionalNodeArray(tsInstance, declaration.typeParameters)
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
-    const emptyBaseName  = extendsType === undefined ? name + consumerEmptyBaseSuffix : undefined
 
     const mixinHeritage = consumedMixins(tsInstance, declaration, context)
     const directMixinRefs = mixinHeritage.map((heritageType) => {
@@ -1374,28 +1469,60 @@ function expandConsumerClass(
         directMixinRefs.map((ref) => ref.key),
         context
     )
+    const implicitRequiredBase = extendsType === undefined
+        ? firstRequiredBaseType(tsInstance, linearized)
+        : undefined
+    const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
+        ? name + consumerEmptyBaseSuffix
+        : undefined
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
-    const generatedHeritageRange = generatedTextRange(sourceFile, declaration.heritageClauses?.pos ?? declaration.name.end)
+    const originalExtendsClause = extendsClause(tsInstance, declaration)
+    const generatedHeritageRange = originalExtendsClause ?? generatedTextRange(
+        sourceFile,
+        declaration.heritageClauses?.pos ?? declaration.name.end
+    )
+    const generatedHeritageTypeRange = extendsType ?? generatedHeritageRange
 
     const baseInterface = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
         undefined,
         baseName,
-        typeParameters,
+        generatedTypeParameters,
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
-                ...(extendsType?.typeArguments !== undefined ? [ extendsType ] : []),
-                ...mixinHeritage
+                ...(extendsType?.typeArguments !== undefined ? [ cloneExpressionWithTypeArguments(tsInstance, extendsType) ] : []),
+                ...(implicitRequiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, implicitRequiredBase) ]),
+                ...mixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
             ]
         ) ],
         []
     ), generatedRange)
 
+    const requiredBaseChecks = extendsType === undefined
+        ? []
+        : createRequiredBaseCheckAliases(
+            tsInstance,
+            sourceFile,
+            baseName,
+            declaration.typeParameters,
+            extendsType,
+            linearized,
+            generatedRange
+        )
+
     const baseClass = preserveTextRange(tsInstance, factory.createClassDeclaration(
         undefined,
         baseName,
-        typeParameters,
-        [ consumerBaseClassHeritage(tsInstance, extendsType, emptyBaseName, directMixinRefs, linearized, options) ],
+        cloneOptionalNodeArray(tsInstance, declaration.typeParameters),
+        [ consumerBaseClassHeritage(
+            tsInstance,
+            extendsType,
+            implicitRequiredBase,
+            emptyBaseName,
+            directMixinRefs,
+            linearized,
+            options
+        ) ],
         []
     ), generatedRange)
 
@@ -1404,7 +1531,13 @@ function expandConsumerClass(
         declaration.modifiers,
         declaration.name,
         declaration.typeParameters,
-        consumerHeritageClauses(tsInstance, declaration, baseName, generatedHeritageRange),
+        consumerHeritageClauses(
+            tsInstance,
+            declaration,
+            baseName,
+            generatedHeritageRange,
+            generatedHeritageTypeRange
+        ),
         declaration.members
     )
 
@@ -1416,12 +1549,13 @@ function expandConsumerClass(
             generatedRange
         ) ]
 
-    return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
+    return [ ...emptyBaseClass, ...requiredBaseChecks, baseInterface, baseClass, updatedConsumer ]
 }
 
 function consumerBaseClassHeritage(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
     emptyBaseName: string | undefined,
     directMixinRefs: ResolvedMixinRef[],
     linearizedMixinRefs: ResolvedMixinRef[],
@@ -1431,9 +1565,10 @@ function consumerBaseClassHeritage(
 
     if (options.sourceView) {
         return factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-            extendsType === undefined
-                ? factory.createExpressionWithTypeArguments(factory.createIdentifier(emptyBaseName as string), undefined)
-                : cloneExpressionWithTypeArguments(tsInstance, extendsType)
+            cloneExpressionWithTypeArguments(
+                tsInstance,
+                consumerRuntimeBaseType(tsInstance, extendsType, implicitRequiredBase, emptyBaseName)
+            )
         ])
     }
 
@@ -1445,18 +1580,46 @@ function consumerBaseClassHeritage(
                         createMixinChainExpression(
                             tsInstance,
                             directMixinRefs,
-                            extendsType !== undefined
-                                ? extendsType.expression
-                                : factory.createIdentifier(emptyBaseName as string)
+                            cloneNode(
+                                tsInstance,
+                                consumerRuntimeBaseType(tsInstance, extendsType, implicitRequiredBase, emptyBaseName)
+                                    .expression
+                            )
                         ),
                         factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
                     ),
-                    createConsumerBaseCastType(tsInstance, extendsType, emptyBaseName, linearizedMixinRefs)
+                    createConsumerBaseCastType(
+                        tsInstance,
+                        extendsType,
+                        implicitRequiredBase,
+                        emptyBaseName,
+                        linearizedMixinRefs
+                    )
                 )
             ),
             undefined
         )
     ])
+}
+
+function consumerRuntimeBaseType(
+    tsInstance: TypeScript,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined
+): ts.ExpressionWithTypeArguments {
+    if (extendsType !== undefined) {
+        return extendsType
+    }
+
+    if (implicitRequiredBase !== undefined) {
+        return implicitRequiredBase
+    }
+
+    return tsInstance.factory.createExpressionWithTypeArguments(
+        tsInstance.factory.createIdentifier(emptyBaseName as string),
+        undefined
+    )
 }
 
 function cloneExpressionWithTypeArguments(
@@ -1469,18 +1632,128 @@ function cloneExpressionWithTypeArguments(
     )
 }
 
+function firstRequiredBaseType(
+    tsInstance: TypeScript,
+    mixinRefs: ResolvedMixinRef[]
+): ts.ExpressionWithTypeArguments | undefined {
+    for (const ref of mixinRefs) {
+        if (ref.declaration === undefined) {
+            continue
+        }
+
+        const requiredBase = requiredBaseType(tsInstance, ref.declaration)
+
+        if (requiredBase !== undefined) {
+            return requiredBase
+        }
+    }
+
+    return undefined
+}
+
+function createRequiredBaseCheckAliases(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    baseName: string,
+    consumerTypeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
+    extendsType: ts.ExpressionWithTypeArguments,
+    mixinRefs: ResolvedMixinRef[],
+    generatedRange: ts.TextRange
+): ts.TypeAliasDeclaration[] {
+    const aliases: ts.TypeAliasDeclaration[] = []
+
+    for (const ref of mixinRefs) {
+        const requiredBase = requiredBaseInstanceTypeOfMixinRef(tsInstance, ref)
+
+        if (requiredBase === undefined) {
+            continue
+        }
+
+        aliases.push(createRequiredBaseCheckAlias(
+            tsInstance,
+            sourceFile,
+            `${baseName}$requiredBase${aliases.length}`,
+            consumerTypeParameters,
+            extendsType,
+            requiredBase,
+            generatedRange
+        ))
+    }
+
+    return aliases
+}
+
+function createRequiredBaseCheckAlias(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    name: string,
+    consumerTypeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
+    extendsType: ts.ExpressionWithTypeArguments,
+    requiredBase: ts.TypeNode,
+    generatedRange: ts.TextRange
+): ts.TypeAliasDeclaration {
+    const factory = tsInstance.factory
+
+    return preserveTextRange(tsInstance, factory.createTypeAliasDeclaration(
+        undefined,
+        name,
+        [
+            ...(consumerTypeParameters?.map((typeParameter) => cloneNode(tsInstance, typeParameter)) ?? []),
+            factory.createTypeParameterDeclaration(
+                undefined,
+                "T",
+                requiredBase,
+                heritageTypeToTypeReference(tsInstance, extendsType)
+            )
+        ],
+        factory.createLiteralTypeNode(factory.createTrue())
+    ), generatedRange)
+}
+
+function requiredBaseInstanceTypeOfMixinRef(
+    tsInstance: TypeScript,
+    ref: ResolvedMixinRef
+): ts.TypeNode | undefined {
+    if (ref.declaration !== undefined) {
+        const requiredBase = requiredBaseType(tsInstance, ref.declaration)
+
+        return requiredBase === undefined ? undefined : heritageTypeToTypeReference(tsInstance, requiredBase)
+    }
+
+    if (ref.localValueName === undefined) {
+        return undefined
+    }
+
+    return runtimeMixinClassRequiredBaseInstanceType(tsInstance, ref.localValueName)
+}
+
+function runtimeMixinClassRequiredBaseInstanceType(
+    tsInstance: TypeScript,
+    valueName: string
+): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    return factory.createTypeReferenceNode("InstanceType", [
+        factory.createIndexedAccessTypeNode(
+            factory.createTypeQueryNode(factory.createIdentifier(valueName)),
+            factory.createLiteralTypeNode(factory.createStringLiteral("$requiredBase"))
+        )
+    ])
+}
+
 // Каст runtime-цепочки: typeof Base (или typeof X$empty без явной базы)
 // плюс статика каждого применённого миксина, чьё значение доступно в файле
 function createConsumerBaseCastType(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
     emptyBaseName: string | undefined,
     mixinRefs: ResolvedMixinRef[]
 ): ts.TypeNode {
     const factory = tsInstance.factory
 
     const types = [
-        createConsumerBaseHeadType(tsInstance, extendsType, emptyBaseName),
+        createConsumerBaseHeadType(tsInstance, extendsType, implicitRequiredBase, emptyBaseName),
         ...mixinRefs
             .filter((ref) => ref.localValueName !== undefined)
             .map((ref) => {
@@ -1496,22 +1769,24 @@ function createConsumerBaseCastType(
 function createConsumerBaseHeadType(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
     emptyBaseName: string | undefined
 ): ts.TypeNode {
     const factory = tsInstance.factory
+    const baseType = extendsType ?? implicitRequiredBase
 
-    if (extendsType === undefined) {
+    if (baseType === undefined) {
         return factory.createTypeQueryNode(factory.createIdentifier(emptyBaseName as string))
     }
 
-    if (extendsType.typeArguments === undefined) {
-        return factory.createTypeQueryNode(expressionToEntityName(tsInstance, extendsType.expression))
+    if (baseType.typeArguments === undefined) {
+        return factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
     }
 
     return factory.createIntersectionTypeNode([
         factory.createTypeReferenceNode(anyConstructorName, undefined),
         factory.createTypeReferenceNode(classStaticsName, [
-            factory.createTypeQueryNode(expressionToEntityName(tsInstance, extendsType.expression))
+            factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
         ])
     ])
 }
@@ -1520,7 +1795,8 @@ function consumerHeritageClauses(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
     baseName: string,
-    generatedRange: ts.TextRange
+    generatedRange: ts.TextRange,
+    generatedTypeRange: ts.TextRange = generatedRange
 ): ts.NodeArray<ts.HeritageClause> {
     const factory = tsInstance.factory
 
@@ -1530,11 +1806,16 @@ function consumerHeritageClauses(
         })
         : undefined
 
+    const extendsType = preserveTextRange(tsInstance, factory.createExpressionWithTypeArguments(
+        factory.createIdentifier(baseName),
+        typeArguments
+    ), generatedTypeRange)
+
     const extendsHeritage = preserveTextRange(tsInstance, factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-        factory.createExpressionWithTypeArguments(factory.createIdentifier(baseName), typeArguments)
+        extendsType
     ]), generatedRange)
 
-    preserveTextRange(tsInstance, extendsHeritage.types, generatedRange)
+    preserveTextRange(tsInstance, extendsHeritage.types, generatedTypeRange)
 
     const implementsHeritage = declaration.heritageClauses?.find((heritageClause) => {
         return heritageClause.token === tsInstance.SyntaxKind.ImplementsKeyword
@@ -1840,7 +2121,11 @@ function interfaceHeritageClauses(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration
 ): ts.HeritageClause[] | undefined {
-    const types = implementsTypes(tsInstance, declaration)
+    const requiredBase = requiredBaseType(tsInstance, declaration)
+    const types = [
+        ...(requiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, requiredBase) ]),
+        ...implementsTypes(tsInstance, declaration)
+    ]
 
     if (types.length === 0) {
         return undefined
@@ -1855,11 +2140,10 @@ function heritageTypeToTypeReference(
 ): ts.TypeNode {
     const factory = tsInstance.factory
 
-    if (tsInstance.isIdentifier(heritageType.expression)) {
-        return factory.createTypeReferenceNode(heritageType.expression.text, heritageType.typeArguments)
-    }
-
-    throw new Error("Unsupported heritage type expression")
+    return factory.createTypeReferenceNode(
+        expressionToEntityName(tsInstance, heritageType.expression),
+        heritageType.typeArguments
+    )
 }
 
 function implementsTypes(
@@ -1871,6 +2155,13 @@ function implementsTypes(
     })
 
     return clause === undefined ? [] : [ ...clause.types ]
+}
+
+function requiredBaseType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.ExpressionWithTypeArguments | undefined {
+    return extendsClause(tsInstance, declaration)?.types[0]
 }
 
 function extendsClause(

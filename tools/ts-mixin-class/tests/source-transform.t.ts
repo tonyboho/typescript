@@ -156,6 +156,38 @@ it("expands a dependent mixin with a typed base and a dependency chain", async (
         "Generated interface extends the dependency")
 })
 
+it("expands a mixin required base declared with extends", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        class RequiredBase {
+            requiredMethod (): string { return "required" }
+        }
+
+        @mixin()
+        class RequiredMixin extends RequiredBase {
+            mixinMethod (): string { return super.requiredMethod() }
+        }
+
+        class RealBase extends RequiredBase {
+            override requiredMethod (): string { return "real" }
+        }
+
+        class Consumer extends RealBase implements RequiredMixin {
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface RequiredMixin extends RequiredBase"),
+        "Generated interface keeps the required base as an instance constraint")
+    t.true(printed.includes("function (base: AnyConstructor<RequiredBase>)"),
+        "Mixin factory parameter is constrained to the required base")
+    t.true(printed.includes("defineMixinClass(\"RequiredMixin\", RequiredMixin$mixin as unknown as MixinFactory, [], RequiredBase)"),
+        "Value const registers the required runtime base")
+    t.true(printed.includes("class Consumer$base extends (mixinChain(RealBase, RequiredMixin)"),
+        "Consumer still supplies its concrete descendant base to the runtime chain")
+})
+
 it("transformed output typechecks, including generics, statics and super calls", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { mixin } from "ts-mixin-class"
@@ -205,6 +237,110 @@ it("transformed output typechecks, including generics, statics and super calls",
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
 
     t.expect(diagnostics).toEqual([])
+})
+
+it("transformed required-base mixin output typechecks end to end", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        class RequiredBase<T> {
+            requiredValue: T
+
+            constructor (requiredValue: T) {
+                this.requiredValue = requiredValue
+            }
+
+            requiredMethod (): T {
+                return this.requiredValue
+            }
+
+            static staticRequired (): string {
+                return "staticRequired"
+            }
+        }
+
+        class RealBase extends RequiredBase<string> {
+            override requiredMethod (): string {
+                return "real/" + super.requiredMethod()
+            }
+        }
+
+        @mixin()
+        class RequiredMixin extends RequiredBase<string> {
+            mixinValue: string = "mixin"
+
+            mixinMethod (): string {
+                return super.requiredMethod() + "/" + this.mixinValue
+            }
+
+            static staticMixin (): string {
+                return "staticMixin"
+            }
+        }
+
+        class Consumer extends RealBase implements RequiredMixin {
+            own (): string {
+                return super.mixinMethod()
+            }
+        }
+
+        class DefaultConsumer implements RequiredMixin {
+        }
+
+        const consumer = new Consumer("base")
+
+        const v1: string = consumer.requiredMethod()
+        const v2: string = consumer.mixinMethod()
+        const v3: string = consumer.own()
+        const v4: string = Consumer.staticRequired()
+        const v5: string = Consumer.staticMixin()
+
+        const defaultConsumer = new DefaultConsumer("default")
+        const v6: string = defaultConsumer.requiredMethod()
+        const v7: string = defaultConsumer.mixinMethod()
+
+        // @ts-expect-error required base generic is fixed as string.
+        const e1: number = consumer.requiredValue
+
+        void [ v1, v2, v3, v4, v5, v6, v7, e1 ]
+    `))
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.expect(diagnostics).toEqual([])
+})
+
+it("transformed required-base mixin rejects unrelated consumer bases at typecheck time", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        class RequiredBase {
+            requiredMethod (): string { return "required" }
+        }
+
+        class UnrelatedBase {
+        }
+
+        @mixin()
+        class RequiredMixin extends RequiredBase {
+            mixinMethod (): string {
+                return super.requiredMethod()
+            }
+        }
+
+        class Consumer extends UnrelatedBase implements RequiredMixin {
+        }
+    `))
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.true(
+        diagnostics.some((diagnostic) => {
+            return diagnostic.includes("does not satisfy the constraint") &&
+                diagnostic.includes("RequiredBase")
+        }),
+        diagnostics.join("\n")
+    )
 })
 
 it("expands a consumer class into a merged intermediate base", async (t: Test) => {
@@ -445,17 +581,6 @@ it("transformed consumer output typechecks end to end", async (t: Test) => {
 })
 
 it("reports unsupported mixin class declarations", async (t: Test) => {
-    t.throwsOk(() => {
-        transformSourceFile(ts, createSourceFile(`
-            import { mixin } from "ts-mixin-class"
-
-            class Base {}
-
-            @mixin()
-            class SourceClass extends Base {}
-        `))
-    }, "cannot use `extends`", "extends on a mixin class is rejected")
-
     t.throwsOk(() => {
         transformSourceFile(ts, createSourceFile(`
             import { mixin } from "ts-mixin-class"

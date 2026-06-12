@@ -1,0 +1,9 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "outDir": "dist/required-base-negative"
+    },
+    "include": [
+        "src/bad-required-base.negative.ts"
+    ]
+}

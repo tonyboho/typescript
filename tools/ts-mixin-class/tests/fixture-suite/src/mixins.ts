@@ -33,3 +33,28 @@ export class SourceClass2<A2> {
         return "staticMethod2"
     }
 }
+
+export class RequiredBase {
+    requiredValue: string = "requiredBase"
+
+    requiredMethod(): string {
+        return this.requiredValue
+    }
+
+    static staticRequired(): string {
+        return "staticRequired"
+    }
+}
+
+@mixin()
+export class RequiredMixin extends RequiredBase {
+    requiredMixinValue: string = "requiredMixin"
+
+    requiredMixinMethod(): string {
+        return super.requiredMethod() + "/" + this.requiredMixinValue
+    }
+
+    static staticRequiredMixin(): string {
+        return "staticRequiredMixin"
+    }
+}

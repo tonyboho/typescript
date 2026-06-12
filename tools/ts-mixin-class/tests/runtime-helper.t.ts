@@ -69,6 +69,51 @@ it("reuses a canonical requirement chain for deeper dependents", async (t: Test)
     t.equal(cBases[0], B, "Deeper dependent receives the canonical top requirement class")
 })
 
+it("applies mixins with a required base to consumer-provided descendants", async (t: Test) => {
+    class RequiredBase {
+        who(): string {
+            return "RequiredBase"
+        }
+    }
+
+    class RealBase extends RequiredBase {
+        override who(): string {
+            return "RealBase"
+        }
+    }
+
+    const RequiredMixin = defineMixinClass("RequiredMixin", ((base: AnyConstructor<RequiredBase>) => {
+        return class extends base {
+            override who(): string {
+                return `RequiredMixin>${super.who()}`
+            }
+        }
+    }) as unknown as MixinFactory, [], RequiredBase)
+
+    class Consumer extends mixinChain(RealBase, RequiredMixin) {}
+
+    const instance = new Consumer()
+
+    t.equal(instance.who(), "RequiredMixin>RealBase", "Mixin super calls the consumer-provided descendant base")
+    t.true(instance instanceof RealBase, "Consumer still inherits from the concrete base")
+    t.true(instance instanceof RequiredBase, "Consumer satisfies the required base")
+    t.true(instance instanceof RequiredMixin, "Consumer matches the required-base mixin")
+    t.equal(new RequiredMixin().who(), "RequiredMixin>RequiredBase", "Canonical mixin class uses the required base")
+})
+
+it("rejects applying a required-base mixin to an unrelated base", async (t: Test) => {
+    class RequiredBase {}
+    class UnrelatedBase {}
+
+    const RequiredMixin = defineMixinClass("RequiredMixin", ((base: AnyConstructor<RequiredBase>) => {
+        return class extends base {}
+    }) as unknown as MixinFactory, [], RequiredBase)
+
+    t.throwsOk(() => {
+        mixinChain(UnrelatedBase, RequiredMixin)
+    }, "requires base", "Runtime rejects an unrelated base")
+})
+
 it("rejects inconsistent C3 requirements", async (t: Test) => {
     const A = createNamedMixin("A")
     const B = createNamedMixin("B")

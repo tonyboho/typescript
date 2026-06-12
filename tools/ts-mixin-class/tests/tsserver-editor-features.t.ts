@@ -19,8 +19,25 @@ type DefinitionInfo = TextSpan & {
     file : string
 }
 
+type DefinitionAndBoundSpanBody = {
+    definitions? : DefinitionInfo[]
+}
+
 type QuickInfoBody = TextSpan & {
     displayString? : string
+}
+
+type RenameResponseBody = {
+    info? : {
+        canRename? : boolean,
+        displayName? : string
+    },
+    locs? : RenameFileLocation[]
+}
+
+type RenameFileLocation = {
+    file : string,
+    locs : TextSpan[]
 }
 
 const sourceText = trimIndent(`
@@ -32,6 +49,21 @@ const sourceText = trimIndent(`
 
         mixinMethod(): string {
             return this.mixinProperty
+        }
+
+        callOwnMethod(): string {
+            return this.mixinMethod()
+        }
+    }
+
+    @mixin()
+    class ChildMixin implements SourceMixin {
+        childMethod(): string {
+            return super.mixinProperty
+        }
+
+        childCallMethod(): string {
+            return super.mixinMethod()
         }
     }
 
@@ -47,6 +79,13 @@ const sourceText = trimIndent(`
     }
 
     class MixinConsumer implements SourceMixin {
+        readSuperProperty(): string {
+            return super.mixinProperty
+        }
+
+        callSuperMethod(): string {
+            return super.mixinMethod()
+        }
     }
 
     const plain = new PlainConsumer()
@@ -56,6 +95,76 @@ const sourceText = trimIndent(`
     plain.baseMethod()
     mixed.mixinProperty
     mixed.mixinMethod()
+`)
+
+const importedMixinText = trimIndent(`
+    import { mixin } from "ts-mixin-class"
+
+    @mixin()
+    export class ImportedMixin {
+        importedProperty: string = "imported"
+
+        importedMethod(): string {
+            return this.importedProperty
+        }
+    }
+`)
+
+const importedConsumerText = trimIndent(`
+    import { ImportedMixin } from "./mixins.js"
+
+    class ImportedConsumer implements ImportedMixin {
+        readImportedSuperProperty(): string {
+            return super.importedProperty
+        }
+
+        callImportedSuperMethod(): string {
+            return super.importedMethod()
+        }
+    }
+`)
+
+const fixtureLikeMixinsText = trimIndent(`
+    import { mixin } from "ts-mixin-class"
+
+    @mixin()
+    export class SourceClass1<A1> {
+        value1: string = "value1"
+
+        method1(): string {
+            return this.value1
+        }
+    }
+
+    @mixin()
+    export class SourceClass2<A2> {
+        value2: string = "value2"
+
+        method2(): string {
+            return this.value2
+        }
+    }
+`)
+
+const fixtureLikeConsumerText = trimIndent(`
+    import { SourceClass1, SourceClass2 } from "./mixins.js"
+
+    class Base<T> {
+        baseValue: T
+
+        constructor(baseValue: T) {
+            this.baseValue = baseValue
+        }
+    }
+
+    class Consumer<A2> extends Base<A2> implements SourceClass1<string>, SourceClass2<A2> {
+        method1(): string {
+            this.value1 = "value1"
+            super.value2 = "value2"
+
+            return super.method1()
+        }
+    }
 `)
 
 it("tsserver definition resolves plain and mixin members", async (t: Test) => {
@@ -73,6 +182,79 @@ it("tsserver definition resolves plain and mixin members", async (t: Test) => {
             "mixinProperty: string",
             "Mixin self property",
             selfMixinPropertyArgs(sourceFile)
+        )
+        await assertDefinition(
+            t,
+            sourceFile,
+            "mixinProperty",
+            "mixinProperty: string",
+            "Mixin super property",
+            superMixinPropertyArgs(sourceFile)
+        )
+        await assertDefinition(
+            t,
+            sourceFile,
+            "mixinMethod",
+            "mixinMethod(): string",
+            "Mixin super method",
+            superMixinMethodArgs(sourceFile)
+        )
+        await assertDefinition(
+            t,
+            sourceFile,
+            "mixinProperty",
+            "mixinProperty: string",
+            "Consumer super property",
+            consumerSuperMixinPropertyArgs(sourceFile)
+        )
+        await assertDefinition(
+            t,
+            sourceFile,
+            "mixinMethod",
+            "mixinMethod(): string",
+            "Consumer super method",
+            consumerSuperMixinMethodArgs(sourceFile)
+        )
+    } finally {
+        await dispose()
+    }
+})
+
+it("tsserver definitionAndBoundSpan resolves super mixin members", async (t: Test) => {
+    const { sourceFile, dispose } = await createEditorFixture()
+
+    try {
+        await assertDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            "mixinProperty",
+            "mixinProperty: string",
+            "Mixin super property",
+            superMixinPropertyArgs(sourceFile)
+        )
+        await assertDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            "mixinMethod",
+            "mixinMethod(): string",
+            "Mixin super method",
+            superMixinMethodArgs(sourceFile)
+        )
+        await assertDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            "mixinProperty",
+            "mixinProperty: string",
+            "Consumer super property",
+            consumerSuperMixinPropertyArgs(sourceFile)
+        )
+        await assertDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            "mixinMethod",
+            "mixinMethod(): string",
+            "Consumer super method",
+            consumerSuperMixinMethodArgs(sourceFile)
         )
     } finally {
         await dispose()
@@ -94,6 +276,197 @@ it("tsserver quickinfo reports plain and mixin members", async (t: Test) => {
             [ "(property)", "mixinProperty: string" ],
             selfMixinPropertyArgs(sourceFile)
         )
+        await assertQuickInfo(
+            t,
+            sourceFile,
+            "mixinProperty",
+            [ "(property)", "mixinProperty: string" ],
+            superMixinPropertyArgs(sourceFile)
+        )
+        await assertQuickInfo(
+            t,
+            sourceFile,
+            "mixinMethod",
+            [ "(method)", "mixinMethod(): string" ],
+            superMixinMethodArgs(sourceFile)
+        )
+        await assertQuickInfo(
+            t,
+            sourceFile,
+            "mixinProperty",
+            [ "(property)", "mixinProperty: string" ],
+            consumerSuperMixinPropertyArgs(sourceFile)
+        )
+        await assertQuickInfo(
+            t,
+            sourceFile,
+            "mixinMethod",
+            [ "(method)", "mixinMethod(): string" ],
+            consumerSuperMixinMethodArgs(sourceFile)
+        )
+    } finally {
+        await dispose()
+    }
+})
+
+it("tsserver resolves consumer super members from imported mixins", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : importedConsumerText
+            },
+            {
+                fileName : "mixins.ts",
+                text     : importedMixinText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
+        const mixinFile  = requiredFixtureSourceFile(fixture.sourceFiles, "mixins.ts")
+
+        await assertImportedDefinition(
+            t,
+            sourceFile,
+            mixinFile,
+            "importedProperty",
+            "importedProperty: string",
+            importedConsumerSuperPropertyArgs(sourceFile)
+        )
+        await assertImportedDefinition(
+            t,
+            sourceFile,
+            mixinFile,
+            "importedMethod",
+            "importedMethod(): string",
+            importedConsumerSuperMethodArgs(sourceFile)
+        )
+        await assertImportedDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            mixinFile,
+            "importedProperty",
+            "importedProperty: string",
+            importedConsumerSuperPropertyArgs(sourceFile)
+        )
+        await assertImportedDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            mixinFile,
+            "importedMethod",
+            "importedMethod(): string",
+            importedConsumerSuperMethodArgs(sourceFile)
+        )
+        await assertImportedQuickInfo(
+            t,
+            sourceFile,
+            [ "(property)", "importedProperty: string" ],
+            importedConsumerSuperPropertyArgs(sourceFile)
+        )
+        await assertImportedQuickInfo(
+            t,
+            sourceFile,
+            [ "(method)", "importedMethod(): string" ],
+            importedConsumerSuperMethodArgs(sourceFile)
+        )
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver resolves fixture-like consumer super members from imported generic mixins", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : fixtureLikeConsumerText
+            },
+            {
+                fileName : "mixins.ts",
+                text     : fixtureLikeMixinsText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
+        const mixinFile  = requiredFixtureSourceFile(fixture.sourceFiles, "mixins.ts")
+
+        await assertFixtureLikeDefinition(
+            t,
+            sourceFile,
+            mixinFile,
+            "value2",
+            "value2: string",
+            fixtureLikeSuperValue2Args(sourceFile)
+        )
+        await assertFixtureLikeDefinition(
+            t,
+            sourceFile,
+            mixinFile,
+            "method1",
+            "method1(): string",
+            fixtureLikeSuperMethod1Args(sourceFile)
+        )
+        await assertFixtureLikeDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            mixinFile,
+            "value2",
+            "value2: string",
+            fixtureLikeSuperValue2Args(sourceFile)
+        )
+        await assertFixtureLikeDefinitionAndBoundSpan(
+            t,
+            sourceFile,
+            mixinFile,
+            "method1",
+            "method1(): string",
+            fixtureLikeSuperMethod1Args(sourceFile)
+        )
+        await assertFixtureLikeQuickInfo(
+            t,
+            sourceFile,
+            [ "(property)", "value2: string" ],
+            fixtureLikeSuperValue2Args(sourceFile)
+        )
+        await assertFixtureLikeQuickInfo(
+            t,
+            sourceFile,
+            [ "(method)", "method1(): string" ],
+            fixtureLikeSuperMethod1Args(sourceFile)
+        )
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver rename updates mixin method usages from self, external and super calls", async (t: Test) => {
+    const { sourceFile, dispose } = await createEditorFixture()
+
+    try {
+        for (const scenario of [
+            { args : selfMixinMethodArgs(sourceFile), description : "self mixin method call" },
+            { args : usageArgs(sourceFile, "mixinMethod"), description : "external mixin method call" },
+            { args : superMixinMethodArgs(sourceFile), description : "super mixin method call" }
+        ]) {
+            const renamedText = assertRenameAllowed(
+                t,
+                await request(sourceFile, "rename", scenario.args),
+                sourceFile,
+                "mixinMethod",
+                "renamedMixinMethod"
+            )
+
+            t.true(renamedText.includes("renamedMixinMethod(): string"), `Renames declaration from ${scenario.description}`)
+            t.true(renamedText.includes("this.renamedMixinMethod()"), `Renames self usage from ${scenario.description}`)
+            t.true(renamedText.includes("mixed.renamedMixinMethod()"), `Renames external usage from ${scenario.description}`)
+            t.true(renamedText.includes("super.renamedMixinMethod()"), `Renames super usage from ${scenario.description}`)
+        }
     } finally {
         await dispose()
     }
@@ -124,6 +497,16 @@ async function createEditorFixture(): Promise<{
     }
 }
 
+function requiredFixtureSourceFile(sourceFiles: Map<string, string>, fileName: string): string {
+    const sourceFile = sourceFiles.get(fileName)
+
+    if (sourceFile === undefined) {
+        throw new Error(`Missing fixture source file: ${fileName}`)
+    }
+
+    return sourceFile
+}
+
 async function assertDefinition(
     t: Test,
     sourceFile: string,
@@ -142,6 +525,106 @@ async function assertDefinition(
             sourceSlice(sourceText, definition) === memberName &&
             sourceText.slice(positionToIndex(sourceText, definition.start)).startsWith(declarationText)
     }), `${description} usage resolves to its source declaration`)
+}
+
+async function assertImportedDefinition(
+    t: Test,
+    sourceFile: string,
+    mixinFile: string,
+    memberName: string,
+    declarationText: string,
+    args: { file: string, line: number, offset: number }
+): Promise<void> {
+    const definitions = assertResponseBody<DefinitionInfo[]>(
+        t,
+        await importedRequest(sourceFile, "definition", args)
+    )
+
+    t.true(definitions.some((definition) => {
+        return definition.file === mixinFile &&
+            sourceSlice(importedMixinText, definition) === memberName &&
+            importedMixinText.slice(positionToIndex(importedMixinText, definition.start)).startsWith(declarationText)
+    }), `Imported ${memberName} usage resolves to its source declaration`)
+}
+
+async function assertFixtureLikeDefinition(
+    t: Test,
+    sourceFile: string,
+    mixinFile: string,
+    memberName: string,
+    declarationText: string,
+    args: { file: string, line: number, offset: number }
+): Promise<void> {
+    const definitions = assertResponseBody<DefinitionInfo[]>(
+        t,
+        await requestWithSourceText(sourceFile, fixtureLikeConsumerText, "definition", args)
+    )
+
+    t.true(definitions.some((definition) => {
+        return definition.file === mixinFile &&
+            sourceSlice(fixtureLikeMixinsText, definition) === memberName &&
+            fixtureLikeMixinsText.slice(positionToIndex(fixtureLikeMixinsText, definition.start)).startsWith(declarationText)
+    }), `Fixture-like ${memberName} usage resolves to its source declaration`)
+}
+
+async function assertDefinitionAndBoundSpan(
+    t: Test,
+    sourceFile: string,
+    memberName: string,
+    declarationText: string,
+    description: string,
+    args: { file: string, line: number, offset: number }
+): Promise<void> {
+    const body = assertResponseBody<DefinitionAndBoundSpanBody>(
+        t,
+        await request(sourceFile, "definitionAndBoundSpan", args)
+    )
+
+    t.true(body.definitions?.some((definition) => {
+        return definition.file === sourceFile &&
+            sourceSlice(sourceText, definition) === memberName &&
+            sourceText.slice(positionToIndex(sourceText, definition.start)).startsWith(declarationText)
+    }) === true, `${description} quick definition resolves to its source declaration`)
+}
+
+async function assertImportedDefinitionAndBoundSpan(
+    t: Test,
+    sourceFile: string,
+    mixinFile: string,
+    memberName: string,
+    declarationText: string,
+    args: { file: string, line: number, offset: number }
+): Promise<void> {
+    const body = assertResponseBody<DefinitionAndBoundSpanBody>(
+        t,
+        await importedRequest(sourceFile, "definitionAndBoundSpan", args)
+    )
+
+    t.true(body.definitions?.some((definition) => {
+        return definition.file === mixinFile &&
+            sourceSlice(importedMixinText, definition) === memberName &&
+            importedMixinText.slice(positionToIndex(importedMixinText, definition.start)).startsWith(declarationText)
+    }) === true, `Imported ${memberName} quick definition resolves to its source declaration`)
+}
+
+async function assertFixtureLikeDefinitionAndBoundSpan(
+    t: Test,
+    sourceFile: string,
+    mixinFile: string,
+    memberName: string,
+    declarationText: string,
+    args: { file: string, line: number, offset: number }
+): Promise<void> {
+    const body = assertResponseBody<DefinitionAndBoundSpanBody>(
+        t,
+        await requestWithSourceText(sourceFile, fixtureLikeConsumerText, "definitionAndBoundSpan", args)
+    )
+
+    t.true(body.definitions?.some((definition) => {
+        return definition.file === mixinFile &&
+            sourceSlice(fixtureLikeMixinsText, definition) === memberName &&
+            fixtureLikeMixinsText.slice(positionToIndex(fixtureLikeMixinsText, definition.start)).startsWith(declarationText)
+    }) === true, `Fixture-like ${memberName} quick definition resolves to its source declaration`)
 }
 
 async function assertQuickInfo(
@@ -164,11 +647,62 @@ async function assertQuickInfo(
     )
 }
 
+async function assertImportedQuickInfo(
+    t: Test,
+    sourceFile: string,
+    expectedParts: string[],
+    args: { file: string, line: number, offset: number }
+): Promise<void> {
+    const quickInfo = assertResponseBody<QuickInfoBody>(
+        t,
+        await importedRequest(sourceFile, "quickinfo", args)
+    )
+
+    t.true(
+        expectedParts.every((expectedPart) => {
+            return quickInfo.displayString?.includes(expectedPart) === true
+        }),
+        quickInfo.displayString ?? "Missing imported quickinfo"
+    )
+}
+
+async function assertFixtureLikeQuickInfo(
+    t: Test,
+    sourceFile: string,
+    expectedParts: string[],
+    args: { file: string, line: number, offset: number }
+): Promise<void> {
+    const quickInfo = assertResponseBody<QuickInfoBody>(
+        t,
+        await requestWithSourceText(sourceFile, fixtureLikeConsumerText, "quickinfo", args)
+    )
+
+    t.true(
+        expectedParts.every((expectedPart) => {
+            return quickInfo.displayString?.includes(expectedPart) === true
+        }),
+        quickInfo.displayString ?? "Missing fixture-like quickinfo"
+    )
+}
+
 async function request(sourceFile: string, command: string, args: unknown): Promise<TsServerResponse> {
+    return requestWithSourceText(sourceFile, sourceText, command, args)
+}
+
+async function importedRequest(sourceFile: string, command: string, args: unknown): Promise<TsServerResponse> {
+    return requestWithSourceText(sourceFile, importedConsumerText, command, args)
+}
+
+async function requestWithSourceText(
+    sourceFile: string,
+    text: string,
+    command: string,
+    args: unknown
+): Promise<TsServerResponse> {
     return runTypeScriptServerRequest(
         sourceFile.slice(0, sourceFile.lastIndexOf("/")),
         sourceFile,
-        sourceText,
+        text,
         command,
         args
     )
@@ -195,6 +729,110 @@ function selfMixinPropertyArgs(sourceFile: string): { file: string, line: number
     }
 }
 
+function superMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    const accessText = "super.mixinProperty"
+    const position   = sourceText.indexOf(accessText)
+
+    if (position < 0) {
+        throw new Error("Cannot find mixin super property usage.")
+    }
+
+    return {
+        file : sourceFile,
+        ...positionToLineOffset(sourceText, position + "super.".length + 1)
+    }
+}
+
+function selfMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    return accessArgs(sourceFile, "this.mixinMethod", "this.")
+}
+
+function superMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    return accessArgs(sourceFile, "super.mixinMethod", "super.")
+}
+
+function consumerSuperMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    return accessArgs(sourceFile, "super.mixinProperty", "super.", "readSuperProperty(): string")
+}
+
+function consumerSuperMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    return accessArgs(sourceFile, "super.mixinMethod", "super.", "callSuperMethod(): string")
+}
+
+function importedConsumerSuperPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    return sourceAccessArgs(
+        importedConsumerText,
+        sourceFile,
+        "super.importedProperty",
+        "super.",
+        "readImportedSuperProperty(): string"
+    )
+}
+
+function importedConsumerSuperMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    return sourceAccessArgs(
+        importedConsumerText,
+        sourceFile,
+        "super.importedMethod",
+        "super.",
+        "callImportedSuperMethod(): string"
+    )
+}
+
+function fixtureLikeSuperValue2Args(sourceFile: string): { file: string, line: number, offset: number } {
+    return sourceAccessArgs(
+        fixtureLikeConsumerText,
+        sourceFile,
+        "super.value2",
+        "super.",
+        "method1(): string"
+    )
+}
+
+function fixtureLikeSuperMethod1Args(sourceFile: string): { file: string, line: number, offset: number } {
+    return sourceAccessArgs(
+        fixtureLikeConsumerText,
+        sourceFile,
+        "super.method1",
+        "super.",
+        "return super.method1()"
+    )
+}
+
+function accessArgs(
+    sourceFile: string,
+    accessText: string,
+    receiver: string,
+    containingText?: string
+): { file: string, line: number, offset: number } {
+    return sourceAccessArgs(sourceText, sourceFile, accessText, receiver, containingText)
+}
+
+function sourceAccessArgs(
+    source: string,
+    sourceFile: string,
+    accessText: string,
+    receiver: string,
+    containingText?: string
+): { file: string, line: number, offset: number } {
+    const containingPosition = containingText === undefined ? 0 : source.indexOf(containingText)
+
+    if (containingPosition < 0) {
+        throw new Error(`Cannot find containing text: ${containingText}`)
+    }
+
+    const position = source.indexOf(accessText, containingPosition)
+
+    if (position < 0) {
+        throw new Error(`Cannot find access: ${accessText}`)
+    }
+
+    return {
+        file : sourceFile,
+        ...positionToLineOffset(source, position + receiver.length + 1)
+    }
+}
+
 function memberUsagePosition(memberName: string): number {
     const receivers = [ "plain", "mixed" ]
 
@@ -218,6 +856,48 @@ function assertResponseBody<Body>(t: Test, response: TsServerResponse): Body {
     }
 
     return response.body as Body
+}
+
+function assertRenameAllowed(
+    t: Test,
+    response: TsServerResponse,
+    sourceFile: string,
+    displayName: string,
+    nextName: string
+): string {
+    const body = assertResponseBody<RenameResponseBody>(t, response)
+
+    t.equal(response.command, "rename", "Response belongs to the rename command")
+    t.true(body.info?.canRename, JSON.stringify(response.body))
+    t.equal(body.info?.displayName, displayName, "Rename info points at the source method")
+    t.true(Array.isArray(body.locs) && body.locs.length > 0, "Rename response contains rename locations")
+
+    return applyRenameLocations(sourceFile, body.locs ?? [], nextName)
+}
+
+function applyRenameLocations(
+    sourceFile: string,
+    fileLocations: RenameFileLocation[],
+    nextName: string
+): string {
+    const edits = fileLocations
+        .filter((fileLocation) => fileLocation.file === sourceFile)
+        .flatMap((fileLocation) => fileLocation.locs)
+        .map((location) => {
+            return {
+                start : positionToIndex(sourceText, location.start),
+                end   : positionToIndex(sourceText, location.end)
+            }
+        })
+        .sort((left, right) => right.start - left.start)
+
+    let nextSource = sourceText
+
+    for (const edit of edits) {
+        nextSource = `${nextSource.slice(0, edit.start)}${nextName}${nextSource.slice(edit.end)}`
+    }
+
+    return nextSource
 }
 
 function sourceSlice(source: string, span: TextSpan): string {

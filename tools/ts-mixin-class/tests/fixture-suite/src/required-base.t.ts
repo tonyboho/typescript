@@ -1,0 +1,77 @@
+import { it } from "@bryntum/siesta/nodejs.js"
+import type { Test } from "@bryntum/siesta/nodejs.js"
+
+import { mixin } from "ts-mixin-class"
+
+class RequiredBase<T> {
+    requiredValue: T
+
+    constructor(requiredValue: T) {
+        this.requiredValue = requiredValue
+    }
+
+    requiredMethod(): T {
+        return this.requiredValue
+    }
+
+    static staticRequired(): string {
+        return "staticRequired"
+    }
+}
+
+class RealBase extends RequiredBase<string> {
+    override requiredMethod(): string {
+        return "real/" + super.requiredMethod()
+    }
+}
+
+@mixin()
+class RequiredMixin extends RequiredBase<string> {
+    mixinValue: string = "mixin"
+
+    mixinMethod(): string {
+        return super.requiredMethod() + "/" + this.mixinValue
+    }
+
+    static staticMixin(): string {
+        return "staticMixin"
+    }
+}
+
+class Consumer extends RealBase implements RequiredMixin {
+    own(): string {
+        return super.mixinMethod()
+    }
+}
+
+class DefaultConsumer implements RequiredMixin {
+}
+
+const consumer = new Consumer("base")
+const defaultConsumer = new DefaultConsumer("default")
+
+const v1: string = consumer.requiredMethod()
+const v2: string = consumer.mixinMethod()
+const v3: string = consumer.own()
+const v4: string = Consumer.staticRequired()
+const v5: string = Consumer.staticMixin()
+const v6: string = defaultConsumer.requiredMethod()
+const v7: string = defaultConsumer.mixinMethod()
+
+// @ts-expect-error required base generic is fixed as string.
+const e1: number = consumer.requiredValue
+
+it("required base mixin", async (t: Test) => {
+    t.equal(consumer.requiredMethod(), "real/base", "Consumer uses the concrete descendant base")
+    t.equal(consumer.mixinMethod(), "real/base/mixin", "Mixin super reaches the concrete base")
+    t.equal(consumer.own(), "real/base/mixin", "Consumer super reaches the required-base mixin")
+    t.equal(Consumer.staticRequired(), "staticRequired", "Consumer keeps required base statics")
+    t.equal(Consumer.staticMixin(), "staticMixin", "Consumer keeps mixin statics")
+    t.equal(defaultConsumer.requiredMethod(), "default", "No-base consumer starts from the required base")
+    t.equal(defaultConsumer.mixinMethod(), "default/mixin", "No-base consumer applies the mixin over the required base")
+    t.true(consumer instanceof RequiredMixin, "Consumer matches the required-base mixin")
+    t.true(consumer instanceof RealBase, "Consumer remains an instance of the concrete base")
+    t.true(defaultConsumer instanceof RequiredBase, "No-base consumer inherits from the required base")
+})
+
+void [ v1, v2, v3, v4, v5, v6, v7, e1 ]
