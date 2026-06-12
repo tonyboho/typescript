@@ -15,6 +15,11 @@ it("builds and runs the declaration fixture suite", async (t: Test) => {
 
     assertSuccessfulCommand(
         t,
+        await runPnpm(libraryFixtureDirectory, "run", "clean:standard"),
+        "Clean fixture suite library package standard build output"
+    )
+    assertSuccessfulCommand(
+        t,
         await runPnpm(libraryFixtureDirectory, "run", "build:standard"),
         "Build fixture suite library package"
     )

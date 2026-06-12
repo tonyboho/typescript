@@ -61,7 +61,7 @@ const v7: string = defaultConsumer.mixinMethod()
 // @ts-expect-error required base generic is fixed as string.
 const e1: number = consumer.requiredValue
 
-it("required base mixin", async (t: Test) => {
+it("uses a local required-base mixin", async (t: Test) => {
     t.equal(consumer.requiredMethod(), "real/base", "Consumer uses the concrete descendant base")
     t.equal(consumer.mixinMethod(), "real/base/mixin", "Mixin super reaches the concrete base")
     t.equal(consumer.own(), "real/base/mixin", "Consumer super reaches the required-base mixin")

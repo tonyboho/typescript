@@ -13,6 +13,11 @@ it("builds and runs the fixture suite with standard decorators", async (t: Test)
 
     assertSuccessfulCommand(
         t,
+        await runPnpm(fixtureSuiteDirectory, "run", "clean:standard"),
+        "Clean fixture suite standard build output"
+    )
+    assertSuccessfulCommand(
+        t,
         await runPnpm(fixtureSuiteDirectory, "run", "build:standard"),
         "Build fixture suite with standard decorators"
     )
@@ -26,6 +31,11 @@ it("builds and runs the fixture suite with standard decorators", async (t: Test)
 it("builds and runs the fixture suite with legacy decorators", async (t: Test) => {
     assertSuccessfulCommand(t, installResult, "Install fixture suite dependencies")
 
+    assertSuccessfulCommand(
+        t,
+        await runPnpm(fixtureSuiteDirectory, "run", "clean:legacy"),
+        "Clean fixture suite legacy build output"
+    )
     assertSuccessfulCommand(
         t,
         await runPnpm(fixtureSuiteDirectory, "run", "build:legacy"),

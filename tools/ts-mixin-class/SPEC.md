@@ -240,9 +240,9 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
 
 1. **Runtime-хелпер** (`mixinChain`, `AnyConstructor`, `ClassStatics`, `Symbol.hasInstance`, имена классов) в runtime-входе пакета — C3-линеаризация, дедупликация и мемоизация. Юнит-тесты на цепочки, ромб, instanceof.
 2. **Трансформация mixin-класса** (режим «печать + репарс»): генерация interface + фабрики + const; перенос тела; сбор зависимостей из `implements`. Юнит-тесты уровня `transformSourceFile` разделены на `tests/source-transform-mixins.t.ts`, `tests/source-transform-consumers.t.ts` и `tests/source-transform-diagnostics.t.ts`.
-3. **Реестр программы**: пре-скан `@mixin()`-классов, маппинг импортов через module resolution; сначала однофайловый случай (достаточно для `tests/fixture-suite/src/basic.t.ts`), затем кросс-файловый.
+3. **Реестр программы**: пре-скан `@mixin()`-классов, маппинг импортов через module resolution; сначала однофайловый случай, затем кросс-файловый сценарий вроде `tests/fixture-suite/src/consumer-imported-mixins.t.ts`.
 4. **Трансформация потребителя**: промежуточная база + merged interface + переключение `extends`; статика миксинов в касте.
-5. **Фикстуры** (`tests/fixture-suite`): довести `basic.t.ts` до зелёного; добавить дженерики (positive + negative через `@ts-expect-error`), ромб, кросс-файловый случай, `super`-цепочки, статику, self-reference, legacy-tsconfig вариант.
+5. **Фикстуры** (`tests/fixture-suite`): покрыть дженерики (positive + negative через `@ts-expect-error`), ромб, кросс-файловый случай, `super`-цепочки, статику, self-reference, required-base и legacy-tsconfig вариант.
 6. **Диагностики**: private/protected, явный конструктор, extends у миксина, неразрешённый миксин, коллизии статики — с корректными позициями в оригинальном исходнике.
 7. **Declaration emit**: проверить читаемость и корректность сгенерированных `.d.ts` (экспортируемость кастов, импорты имён).
 8. **Editor-режим**: позиционно-сохраняющий AST-режим, портирование утилит и tsserver-тестов ts-lazy-property (`source-position-preservation`, `tsserver-*`).

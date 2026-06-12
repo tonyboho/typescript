@@ -13,9 +13,12 @@
         }
     },
     "scripts": {
-        "build": "pnpm run build:standard && pnpm run build:legacy",
+        "build": "pnpm run clean && pnpm run build:standard && pnpm run build:legacy",
         "build:legacy": "tsc -p tsconfig.legacy.json",
         "build:standard": "tsc -p tsconfig.json",
+        "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+        "clean:legacy": "node -e \"require('node:fs').rmSync('dist/legacy', { recursive: true, force: true })\"",
+        "clean:standard": "node -e \"require('node:fs').rmSync('dist/standard', { recursive: true, force: true })\"",
         "test": "pnpm run test:standard && pnpm run test:legacy",
         "test:legacy": "siesta dist/legacy",
         "test:standard": "siesta dist/standard",

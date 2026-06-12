@@ -56,7 +56,7 @@ const asBase: Base = baseConsumer
 const sub = new SubConsumer<number>()
 const t8: number = sub.passThrough2(7)
 
-it("heritage", async (t: Test) => {
+it("supports consumer inheritance and super chains", async (t: Test) => {
     t.equal(noBase.value1, "value1", "No-base consumer gets field from mixin 1")
     t.equal(noBase.value2, "value2", "No-base consumer gets field from mixin 2")
     t.equal(noBase.method1(), "value1", "No-base consumer mixin method works")

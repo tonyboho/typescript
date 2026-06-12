@@ -47,7 +47,7 @@ class RequiredConsumer extends RequiredConsumerBase implements RequiredMixin {
 }
 
 
-it("basic", async (t: Test) => {
+it("uses imported mixins with a generic consumer base", async (t: Test) => {
     const instance = new Consumer(42)
     const required = new RequiredConsumer()
 

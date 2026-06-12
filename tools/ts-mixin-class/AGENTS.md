@@ -107,3 +107,11 @@ Implementation notes:
   (real `tsc + ts-patch` standard/legacy decorator builds plus runtime Siesta runs of
   `tests/fixture-suite`), and `tests/declaration-fixture-build-and-runtime.t.ts`
   (workspace package boundary using emitted declarations from `tests/fixture-suite`).
+- Fixture layout: `tests/fixture-suite/src/mixins.ts` and `default-mixin.ts` are the
+  exported library surface used by package-boundary declaration tests. Runtime scenario
+  files are named by behavior: `consumer-imported-mixins.t.ts`,
+  `consumer-inheritance.t.ts`, `required-base-local.t.ts`,
+  `required-base-imported-no-base.t.ts`, `type-only-imported-mixin.t.ts`,
+  `default-mixin-consumer.t.ts`, `mixin-statics.t.ts`, and
+  `mixin-self-reference.t.ts`. Declaration fixture files use the `package-*` prefix
+  because they consume the built fixture package through `.d.ts` files.
