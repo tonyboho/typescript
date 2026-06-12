@@ -45,6 +45,10 @@ Current implementation status (SPEC.md plan):
 Implementation notes:
 
 - Entry point: `src/index.ts`. Default export: `transformProgram`.
+- Compiler host mode mirrors `ts-lazy-property`: emit builds use printed transformed
+  source, while IDE/noEmit/tsserver mode returns the transformed AST over the original
+  `SourceFile.text` so editor ranges/highlights keep source coordinates. The config
+  option `mode` can force `"emit"` or `"ide"`.
 - Keep import-aware detection. A local function named `mixin` must not be treated as the
   package marker.
 - Generated code imports `type AnyConstructor` / `type ClassStatics` from the package
@@ -57,6 +61,7 @@ Implementation notes:
 - Mixin class members must not use `private` or `protected` (root `AGENTS.md` rule);
   the transformer enforces this.
 - Tests: `tests/runtime-helper.t.ts` (C3 order, application cache, `instanceof`),
+  `tests/compiler-host-source-view.t.ts` (compiler-host IDE/emit source text mode),
   `tests/source-transform.t.ts` (AST/printed assertions + a full in-memory
   typecheck of transformed output via `typecheckText` in `tests/util.ts`),
   `tests/source-position-preservation.t.ts` (stable source positions outside

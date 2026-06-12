@@ -3,11 +3,17 @@ import type * as ts from "typescript"
 import type { PluginConfig, ProgramTransformerExtras } from "ts-patch"
 
 type TypeScript = ProgramTransformerExtras["ts"]
+type TypeScriptWithParents = TypeScript & {
+    setParentRecursive<Node extends ts.Node>(node: Node, incremental: boolean): Node
+}
 
 export type MixinClassTransformerConfig = PluginConfig & {
     packageName? : string,
-    decoratorName? : string
+    decoratorName? : string,
+    mode? : MixinClassTransformerMode
 }
+
+export type MixinClassTransformerMode = "emit" | "ide"
 
 type TransformOptions = {
     packageName : string,
@@ -316,7 +322,7 @@ export default function transformProgram(
 
     const registry  = buildMixinRegistry(tsInstance, program, options, resolveModuleFileName)
     const crossFile = registry.size === 0 ? undefined : { registry, resolveModuleFileName }
-    const nextHost  = createMixinClassCompilerHost(tsInstance, compilerHost, config, crossFile)
+    const nextHost  = createMixinClassCompilerHost(tsInstance, compilerHost, compilerOptions, config, crossFile)
 
     return tsInstance.createProgram(
         program.getRootFileNames(),
@@ -329,10 +335,12 @@ export default function transformProgram(
 export function createMixinClassCompilerHost(
     tsInstance: TypeScript,
     compilerHost: ts.CompilerHost,
+    compilerOptions: ts.CompilerOptions,
     config: MixinClassTransformerConfig,
     crossFile?: CrossFileContext
 ): ts.CompilerHost {
     const options = resolveTransformOptions(config)
+    const usePrintedSourceFile = resolveUsePrintedSourceFile(config, compilerOptions)
 
     return {
         ...compilerHost,
@@ -342,17 +350,24 @@ export function createMixinClassCompilerHost(
                 fileName,
                 languageVersionOrOptions,
                 onError,
-                shouldCreateNewSourceFile
+                usePrintedSourceFile ? shouldCreateNewSourceFile : true
             )
 
             if (sourceFile === undefined || shouldSkipSourceFile(sourceFile)) {
                 return sourceFile
             }
 
-            const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options, crossFile)
+            const transformSourceFileInput = usePrintedSourceFile
+                ? sourceFile
+                : cloneSourceFileForTransform(tsInstance, sourceFile, languageVersionOrOptions)
+            const transformedSourceFile = transformSourceFile(tsInstance, transformSourceFileInput, options, crossFile)
 
-            if (transformedSourceFile === sourceFile) {
+            if (transformedSourceFile === transformSourceFileInput) {
                 return sourceFile
+            }
+
+            if (!usePrintedSourceFile) {
+                return setParentRecursivePreservingVersion(tsInstance, transformedSourceFile, sourceFile)
             }
 
             return tsInstance.createSourceFile(
@@ -364,6 +379,34 @@ export function createMixinClassCompilerHost(
             )
         }
     }
+}
+
+function cloneSourceFileForTransform(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions
+): ts.SourceFile {
+    const cloned = tsInstance.createSourceFile(
+        sourceFile.fileName,
+        sourceFile.text,
+        languageVersionOrOptions,
+        true,
+        scriptKindFromFileName(tsInstance, sourceFile.fileName)
+    )
+
+    ;(cloned as SourceFileWithVersion).version = (sourceFile as SourceFileWithVersion).version
+
+    return cloned
+}
+
+function setParentRecursivePreservingVersion(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    originalSourceFile: ts.SourceFile
+): ts.SourceFile {
+    ;(sourceFile as SourceFileWithVersion).version = (originalSourceFile as SourceFileWithVersion).version
+
+    return (tsInstance as TypeScriptWithParents).setParentRecursive(sourceFile, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,6 +1788,41 @@ function collectMixinDecoratorImports(
 
 function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
     return sourceFile.isDeclarationFile || shouldSkipFileName(sourceFile.fileName)
+}
+
+type SourceFileWithVersion = ts.SourceFile & {
+    version? : string
+}
+
+function resolveUsePrintedSourceFile(
+    config: MixinClassTransformerConfig,
+    compilerOptions: ts.CompilerOptions
+): boolean {
+    const mode = config.mode
+
+    if (mode === undefined) {
+        return shouldCreatePrintedSourceFileForEmit(compilerOptions)
+    }
+
+    if (mode !== "emit" && mode !== "ide") {
+        throw new Error(`ts-mixin-class: unknown "mode" option ${JSON.stringify(mode)}, expected "emit" or "ide".`)
+    }
+
+    return mode === "emit"
+}
+
+function shouldCreatePrintedSourceFileForEmit(compilerOptions: ts.CompilerOptions): boolean {
+    return !compilerOptions.noEmit && !isTypeScriptServerProcess()
+}
+
+function isTypeScriptServerProcess(): boolean {
+    const argv = (globalThis as { process?: { argv?: string[] } }).process?.argv ?? []
+
+    return argv.some((argument) => {
+        const fileName = argument.replaceAll("\\", "/").split("/").at(-1)
+
+        return fileName === "tsserver.js" || fileName === "_tsserver.js"
+    })
 }
 
 function shouldSkipFileName(fileName: string): boolean {
