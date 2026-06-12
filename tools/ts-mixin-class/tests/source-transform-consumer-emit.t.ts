@@ -1,0 +1,150 @@
+import { it } from "@bryntum/siesta/nodejs.js"
+import type { Test } from "@bryntum/siesta/nodejs.js"
+import ts from "typescript"
+
+import { printSourceFile, transformSourceFile } from "../src/index.js"
+import { createSourceFile } from "./util.js"
+
+it("expands a consumer class into a merged intermediate base", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        @mixin()
+        class SourceClass2<A> {
+            passThrough2 (a: A): A { return a }
+        }
+
+        class Base {
+            baseValue: number = 42
+        }
+
+        class Consumer<A> extends Base implements SourceClass1<string>, SourceClass2<A> {
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface __Consumer$base<A> extends SourceClass1<string>, SourceClass2<A>"),
+        "Merged interface repeats the implements list verbatim")
+    t.true(
+        printed.includes(
+            "class __Consumer$base<A> extends (mixinChain(Base, SourceClass1, SourceClass2) as unknown as " +
+            "typeof Base & ClassStatics<typeof SourceClass1> & ClassStatics<typeof SourceClass2>)"
+        ),
+        "Intermediate base delegates the runtime chain to the helper with the statics cast"
+    )
+    t.true(printed.includes("class Consumer<A> extends __Consumer$base<A> implements SourceClass1<string>, SourceClass2<A>"),
+        "Consumer extends the intermediate base and keeps its implements clause")
+})
+
+it("expands a consumer class without an explicit base", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        class Consumer<T> implements SourceClass1<T> {
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("class __Consumer$empty {\n}"),
+        "An explicit empty base class is generated")
+    t.true(
+        printed.includes(
+            "class __Consumer$base<T> extends (mixinChain(__Consumer$empty, SourceClass1) as unknown as " +
+            "typeof __Consumer$empty & ClassStatics<typeof SourceClass1>)"
+        ),
+        "Helper chain starts at the generated empty base and keeps mixin statics"
+    )
+})
+
+it("emits a generic consumer base class", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        class Base<T> {
+            baseValue: T
+
+            constructor (baseValue: T) {
+                this.baseValue = baseValue
+            }
+
+            baseMethod (): T {
+                return this.baseValue
+            }
+        }
+
+        class Consumer<A> extends Base<A> implements SourceClass1<string> {
+            method (): A {
+                return super.baseMethod()
+            }
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface __Consumer$base<A> extends Base<A>, SourceClass1<string>"),
+        "Merged interface includes the instantiated generic base")
+})
+
+it("consumer transitively applies mixin dependencies", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        @mixin()
+        class ChildMixin<T> implements SourceClass1<T> {
+            childMethod (a: T): string { return String(super.passThrough1(a)) }
+        }
+
+        class Consumer<T> implements ChildMixin<T> {
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("mixinChain(__Consumer$empty, ChildMixin)"),
+        "Consumer delegates transitive dependency application to the runtime helper")
+    t.true(printed.includes("interface __Consumer$base<T> extends ChildMixin<T>"),
+        "Merged interface lists only the direct implements entries")
+})
+
+it("does not treat non-mixin implements entries as mixins", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass1<T> {
+            passThrough1 (a: T): T { return a }
+        }
+
+        interface PlainContract {
+            contractMethod (): void
+        }
+
+        class Consumer<T> implements SourceClass1<T>, PlainContract {
+            contractMethod (): void {}
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface __Consumer$base<T> extends SourceClass1<T> {"),
+        "Merged interface contains only mixin entries")
+    t.true(printed.includes("implements SourceClass1<T>, PlainContract"),
+        "Consumer keeps the full implements list")
+})

@@ -239,7 +239,7 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
 # План реализации
 
 1. **Runtime-хелпер** (`mixinChain`, `AnyConstructor`, `ClassStatics`, `Symbol.hasInstance`, имена классов) в runtime-входе пакета — C3-линеаризация, дедупликация и мемоизация. Юнит-тесты на цепочки, ромб, instanceof.
-2. **Трансформация mixin-класса** (режим «печать + репарс»): генерация interface + фабрики + const; перенос тела; сбор зависимостей из `implements`. Юнит-тесты уровня `transformSourceFile` разделены на `tests/source-transform-mixins.t.ts`, `tests/source-transform-consumers.t.ts` и `tests/source-transform-diagnostics.t.ts`.
+2. **Трансформация mixin-класса** (режим «печать + репарс»): генерация interface + фабрики + const; перенос тела; сбор зависимостей из `implements`. Юнит-тесты уровня `transformSourceFile` разделены на `tests/source-transform-mixins.t.ts`, `tests/source-transform-consumer-emit.t.ts`, `tests/source-transform-consumer-typecheck.t.ts` и `tests/source-transform-diagnostics.t.ts`.
 3. **Реестр программы**: пре-скан `@mixin()`-классов, маппинг импортов через module resolution; сначала однофайловый случай, затем кросс-файловый сценарий вроде `tests/fixture-suite/src/consumer-imported-mixins.t.ts`.
 4. **Трансформация потребителя**: промежуточная база + merged interface + переключение `extends`; статика миксинов в касте.
 5. **Фикстуры** (`tests/fixture-suite`): покрыть дженерики (positive + negative через `@ts-expect-error`), ромб, кросс-файловый случай, `super`-цепочки, статику, self-reference, required-base и legacy-tsconfig вариант.

@@ -97,8 +97,9 @@ Implementation notes:
 - Tests: `tests/runtime-helper.t.ts` (C3 order, application cache, `instanceof`),
   `tests/compiler-host-source-view.t.ts` (compiler-host IDE/emit source text mode),
   `tests/source-transform-mixins.t.ts` (mixin marker detection and mixin declaration
-  expansion), `tests/source-transform-consumers.t.ts` (consumer expansion and
-  in-memory typecheck via `typecheckText` in `tests/util.ts`),
+  expansion), `tests/source-transform-consumer-emit.t.ts` (consumer expansion printed
+  output), `tests/source-transform-consumer-typecheck.t.ts` (consumer transformed
+  output in-memory typecheck via `typecheckText` in `tests/util.ts`),
   `tests/source-transform-diagnostics.t.ts` (transform-time/type-level diagnostic
   emit assertions), `tests/source-position-preservation.t.ts` (stable source positions
   outside generated top-level declarations), `tests/tsserver-definition.t.ts`
