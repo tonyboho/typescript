@@ -1,33 +1,32 @@
-import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { createTypeScriptFixture, requiredFixtureSourceFile, trimIndent } from "./util.js"
+import { createTypeScriptFixture, trimIndent } from "./util.js"
 import { assertResponseBody, positionToLineOffset, runTypeScriptServerRequest } from "./tsserver-util.js"
 import type { TsServerResponse } from "./tsserver-util.js"
 
-type TextPosition = {
+export type TextPosition = {
     line : number,
     offset : number
 }
 
-type TextSpan = {
+export type TextSpan = {
     start : TextPosition,
     end : TextPosition
 }
 
-type DefinitionInfo = TextSpan & {
+export type DefinitionInfo = TextSpan & {
     file : string
 }
 
-type DefinitionAndBoundSpanBody = {
+export type DefinitionAndBoundSpanBody = {
     definitions? : DefinitionInfo[]
 }
 
-type QuickInfoBody = TextSpan & {
+export type QuickInfoBody = TextSpan & {
     displayString? : string
 }
 
-type RenameResponseBody = {
+export type RenameResponseBody = {
     info? : {
         canRename? : boolean,
         displayName? : string
@@ -35,12 +34,12 @@ type RenameResponseBody = {
     locs? : RenameFileLocation[]
 }
 
-type RenameFileLocation = {
+export type RenameFileLocation = {
     file : string,
     locs : TextSpan[]
 }
 
-const sourceText = trimIndent(`
+export const sourceText = trimIndent(`
     import { mixin } from "ts-mixin-class"
 
     @mixin()
@@ -97,7 +96,7 @@ const sourceText = trimIndent(`
     mixed.mixinMethod()
 `)
 
-const importedMixinText = trimIndent(`
+export const importedMixinText = trimIndent(`
     import { mixin } from "ts-mixin-class"
 
     @mixin()
@@ -110,7 +109,7 @@ const importedMixinText = trimIndent(`
     }
 `)
 
-const importedConsumerText = trimIndent(`
+export const importedConsumerText = trimIndent(`
     import { ImportedMixin } from "./mixins.js"
 
     class ImportedConsumer implements ImportedMixin {
@@ -124,7 +123,7 @@ const importedConsumerText = trimIndent(`
     }
 `)
 
-const fixtureLikeMixinsText = trimIndent(`
+export const fixtureLikeMixinsText = trimIndent(`
     import { mixin } from "ts-mixin-class"
 
     @mixin()
@@ -146,7 +145,7 @@ const fixtureLikeMixinsText = trimIndent(`
     }
 `)
 
-const fixtureLikeConsumerText = trimIndent(`
+export const fixtureLikeConsumerText = trimIndent(`
     import { SourceClass1, SourceClass2 } from "./mixins.js"
 
     class Base<T> {
@@ -167,312 +166,7 @@ const fixtureLikeConsumerText = trimIndent(`
     }
 `)
 
-it("tsserver definition resolves plain and mixin members", async (t: Test) => {
-    const { sourceFile, dispose } = await createEditorFixture()
-
-    try {
-        await assertDefinition(t, sourceFile, "baseProperty", "baseProperty: number", "Plain base property")
-        await assertDefinition(t, sourceFile, "baseMethod", "baseMethod(): number", "Plain base method")
-        await assertDefinition(t, sourceFile, "mixinProperty", "mixinProperty: string", "Mixin property")
-        await assertDefinition(t, sourceFile, "mixinMethod", "mixinMethod(): string", "Mixin method")
-        await assertDefinition(
-            t,
-            sourceFile,
-            "mixinProperty",
-            "mixinProperty: string",
-            "Mixin self property",
-            selfMixinPropertyArgs(sourceFile)
-        )
-        await assertDefinition(
-            t,
-            sourceFile,
-            "mixinProperty",
-            "mixinProperty: string",
-            "Mixin super property",
-            superMixinPropertyArgs(sourceFile)
-        )
-        await assertDefinition(
-            t,
-            sourceFile,
-            "mixinMethod",
-            "mixinMethod(): string",
-            "Mixin super method",
-            superMixinMethodArgs(sourceFile)
-        )
-        await assertDefinition(
-            t,
-            sourceFile,
-            "mixinProperty",
-            "mixinProperty: string",
-            "Consumer super property",
-            consumerSuperMixinPropertyArgs(sourceFile)
-        )
-        await assertDefinition(
-            t,
-            sourceFile,
-            "mixinMethod",
-            "mixinMethod(): string",
-            "Consumer super method",
-            consumerSuperMixinMethodArgs(sourceFile)
-        )
-    } finally {
-        await dispose()
-    }
-})
-
-it("tsserver definitionAndBoundSpan resolves super mixin members", async (t: Test) => {
-    const { sourceFile, dispose } = await createEditorFixture()
-
-    try {
-        await assertDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            "mixinProperty",
-            "mixinProperty: string",
-            "Mixin super property",
-            superMixinPropertyArgs(sourceFile)
-        )
-        await assertDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            "mixinMethod",
-            "mixinMethod(): string",
-            "Mixin super method",
-            superMixinMethodArgs(sourceFile)
-        )
-        await assertDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            "mixinProperty",
-            "mixinProperty: string",
-            "Consumer super property",
-            consumerSuperMixinPropertyArgs(sourceFile)
-        )
-        await assertDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            "mixinMethod",
-            "mixinMethod(): string",
-            "Consumer super method",
-            consumerSuperMixinMethodArgs(sourceFile)
-        )
-    } finally {
-        await dispose()
-    }
-})
-
-it("tsserver quickinfo reports plain and mixin members", async (t: Test) => {
-    const { sourceFile, dispose } = await createEditorFixture()
-
-    try {
-        await assertQuickInfo(t, sourceFile, "baseProperty", [ "baseProperty: number", "PlainBase.baseProperty" ])
-        await assertQuickInfo(t, sourceFile, "baseMethod", [ "baseMethod(): number", "PlainBase.baseMethod" ])
-        await assertQuickInfo(t, sourceFile, "mixinProperty", [ "(property)", "mixinProperty: string" ])
-        await assertQuickInfo(t, sourceFile, "mixinMethod", [ "(method)", "mixinMethod(): string" ])
-        await assertQuickInfo(
-            t,
-            sourceFile,
-            "mixinProperty",
-            [ "(property)", "mixinProperty: string" ],
-            selfMixinPropertyArgs(sourceFile)
-        )
-        await assertQuickInfo(
-            t,
-            sourceFile,
-            "mixinProperty",
-            [ "(property)", "mixinProperty: string" ],
-            superMixinPropertyArgs(sourceFile)
-        )
-        await assertQuickInfo(
-            t,
-            sourceFile,
-            "mixinMethod",
-            [ "(method)", "mixinMethod(): string" ],
-            superMixinMethodArgs(sourceFile)
-        )
-        await assertQuickInfo(
-            t,
-            sourceFile,
-            "mixinProperty",
-            [ "(property)", "mixinProperty: string" ],
-            consumerSuperMixinPropertyArgs(sourceFile)
-        )
-        await assertQuickInfo(
-            t,
-            sourceFile,
-            "mixinMethod",
-            [ "(method)", "mixinMethod(): string" ],
-            consumerSuperMixinMethodArgs(sourceFile)
-        )
-    } finally {
-        await dispose()
-    }
-})
-
-it("tsserver resolves consumer super members from imported mixins", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : importedConsumerText
-            },
-            {
-                fileName : "mixins.ts",
-                text     : importedMixinText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
-        const mixinFile  = requiredFixtureSourceFile(fixture.sourceFiles, "mixins.ts")
-
-        await assertImportedDefinition(
-            t,
-            sourceFile,
-            mixinFile,
-            "importedProperty",
-            "importedProperty: string",
-            importedConsumerSuperPropertyArgs(sourceFile)
-        )
-        await assertImportedDefinition(
-            t,
-            sourceFile,
-            mixinFile,
-            "importedMethod",
-            "importedMethod(): string",
-            importedConsumerSuperMethodArgs(sourceFile)
-        )
-        await assertImportedDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            mixinFile,
-            "importedProperty",
-            "importedProperty: string",
-            importedConsumerSuperPropertyArgs(sourceFile)
-        )
-        await assertImportedDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            mixinFile,
-            "importedMethod",
-            "importedMethod(): string",
-            importedConsumerSuperMethodArgs(sourceFile)
-        )
-        await assertImportedQuickInfo(
-            t,
-            sourceFile,
-            [ "(property)", "importedProperty: string" ],
-            importedConsumerSuperPropertyArgs(sourceFile)
-        )
-        await assertImportedQuickInfo(
-            t,
-            sourceFile,
-            [ "(method)", "importedMethod(): string" ],
-            importedConsumerSuperMethodArgs(sourceFile)
-        )
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("tsserver resolves fixture-like consumer super members from imported generic mixins", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : fixtureLikeConsumerText
-            },
-            {
-                fileName : "mixins.ts",
-                text     : fixtureLikeMixinsText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
-        const mixinFile  = requiredFixtureSourceFile(fixture.sourceFiles, "mixins.ts")
-
-        await assertFixtureLikeDefinition(
-            t,
-            sourceFile,
-            mixinFile,
-            "value2",
-            "value2: string",
-            fixtureLikeSuperValue2Args(sourceFile)
-        )
-        await assertFixtureLikeDefinition(
-            t,
-            sourceFile,
-            mixinFile,
-            "method1",
-            "method1(): string",
-            fixtureLikeSuperMethod1Args(sourceFile)
-        )
-        await assertFixtureLikeDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            mixinFile,
-            "value2",
-            "value2: string",
-            fixtureLikeSuperValue2Args(sourceFile)
-        )
-        await assertFixtureLikeDefinitionAndBoundSpan(
-            t,
-            sourceFile,
-            mixinFile,
-            "method1",
-            "method1(): string",
-            fixtureLikeSuperMethod1Args(sourceFile)
-        )
-        await assertFixtureLikeQuickInfo(
-            t,
-            sourceFile,
-            [ "(property)", "value2: string" ],
-            fixtureLikeSuperValue2Args(sourceFile)
-        )
-        await assertFixtureLikeQuickInfo(
-            t,
-            sourceFile,
-            [ "(method)", "method1(): string" ],
-            fixtureLikeSuperMethod1Args(sourceFile)
-        )
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("tsserver rename updates mixin method usages from self, external and super calls", async (t: Test) => {
-    const { sourceFile, dispose } = await createEditorFixture()
-
-    try {
-        for (const scenario of [
-            { args : selfMixinMethodArgs(sourceFile), description : "self mixin method call" },
-            { args : usageArgs(sourceFile, "mixinMethod"), description : "external mixin method call" },
-            { args : superMixinMethodArgs(sourceFile), description : "super mixin method call" }
-        ]) {
-            const renamedText = assertRenameAllowed(
-                t,
-                await request(sourceFile, "rename", scenario.args),
-                sourceFile,
-                "mixinMethod",
-                "renamedMixinMethod"
-            )
-
-            t.true(renamedText.includes("renamedMixinMethod(): string"), `Renames declaration from ${scenario.description}`)
-            t.true(renamedText.includes("this.renamedMixinMethod()"), `Renames self usage from ${scenario.description}`)
-            t.true(renamedText.includes("mixed.renamedMixinMethod()"), `Renames external usage from ${scenario.description}`)
-            t.true(renamedText.includes("super.renamedMixinMethod()"), `Renames super usage from ${scenario.description}`)
-        }
-    } finally {
-        await dispose()
-    }
-})
-
-async function createEditorFixture(): Promise<{
+export async function createEditorFixture(): Promise<{
     dispose : () => Promise<void>,
     sourceFile : string
 }> {
@@ -497,7 +191,7 @@ async function createEditorFixture(): Promise<{
     }
 }
 
-async function assertDefinition(
+export async function assertDefinition(
     t: Test,
     sourceFile: string,
     memberName: string,
@@ -517,7 +211,7 @@ async function assertDefinition(
     }), `${description} usage resolves to its source declaration`)
 }
 
-async function assertImportedDefinition(
+export async function assertImportedDefinition(
     t: Test,
     sourceFile: string,
     mixinFile: string,
@@ -537,7 +231,7 @@ async function assertImportedDefinition(
     }), `Imported ${memberName} usage resolves to its source declaration`)
 }
 
-async function assertFixtureLikeDefinition(
+export async function assertFixtureLikeDefinition(
     t: Test,
     sourceFile: string,
     mixinFile: string,
@@ -557,7 +251,7 @@ async function assertFixtureLikeDefinition(
     }), `Fixture-like ${memberName} usage resolves to its source declaration`)
 }
 
-async function assertDefinitionAndBoundSpan(
+export async function assertDefinitionAndBoundSpan(
     t: Test,
     sourceFile: string,
     memberName: string,
@@ -577,7 +271,7 @@ async function assertDefinitionAndBoundSpan(
     }) === true, `${description} quick definition resolves to its source declaration`)
 }
 
-async function assertImportedDefinitionAndBoundSpan(
+export async function assertImportedDefinitionAndBoundSpan(
     t: Test,
     sourceFile: string,
     mixinFile: string,
@@ -597,7 +291,7 @@ async function assertImportedDefinitionAndBoundSpan(
     }) === true, `Imported ${memberName} quick definition resolves to its source declaration`)
 }
 
-async function assertFixtureLikeDefinitionAndBoundSpan(
+export async function assertFixtureLikeDefinitionAndBoundSpan(
     t: Test,
     sourceFile: string,
     mixinFile: string,
@@ -617,7 +311,7 @@ async function assertFixtureLikeDefinitionAndBoundSpan(
     }) === true, `Fixture-like ${memberName} quick definition resolves to its source declaration`)
 }
 
-async function assertQuickInfo(
+export async function assertQuickInfo(
     t: Test,
     sourceFile: string,
     memberName: string,
@@ -637,7 +331,7 @@ async function assertQuickInfo(
     )
 }
 
-async function assertImportedQuickInfo(
+export async function assertImportedQuickInfo(
     t: Test,
     sourceFile: string,
     expectedParts: string[],
@@ -656,7 +350,7 @@ async function assertImportedQuickInfo(
     )
 }
 
-async function assertFixtureLikeQuickInfo(
+export async function assertFixtureLikeQuickInfo(
     t: Test,
     sourceFile: string,
     expectedParts: string[],
@@ -675,7 +369,7 @@ async function assertFixtureLikeQuickInfo(
     )
 }
 
-async function request(sourceFile: string, command: string, args: unknown): Promise<TsServerResponse> {
+export async function request(sourceFile: string, command: string, args: unknown): Promise<TsServerResponse> {
     return requestWithSourceText(sourceFile, sourceText, command, args)
 }
 
@@ -698,14 +392,14 @@ async function requestWithSourceText(
     )
 }
 
-function usageArgs(sourceFile: string, memberName: string): { file: string, line: number, offset: number } {
+export function usageArgs(sourceFile: string, memberName: string): { file: string, line: number, offset: number } {
     return {
         file : sourceFile,
         ...positionToLineOffset(sourceText, memberUsagePosition(memberName))
     }
 }
 
-function selfMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function selfMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
     const accessText = "this.mixinProperty"
     const position   = sourceText.indexOf(accessText)
 
@@ -719,7 +413,7 @@ function selfMixinPropertyArgs(sourceFile: string): { file: string, line: number
     }
 }
 
-function superMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function superMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
     const accessText = "super.mixinProperty"
     const position   = sourceText.indexOf(accessText)
 
@@ -733,23 +427,23 @@ function superMixinPropertyArgs(sourceFile: string): { file: string, line: numbe
     }
 }
 
-function selfMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function selfMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
     return accessArgs(sourceFile, "this.mixinMethod", "this.")
 }
 
-function superMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function superMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
     return accessArgs(sourceFile, "super.mixinMethod", "super.")
 }
 
-function consumerSuperMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function consumerSuperMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
     return accessArgs(sourceFile, "super.mixinProperty", "super.", "readSuperProperty(): string")
 }
 
-function consumerSuperMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function consumerSuperMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
     return accessArgs(sourceFile, "super.mixinMethod", "super.", "callSuperMethod(): string")
 }
 
-function importedConsumerSuperPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function importedConsumerSuperPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
     return sourceAccessArgs(
         importedConsumerText,
         sourceFile,
@@ -759,7 +453,7 @@ function importedConsumerSuperPropertyArgs(sourceFile: string): { file: string, 
     )
 }
 
-function importedConsumerSuperMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
+export function importedConsumerSuperMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
     return sourceAccessArgs(
         importedConsumerText,
         sourceFile,
@@ -769,7 +463,7 @@ function importedConsumerSuperMethodArgs(sourceFile: string): { file: string, li
     )
 }
 
-function fixtureLikeSuperValue2Args(sourceFile: string): { file: string, line: number, offset: number } {
+export function fixtureLikeSuperValue2Args(sourceFile: string): { file: string, line: number, offset: number } {
     return sourceAccessArgs(
         fixtureLikeConsumerText,
         sourceFile,
@@ -779,7 +473,7 @@ function fixtureLikeSuperValue2Args(sourceFile: string): { file: string, line: n
     )
 }
 
-function fixtureLikeSuperMethod1Args(sourceFile: string): { file: string, line: number, offset: number } {
+export function fixtureLikeSuperMethod1Args(sourceFile: string): { file: string, line: number, offset: number } {
     return sourceAccessArgs(
         fixtureLikeConsumerText,
         sourceFile,
@@ -838,7 +532,7 @@ function memberUsagePosition(memberName: string): number {
     throw new Error(`Cannot find member usage: ${memberName}`)
 }
 
-function assertRenameAllowed(
+export function assertRenameAllowed(
     t: Test,
     response: TsServerResponse,
     sourceFile: string,

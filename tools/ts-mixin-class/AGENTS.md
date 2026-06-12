@@ -101,12 +101,14 @@ Implementation notes:
   in-memory typecheck via `typecheckText` in `tests/util.ts`),
   `tests/source-transform-diagnostics.t.ts` (transform-time/type-level diagnostic
   emit assertions), `tests/source-position-preservation.t.ts` (stable source positions
-  outside generated top-level declarations), `tests/tsserver-editor-features.t.ts`
-  (definition/quickinfo/rename through tsserver), `tests/tsserver-diagnostics.t.ts`
-  (semantic diagnostics through tsserver), `tests/fixture-build-and-runtime.t.ts`
-  (real `tsc + ts-patch` standard/legacy decorator builds plus runtime Siesta runs of
-  `tests/fixture-suite`), and `tests/declaration-fixture-build-and-runtime.t.ts`
-  (workspace package boundary using emitted declarations from `tests/fixture-suite`).
+  outside generated top-level declarations), `tests/tsserver-definition.t.ts`
+  (definition/definitionAndBoundSpan through tsserver), `tests/tsserver-quickinfo.t.ts`
+  (quickinfo through tsserver), `tests/tsserver-rename.t.ts` (rename through tsserver),
+  `tests/tsserver-diagnostics.t.ts` (semantic diagnostics through tsserver),
+  `tests/fixture-build-and-runtime.t.ts` (real `tsc + ts-patch` standard/legacy
+  decorator builds plus runtime Siesta runs of `tests/fixture-suite`), and
+  `tests/declaration-fixture-build-and-runtime.t.ts` (workspace package boundary using
+  emitted declarations from `tests/fixture-suite`).
 - Fixture layout: `tests/fixture-suite/src/mixins.ts` and `default-mixin.ts` are the
   exported library surface used by package-boundary declaration tests. Runtime scenario
   files are named by behavior: `consumer-imported-mixins.t.ts`,
