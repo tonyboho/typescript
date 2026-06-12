@@ -1,11 +1,8 @@
-import { readFile } from "node:fs/promises"
-import path from "node:path"
-
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { createTypeScriptFixture, packageRoot, trimIndent } from "./util.js"
-import { positionToLineOffset, runTypeScriptServerRequest } from "./tsserver-util.js"
+import { createTypeScriptFixture, requiredFixtureSourceFile, trimIndent } from "./util.js"
+import { assertResponseBody, positionToLineOffset, runTypeScriptServerRequest } from "./tsserver-util.js"
 import type { TsServerResponse } from "./tsserver-util.js"
 
 type TextPosition = {
@@ -38,55 +35,10 @@ type RenameResponseBody = {
     locs? : RenameFileLocation[]
 }
 
-type SemanticDiagnostic = {
-    code? : number,
-    text? : string,
-    message? : string,
-    start? : TextPosition,
-    end? : TextPosition
-}
-
 type RenameFileLocation = {
     file : string,
     locs : TextSpan[]
 }
-
-const requiredBaseDiagnosticParts = [
-    "Mixin required base mismatch",
-    "Mixin RequiredMixin can only be applied to RequiredBase",
-    "BadRequiredConsumer extends UnrelatedRequiredConsumerBase",
-    "extends means a required consumer base"
-]
-
-const linearizationDiagnosticParts = [
-    "Cannot linearize mixin classes with the C3 algorithm",
-    "Conflicting order requirements",
-    "LinearizationA -> LinearizationB",
-    "LinearizationB -> LinearizationA"
-]
-
-const invalidMixinDiagnosticParts = [
-    "Invalid mixin class declaration",
-    "Mixin class ConstructorMixin cannot declare a constructor",
-    "Mixin class PrivateMixin member value cannot be private or protected",
-    "Mixin class MissingPropertyTypeMixin property value must have an explicit type annotation",
-    "Mixin class MissingMethodReturnTypeMixin method method must have an explicit return type annotation",
-    "Mixin class MissingParameterTypeMixin method parameter value must have an explicit type annotation",
-    "Mixin class MissingAccessorTypeMixin accessor value must have an explicit type annotation"
-]
-
-const anonymousConsumerDiagnosticParts = [
-    "Invalid mixin consumer declaration",
-    "A mixin consumer class must be named",
-    "export default class Consumer"
-]
-
-const unsupportedBaseDiagnosticParts = [
-    "Unsupported mixin consumer base expression",
-    "Consumer extends makeBase()",
-    "Only named base classes such as Base or ns.Base are supported for now",
-    "assign the expression to a named class or const"
-]
 
 const sourceText = trimIndent(`
     import { mixin } from "ts-mixin-class"
@@ -194,33 +146,6 @@ const fixtureLikeMixinsText = trimIndent(`
     }
 `)
 
-const diagnosticMixinsText = trimIndent(`
-    import { mixin } from "ts-mixin-class"
-
-    export class RequiredBase {
-        requiredMethod(): string {
-            return "required"
-        }
-    }
-
-    @mixin()
-    export class RequiredMixin extends RequiredBase {
-        mixinMethod(): string {
-            return super.requiredMethod()
-        }
-    }
-`)
-
-const importedRequiredBaseDiagnosticText = trimIndent(`
-    import { RequiredMixin } from "./mixins.js"
-
-    class UnrelatedRequiredConsumerBase {
-    }
-
-    class BadRequiredConsumer extends UnrelatedRequiredConsumerBase implements RequiredMixin {
-    }
-`)
-
 const fixtureLikeConsumerText = trimIndent(`
     import { SourceClass1, SourceClass2 } from "./mixins.js"
 
@@ -239,125 +164,6 @@ const fixtureLikeConsumerText = trimIndent(`
 
             return super.method1()
         }
-    }
-`)
-
-const diagnosticText = trimIndent(`
-    import { mixin } from "ts-mixin-class"
-
-    class RequiredBase {
-        requiredMethod(): string {
-            return "required"
-        }
-    }
-
-    class UnrelatedRequiredConsumerBase {
-    }
-
-    @mixin()
-    class RequiredMixin extends RequiredBase {
-        mixinMethod(): string {
-            return super.requiredMethod()
-        }
-    }
-
-    class BadRequiredConsumer extends UnrelatedRequiredConsumerBase implements RequiredMixin {
-    }
-
-    @mixin()
-    class LinearizationA {
-    }
-
-    @mixin()
-    class LinearizationB {
-    }
-
-    @mixin()
-    class LinearizationX implements LinearizationA, LinearizationB {
-    }
-
-    @mixin()
-    class LinearizationY implements LinearizationB, LinearizationA {
-    }
-
-    @mixin()
-    class BadLinearizationMixin implements LinearizationX, LinearizationY {
-    }
-
-    class BadLinearizationConsumer implements BadLinearizationMixin {
-    }
-`)
-
-const invalidMixinDiagnosticText = trimIndent(`
-    import { mixin } from "ts-mixin-class"
-
-    @mixin()
-    abstract class AbstractMixin {
-    }
-
-    @mixin()
-    class ConstructorMixin {
-        constructor() {}
-    }
-
-    @mixin()
-    class PrivateMixin {
-        private value: string = "x"
-    }
-
-    @mixin()
-    class MissingPropertyTypeMixin {
-        value = "x"
-    }
-
-    @mixin()
-    class MissingMethodReturnTypeMixin {
-        method() {
-            return "x"
-        }
-    }
-
-    @mixin()
-    class MissingParameterTypeMixin {
-        method(value): string {
-            return String(value)
-        }
-    }
-
-    @mixin()
-    class MissingAccessorTypeMixin {
-        get value() {
-            return "x"
-        }
-    }
-`)
-
-const anonymousConsumerDiagnosticText = trimIndent(`
-    import { mixin } from "ts-mixin-class"
-
-    @mixin()
-    class SourceMixin {
-        value: string = "x"
-    }
-
-    export default class implements SourceMixin {
-    }
-`)
-
-const unsupportedBaseDiagnosticText = trimIndent(`
-    import { mixin } from "ts-mixin-class"
-
-    function makeBase(): new () => object {
-        return class {
-        }
-    }
-
-    @mixin()
-    class SourceMixin {
-        value: string = "x"
-    }
-
-    class Consumer extends makeBase() implements SourceMixin {
     }
 `)
 
@@ -666,237 +472,6 @@ it("tsserver rename updates mixin method usages from self, external and super ca
     }
 })
 
-it("tsserver semantic diagnostics report mixin transform type errors", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : diagnosticText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
-        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
-            t,
-            await runTypeScriptServerRequest(
-                fixture.directory,
-                sourceFile,
-                diagnosticText,
-                "semanticDiagnosticsSync",
-                { file : sourceFile }
-            )
-        )
-        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
-
-        assertDiagnosticParts(t, messages, requiredBaseDiagnosticParts)
-        assertDiagnosticParts(t, messages, linearizationDiagnosticParts)
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("tsserver semantic diagnostics report imported required-base mixin errors", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : importedRequiredBaseDiagnosticText
-            },
-            {
-                fileName : "mixins.ts",
-                text     : diagnosticMixinsText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
-        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
-            t,
-            await runTypeScriptServerRequest(
-                fixture.directory,
-                sourceFile,
-                importedRequiredBaseDiagnosticText,
-                "semanticDiagnosticsSync",
-                { file : sourceFile }
-            )
-        )
-        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
-
-        assertDiagnosticParts(t, messages, requiredBaseDiagnosticParts)
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("tsserver semantic diagnostics report invalid mixin declarations with custom messages", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        compilerOptions        : {
-            declaration : true
-        },
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : invalidMixinDiagnosticText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
-        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
-            t,
-            await runTypeScriptServerRequest(
-                fixture.directory,
-                sourceFile,
-                invalidMixinDiagnosticText,
-                "semanticDiagnosticsSync",
-                { file : sourceFile }
-            )
-        )
-        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
-
-        assertDiagnosticParts(t, messages, invalidMixinDiagnosticParts)
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("tsserver semantic diagnostics report anonymous mixin consumers with a custom message", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        compilerOptions        : {
-            declaration : true
-        },
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : anonymousConsumerDiagnosticText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
-        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
-            t,
-            await runTypeScriptServerRequest(
-                fixture.directory,
-                sourceFile,
-                anonymousConsumerDiagnosticText,
-                "semanticDiagnosticsSync",
-                { file : sourceFile }
-            )
-        )
-        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
-
-        assertDiagnosticParts(t, messages, anonymousConsumerDiagnosticParts)
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("tsserver semantic diagnostics report unsupported mixin consumer base expressions with a custom message", async (t: Test) => {
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        compilerOptions        : {
-            declaration : true
-        },
-        sourceFiles            : [
-            {
-                fileName : "source.ts",
-                text     : unsupportedBaseDiagnosticText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
-        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
-            t,
-            await runTypeScriptServerRequest(
-                fixture.directory,
-                sourceFile,
-                unsupportedBaseDiagnosticText,
-                "semanticDiagnosticsSync",
-                { file : sourceFile }
-            )
-        )
-        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
-
-        assertDiagnosticParts(t, messages, unsupportedBaseDiagnosticParts)
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("tsserver semantic diagnostics report copied fixture type-errors without expect-error suppressions", async (t: Test) => {
-    const typeErrorsSource = await readFile(
-        path.join(packageRoot, "tests", "fixture-suite", "src", "type-errors.ts"),
-        "utf8"
-    )
-    const typeErrorsText = removeExpectErrorLines(typeErrorsSource)
-    const mixinsText = await readFile(
-        path.join(packageRoot, "tests", "fixture-suite", "src", "mixins.ts"),
-        "utf8"
-    )
-    const fixture = await createTypeScriptFixture({
-        experimentalDecorators : false,
-        compilerOptions        : {
-            declaration : true
-        },
-        sourceFiles            : [
-            {
-                fileName : "type-errors.ts",
-                text     : typeErrorsText
-            },
-            {
-                fileName : "mixins.ts",
-                text     : mixinsText
-            }
-        ]
-    })
-
-    try {
-        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "type-errors.ts")
-        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
-            t,
-            await runTypeScriptServerRequest(
-                fixture.directory,
-                sourceFile,
-                typeErrorsText,
-                "semanticDiagnosticsSync",
-                { file : sourceFile }
-            )
-        )
-        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
-
-        assertDiagnosticParts(t, messages, requiredBaseDiagnosticParts)
-        assertDiagnosticParts(t, messages, linearizationDiagnosticParts)
-    } finally {
-        await fixture.dispose()
-    }
-})
-
-it("fixture type-errors keeps expect-error suppressions for both IDE diagnostics", async (t: Test) => {
-    const typeErrorsSource = await readFile(
-        path.join(packageRoot, "tests", "fixture-suite", "src", "type-errors.ts"),
-        "utf8"
-    )
-    const expectErrorLines = typeErrorsSource
-        .split("\n")
-        .filter((line) => line.includes("@ts-expect-error"))
-
-    t.equal(expectErrorLines.length, 2, "Fixture has one suppression per expected diagnostic")
-    t.true(expectErrorLines.some((line) => line.includes("RequiredMixin")), expectErrorLines.join("\n"))
-    t.true(expectErrorLines.some((line) => line.includes("BadLinearizationMixin")), expectErrorLines.join("\n"))
-})
-
 async function createEditorFixture(): Promise<{
     dispose : () => Promise<void>,
     sourceFile : string
@@ -920,16 +495,6 @@ async function createEditorFixture(): Promise<{
         dispose : fixture.dispose,
         sourceFile
     }
-}
-
-function requiredFixtureSourceFile(sourceFiles: Map<string, string>, fileName: string): string {
-    const sourceFile = sourceFiles.get(fileName)
-
-    if (sourceFile === undefined) {
-        throw new Error(`Missing fixture source file: ${fileName}`)
-    }
-
-    return sourceFile
 }
 
 async function assertDefinition(
@@ -1273,22 +838,6 @@ function memberUsagePosition(memberName: string): number {
     throw new Error(`Cannot find member usage: ${memberName}`)
 }
 
-function assertResponseBody<Body>(t: Test, response: TsServerResponse): Body {
-    t.true(response.success, response.message ?? `tsserver ${response.command ?? "request"} succeeds`)
-
-    if (response.body === undefined) {
-        throw new Error(`Missing tsserver response body: ${JSON.stringify(response)}`)
-    }
-
-    return response.body as Body
-}
-
-function assertDiagnosticParts(t: Test, messages: string, expectedParts: string[]): void {
-    for (const expectedPart of expectedParts) {
-        t.true(messages.includes(expectedPart), messages)
-    }
-}
-
 function assertRenameAllowed(
     t: Test,
     response: TsServerResponse,
@@ -1333,13 +882,6 @@ function applyRenameLocations(
 
 function sourceSlice(source: string, span: TextSpan): string {
     return source.slice(positionToIndex(source, span.start), positionToIndex(source, span.end))
-}
-
-function removeExpectErrorLines(source: string): string {
-    return source
-        .split("\n")
-        .filter((line) => !line.includes("@ts-expect-error"))
-        .join("\n")
 }
 
 function positionToIndex(source: string, position: TextPosition): number {

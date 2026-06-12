@@ -1,5 +1,6 @@
 import { fork } from "node:child_process"
 import path from "node:path"
+import type { Test } from "@bryntum/siesta/nodejs.js"
 
 export type TsServerMessage = {
     body? : unknown,
@@ -12,6 +13,22 @@ export type TsServerMessage = {
 }
 
 export type TsServerResponse = TsServerMessage
+
+export function assertResponseBody<Body>(t: Test, response: TsServerResponse): Body {
+    t.true(response.success, response.message ?? `tsserver ${response.command ?? "request"} succeeds`)
+
+    if (response.body === undefined) {
+        throw new Error(`Missing tsserver response body: ${JSON.stringify(response)}`)
+    }
+
+    return response.body as Body
+}
+
+export function assertDiagnosticParts(t: Test, messages: string, expectedParts: string[]): void {
+    for (const expectedPart of expectedParts) {
+        t.true(messages.includes(expectedPart), messages)
+    }
+}
 
 export async function runTypeScriptServerRequest(
     fixtureDirectory: string,

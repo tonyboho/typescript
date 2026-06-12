@@ -45,6 +45,16 @@ export type TypeScriptFixture = {
     dispose : () => Promise<void>
 }
 
+export function requiredFixtureSourceFile(sourceFiles: Map<string, string>, fileName: string): string {
+    const sourceFile = sourceFiles.get(fileName)
+
+    if (sourceFile === undefined) {
+        throw new Error(`Missing fixture source file: ${fileName}`)
+    }
+
+    return sourceFile
+}
+
 export async function createTypeScriptFixture(options: TypeScriptFixtureOptions): Promise<TypeScriptFixture> {
     const directory       = await mkdtemp(path.join(tmpdir(), "ts-mixin-class-"))
     const packageJsonFile = path.join(directory, "package.json")

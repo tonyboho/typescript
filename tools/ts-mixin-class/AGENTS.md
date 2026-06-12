@@ -96,12 +96,14 @@ Implementation notes:
   the transformer enforces this.
 - Tests: `tests/runtime-helper.t.ts` (C3 order, application cache, `instanceof`),
   `tests/compiler-host-source-view.t.ts` (compiler-host IDE/emit source text mode),
-  `tests/source-transform.t.ts` (AST/printed assertions + a full in-memory
-  typecheck of transformed output via `typecheckText` in `tests/util.ts`),
-  `tests/source-position-preservation.t.ts` (stable source positions outside
-  generated top-level declarations) and
-  `tests/tsserver-editor-features.t.ts` (definition/quickinfo/rename through tsserver),
-  `tests/fixture-build-and-runtime.t.ts` (real `tsc + ts-patch` standard/legacy decorator
-  builds plus runtime Siesta runs of `tests/fixture-suite`), and
-  `tests/declaration-fixture-build-and-runtime.t.ts` (workspace package boundary using
-  emitted declarations from `tests/fixture-suite`).
+  `tests/source-transform-mixins.t.ts` (mixin marker detection and mixin declaration
+  expansion), `tests/source-transform-consumers.t.ts` (consumer expansion and
+  in-memory typecheck via `typecheckText` in `tests/util.ts`),
+  `tests/source-transform-diagnostics.t.ts` (transform-time/type-level diagnostic
+  emit assertions), `tests/source-position-preservation.t.ts` (stable source positions
+  outside generated top-level declarations), `tests/tsserver-editor-features.t.ts`
+  (definition/quickinfo/rename through tsserver), `tests/tsserver-diagnostics.t.ts`
+  (semantic diagnostics through tsserver), `tests/fixture-build-and-runtime.t.ts`
+  (real `tsc + ts-patch` standard/legacy decorator builds plus runtime Siesta runs of
+  `tests/fixture-suite`), and `tests/declaration-fixture-build-and-runtime.t.ts`
+  (workspace package boundary using emitted declarations from `tests/fixture-suite`).
