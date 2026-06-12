@@ -21,8 +21,10 @@ import {
     importedConsumerText,
     importedMixinText,
     selfMixinPropertyArgs,
+    selfMixinStaticPropertyArgs,
     superMixinMethodArgs,
-    superMixinPropertyArgs
+    superMixinPropertyArgs,
+    usageArgs
 } from "./tsserver-editor-util.js"
 
 it("tsserver definition resolves plain and mixin members", async (t: Test) => {
@@ -31,9 +33,14 @@ it("tsserver definition resolves plain and mixin members", async (t: Test) => {
     try {
         await assertDefinition(t, sourceFile, "baseProperty", "baseProperty: number", "Plain base property")
         await assertDefinition(t, sourceFile, "baseMethod", "baseMethod(): number", "Plain base method")
+        await assertDefinition(t, sourceFile, "baseStaticProperty", "baseStaticProperty: number", "Plain base static property")
+        await assertDefinition(t, sourceFile, "baseStaticMethod", "baseStaticMethod(): number", "Plain base static method")
         await assertDefinition(t, sourceFile, "mixinProperty", "mixinProperty: string", "Mixin property")
         await assertDefinition(t, sourceFile, "mixinMethod", "mixinMethod(): string", "Mixin method")
+        await assertDefinition(t, sourceFile, "mixinStaticProperty", "mixinStaticProperty: string", "Mixin static property")
+        await assertDefinition(t, sourceFile, "mixinStaticMethod", "mixinStaticMethod(): string", "Mixin static method")
         await assertDefinition(t, sourceFile, "mixinProperty", "mixinProperty: string", "Mixin self property", selfMixinPropertyArgs(sourceFile))
+        await assertDefinition(t, sourceFile, "mixinStaticProperty", "mixinStaticProperty: string", "Mixin static self property", selfMixinStaticPropertyArgs(sourceFile))
         await assertDefinition(t, sourceFile, "mixinProperty", "mixinProperty: string", "Mixin super property", superMixinPropertyArgs(sourceFile))
         await assertDefinition(t, sourceFile, "mixinMethod", "mixinMethod(): string", "Mixin super method", superMixinMethodArgs(sourceFile))
         await assertDefinition(t, sourceFile, "mixinProperty", "mixinProperty: string", "Consumer super property", consumerSuperMixinPropertyArgs(sourceFile))
@@ -51,6 +58,11 @@ it("tsserver definitionAndBoundSpan resolves super mixin members", async (t: Tes
         await assertDefinitionAndBoundSpan(t, sourceFile, "mixinMethod", "mixinMethod(): string", "Mixin super method", superMixinMethodArgs(sourceFile))
         await assertDefinitionAndBoundSpan(t, sourceFile, "mixinProperty", "mixinProperty: string", "Consumer super property", consumerSuperMixinPropertyArgs(sourceFile))
         await assertDefinitionAndBoundSpan(t, sourceFile, "mixinMethod", "mixinMethod(): string", "Consumer super method", consumerSuperMixinMethodArgs(sourceFile))
+        await assertDefinitionAndBoundSpan(t, sourceFile, "baseStaticProperty", "baseStaticProperty: number", "Plain base static property", usageArgs(sourceFile, "baseStaticProperty"))
+        await assertDefinitionAndBoundSpan(t, sourceFile, "baseStaticMethod", "baseStaticMethod(): number", "Plain base static method", usageArgs(sourceFile, "baseStaticMethod"))
+        await assertDefinitionAndBoundSpan(t, sourceFile, "mixinStaticProperty", "mixinStaticProperty: string", "Mixin static self property", selfMixinStaticPropertyArgs(sourceFile))
+        await assertDefinitionAndBoundSpan(t, sourceFile, "mixinStaticProperty", "mixinStaticProperty: string", "Mixin static property", usageArgs(sourceFile, "mixinStaticProperty"))
+        await assertDefinitionAndBoundSpan(t, sourceFile, "mixinStaticMethod", "mixinStaticMethod(): string", "Mixin static method", usageArgs(sourceFile, "mixinStaticMethod"))
     } finally {
         await dispose()
     }

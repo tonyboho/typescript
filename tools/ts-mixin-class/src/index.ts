@@ -3080,9 +3080,28 @@ function consumerBaseClassHeritage(
 
     if (options.sourceView) {
         return factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-            cloneExpressionWithTypeArguments(
-                tsInstance,
-                consumerRuntimeBaseType(tsInstance, extendsType, implicitRequiredBase, emptyBaseName)
+            factory.createExpressionWithTypeArguments(
+                factory.createParenthesizedExpression(
+                    factory.createAsExpression(
+                        factory.createAsExpression(
+                            cloneNode(
+                                tsInstance,
+                                consumerRuntimeBaseType(tsInstance, extendsType, implicitRequiredBase, emptyBaseName)
+                                    .expression
+                            ),
+                            factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
+                        ),
+                        createSourceViewConsumerBaseCastType(
+                            tsInstance,
+                            options.packageName,
+                            extendsType,
+                            implicitRequiredBase,
+                            emptyBaseName,
+                            linearizedMixinRefs
+                        )
+                    )
+                ),
+                undefined
             )
         ])
     }
@@ -3757,6 +3776,30 @@ function createConsumerBaseCastType(
     return types.length === 1 ? types[0] : factory.createIntersectionTypeNode(types)
 }
 
+function createSourceViewConsumerBaseCastType(
+    tsInstance: TypeScript,
+    packageName: string,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined,
+    mixinRefs: ResolvedMixinRef[]
+): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    const types = [
+        createSourceViewConsumerBaseHeadType(tsInstance, packageName, extendsType, implicitRequiredBase, emptyBaseName),
+        ...mixinRefs
+            .filter((ref) => ref.localValueName !== undefined)
+            .map((ref) => {
+                return createHelperImportType(tsInstance, packageName, classStaticsName, [
+                    factory.createTypeQueryNode(factory.createIdentifier(ref.localValueName as string))
+                ])
+            })
+    ]
+
+    return types.length === 1 ? types[0] : factory.createIntersectionTypeNode(types)
+}
+
 function createUnsupportedBaseConsumerCastType(
     tsInstance: TypeScript,
     mixinRefs: ResolvedMixinRef[]
@@ -3799,6 +3842,49 @@ function createConsumerBaseHeadType(
             factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
         ])
     ])
+}
+
+function createSourceViewConsumerBaseHeadType(
+    tsInstance: TypeScript,
+    packageName: string,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined
+): ts.TypeNode {
+    const factory = tsInstance.factory
+    const baseType = extendsType ?? implicitRequiredBase
+
+    if (baseType === undefined) {
+        return factory.createTypeQueryNode(factory.createIdentifier(emptyBaseName as string))
+    }
+
+    if (baseType.typeArguments === undefined) {
+        return factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
+    }
+
+    return factory.createIntersectionTypeNode([
+        createHelperImportType(tsInstance, packageName, anyConstructorName, undefined),
+        createHelperImportType(tsInstance, packageName, classStaticsName, [
+            factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
+        ])
+    ])
+}
+
+function createHelperImportType(
+    tsInstance: TypeScript,
+    packageName: string,
+    helperName: string,
+    typeArguments: readonly ts.TypeNode[] | undefined
+): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    return factory.createImportTypeNode(
+        factory.createLiteralTypeNode(factory.createStringLiteral(packageName)),
+        undefined,
+        factory.createIdentifier(helperName),
+        typeArguments,
+        false
+    )
 }
 
 function isSupportedBaseExpression(tsInstance: TypeScript, expression: ts.Expression): boolean {

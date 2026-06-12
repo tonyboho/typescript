@@ -18,6 +18,7 @@ import {
     importedConsumerText,
     importedMixinText,
     selfMixinPropertyArgs,
+    selfMixinStaticPropertyArgs,
     superMixinMethodArgs,
     superMixinPropertyArgs
 } from "./tsserver-editor-util.js"
@@ -28,9 +29,14 @@ it("tsserver quickinfo reports plain and mixin members", async (t: Test) => {
     try {
         await assertQuickInfo(t, sourceFile, "baseProperty", [ "baseProperty: number", "PlainBase.baseProperty" ])
         await assertQuickInfo(t, sourceFile, "baseMethod", [ "baseMethod(): number", "PlainBase.baseMethod" ])
+        await assertQuickInfo(t, sourceFile, "baseStaticProperty", [ "baseStaticProperty: number" ])
+        await assertQuickInfo(t, sourceFile, "baseStaticMethod", [ "baseStaticMethod(): number" ])
         await assertQuickInfo(t, sourceFile, "mixinProperty", [ "(property)", "mixinProperty: string" ])
         await assertQuickInfo(t, sourceFile, "mixinMethod", [ "(method)", "mixinMethod(): string" ])
+        await assertQuickInfo(t, sourceFile, "mixinStaticProperty", [ "(property)", "mixinStaticProperty: string" ])
+        await assertQuickInfo(t, sourceFile, "mixinStaticMethod", [ "(method)", "mixinStaticMethod(): string" ])
         await assertQuickInfo(t, sourceFile, "mixinProperty", [ "(property)", "mixinProperty: string" ], selfMixinPropertyArgs(sourceFile))
+        await assertQuickInfo(t, sourceFile, "mixinStaticProperty", [ "(property)", "mixinStaticProperty: string" ], selfMixinStaticPropertyArgs(sourceFile))
         await assertQuickInfo(t, sourceFile, "mixinProperty", [ "(property)", "mixinProperty: string" ], superMixinPropertyArgs(sourceFile))
         await assertQuickInfo(t, sourceFile, "mixinMethod", [ "(method)", "mixinMethod(): string" ], superMixinMethodArgs(sourceFile))
         await assertQuickInfo(t, sourceFile, "mixinProperty", [ "(property)", "mixinProperty: string" ], consumerSuperMixinPropertyArgs(sourceFile))

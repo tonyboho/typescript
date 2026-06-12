@@ -9,6 +9,7 @@ import {
     request,
     selfMixinMethodArgs,
     selfMixinPropertyArgs,
+    selfMixinStaticPropertyArgs,
     sourceSlice,
     sourceText,
     superMixinMethodArgs,
@@ -48,6 +49,30 @@ it("tsserver references resolve mixin properties from self, external and super u
     }
 })
 
+it("tsserver references resolve plain class members from instance and static usages", async (t: Test) => {
+    const { sourceFile, dispose } = await createEditorFixture()
+
+    try {
+        for (const scenario of [
+            { args : usageArgs(sourceFile, "baseProperty"), count : 3, memberName : "baseProperty", description : "plain base property usage" },
+            { args : usageArgs(sourceFile, "baseMethod"), count : 2, memberName : "baseMethod", description : "plain base method usage" },
+            { args : usageArgs(sourceFile, "baseStaticProperty"), count : 3, memberName : "baseStaticProperty", description : "plain base static property usage" },
+            { args : usageArgs(sourceFile, "baseStaticMethod"), count : 2, memberName : "baseStaticMethod", description : "plain base static method usage" }
+        ]) {
+            const body = assertResponseBody<ReferencesBody>(
+                t,
+                await request(sourceFile, "references", scenario.args)
+            )
+            const refs = body.refs ?? []
+
+            t.expect(uniqueLocalSpanTexts(sourceFile, refs)).toEqual([ scenario.memberName ])
+            t.equal(countLocalSpans(sourceFile, refs, scenario.memberName), scenario.count, `References include declaration and all source usages from ${scenario.description}`)
+        }
+    } finally {
+        await dispose()
+    }
+})
+
 it("tsserver references resolve mixin methods from self, external and super usages", async (t: Test) => {
     const { sourceFile, dispose } = await createEditorFixture()
 
@@ -66,6 +91,29 @@ it("tsserver references resolve mixin methods from self, external and super usag
 
             t.expect(uniqueLocalSpanTexts(sourceFile, refs)).toEqual([ "mixinMethod" ])
             t.equal(countLocalSpans(sourceFile, refs, "mixinMethod"), 5, `References include declaration and all source usages from ${scenario.description}`)
+        }
+    } finally {
+        await dispose()
+    }
+})
+
+it("tsserver references resolve mixin static members from self and external usages", async (t: Test) => {
+    const { sourceFile, dispose } = await createEditorFixture()
+
+    try {
+        for (const scenario of [
+            { args : selfMixinStaticPropertyArgs(sourceFile), count : 3, memberName : "mixinStaticProperty", description : "self mixin static property usage" },
+            { args : usageArgs(sourceFile, "mixinStaticProperty"), count : 3, memberName : "mixinStaticProperty", description : "external mixin static property usage" },
+            { args : usageArgs(sourceFile, "mixinStaticMethod"), count : 2, memberName : "mixinStaticMethod", description : "external mixin static method usage" }
+        ]) {
+            const body = assertResponseBody<ReferencesBody>(
+                t,
+                await request(sourceFile, "references", scenario.args)
+            )
+            const refs = body.refs ?? []
+
+            t.expect(uniqueLocalSpanTexts(sourceFile, refs)).toEqual([ scenario.memberName ])
+            t.equal(countLocalSpans(sourceFile, refs, scenario.memberName), scenario.count, `References include declaration and all source usages from ${scenario.description}`)
         }
     } finally {
         await dispose()

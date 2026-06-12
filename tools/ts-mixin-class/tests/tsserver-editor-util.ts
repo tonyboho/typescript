@@ -44,6 +44,12 @@ export const sourceText = trimIndent(`
 
     @mixin()
     class SourceMixin {
+        static mixinStaticProperty: string = "mixin-static"
+
+        static mixinStaticMethod(): string {
+            return this.mixinStaticProperty
+        }
+
         mixinProperty: string = "mixin"
 
         mixinMethod(): string {
@@ -67,6 +73,12 @@ export const sourceText = trimIndent(`
     }
 
     class PlainBase {
+        static baseStaticProperty: number = 7
+
+        static baseStaticMethod(): number {
+            return this.baseStaticProperty
+        }
+
         baseProperty: number = 42
 
         baseMethod(): number {
@@ -94,6 +106,10 @@ export const sourceText = trimIndent(`
     plain.baseMethod()
     mixed.mixinProperty
     mixed.mixinMethod()
+    PlainConsumer.baseStaticProperty
+    PlainConsumer.baseStaticMethod()
+    MixinConsumer.mixinStaticProperty
+    MixinConsumer.mixinStaticMethod()
 `)
 
 export const importedMixinText = trimIndent(`
@@ -431,6 +447,10 @@ export function selfMixinMethodArgs(sourceFile: string): { file: string, line: n
     return accessArgs(sourceFile, "this.mixinMethod", "this.")
 }
 
+export function selfMixinStaticPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    return accessArgs(sourceFile, "this.mixinStaticProperty", "this.", "static mixinStaticMethod(): string")
+}
+
 export function superMixinMethodArgs(sourceFile: string): { file: string, line: number, offset: number } {
     return accessArgs(sourceFile, "super.mixinMethod", "super.")
 }
@@ -518,7 +538,7 @@ function sourceAccessArgs(
 }
 
 function memberUsagePosition(memberName: string): number {
-    const receivers = [ "plain", "mixed" ]
+    const receivers = [ "plain", "mixed", "PlainConsumer", "MixinConsumer" ]
 
     for (const receiver of receivers) {
         const accessText = `${receiver}.${memberName}`
