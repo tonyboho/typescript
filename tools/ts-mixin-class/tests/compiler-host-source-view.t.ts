@@ -4,7 +4,7 @@ import ts from "typescript"
 
 import { createMixinClassCompilerHost } from "../src/index.js"
 import type { MixinClassTransformerConfig } from "../src/index.js"
-import { findFirst, trimIndent } from "./util.js"
+import { findClass, findVariable, trimIndent } from "./util.js"
 
 const sourceFileName = "source.ts"
 
@@ -133,22 +133,4 @@ function getTransformedSourceFile(
     }
 
     return sourceFile
-}
-
-function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration | undefined {
-    return findFirst(sourceFile, (node): node is ts.ClassDeclaration => {
-        return ts.isClassDeclaration(node) && node.name?.text === name
-    })
-}
-
-function findInterface(sourceFile: ts.SourceFile, name: string): ts.InterfaceDeclaration | undefined {
-    return findFirst(sourceFile, (node): node is ts.InterfaceDeclaration => {
-        return ts.isInterfaceDeclaration(node) && node.name.text === name
-    })
-}
-
-function findVariable(sourceFile: ts.SourceFile, name: string): ts.VariableDeclaration | undefined {
-    return findFirst(sourceFile, (node): node is ts.VariableDeclaration => {
-        return ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name
-    })
 }

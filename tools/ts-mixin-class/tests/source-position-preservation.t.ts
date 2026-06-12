@@ -3,7 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { transformSourceFile } from "../src/index.js"
-import { trimIndent } from "./util.js"
+import { createSourceFile, trimIndent } from "./util.js"
 
 type SourceSpan = {
     pos : number,
@@ -80,16 +80,6 @@ it("preserves source positions outside generated mixin declarations", async (t: 
     t.expect(unexpectedTransformed).toEqual([])
     t.expect(transformedStable.syntheticOutsideGeneratedNodes).toEqual([])
 })
-
-function createSourceFile(fileName: string, text: string): ts.SourceFile {
-    return ts.createSourceFile(
-        fileName,
-        text,
-        ts.ScriptTarget.ES2022,
-        true,
-        ts.ScriptKind.TS
-    )
-}
 
 function topLevelStatementSignatures(sourceFile: ts.SourceFile): string[] {
     return sourceFile.statements.map((statement) => {

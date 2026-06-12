@@ -3,7 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 import ts from "typescript"
 
 import { printSourceFile, transformSourceFile } from "../src/index.js"
-import { createSourceFile, findFirst, trimIndent, typecheckText } from "./util.js"
+import { createSourceFile, findClass, findInterface, findVariable, trimIndent, typecheckText } from "./util.js"
 
 it("keeps unrelated source files untouched", async (t: Test) => {
     const sourceFile      = createSourceFile(`
@@ -47,7 +47,7 @@ it("expands an imported class-level @mixin() class into interface + factory + co
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    const interfaceDeclaration = findInterface(transformedFile, "SourceClass")
+    const interfaceDeclaration = requiredInterface(transformedFile, "SourceClass")
     const interfaceMembers     = interfaceDeclaration.members.map((member) => memberName(member))
 
     t.equal(findClass(transformedFile, "SourceClass"), undefined, "Original class declaration is replaced")
@@ -743,28 +743,14 @@ it("reports unsupported mixin consumer base expressions with a custom diagnostic
     t.true(messages.includes("assign the expression to a named class or const"), messages)
 })
 
-function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration | undefined {
-    return findFirst(sourceFile, (node): node is ts.ClassDeclaration => {
-        return ts.isClassDeclaration(node) && node.name?.text === name
-    })
-}
-
-function findInterface(sourceFile: ts.SourceFile, name: string): ts.InterfaceDeclaration {
-    const declaration = findFirst(sourceFile, (node): node is ts.InterfaceDeclaration => {
-        return ts.isInterfaceDeclaration(node) && node.name.text === name
-    })
+function requiredInterface(sourceFile: ts.SourceFile, name: string): ts.InterfaceDeclaration {
+    const declaration = findInterface(sourceFile, name)
 
     if (declaration === undefined) {
         throw new Error(`Cannot find interface ${name}`)
     }
 
     return declaration
-}
-
-function findVariable(sourceFile: ts.SourceFile, name: string): ts.VariableDeclaration | undefined {
-    return findFirst(sourceFile, (node): node is ts.VariableDeclaration => {
-        return ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name
-    })
 }
 
 function memberName(member: ts.TypeElement): string {

@@ -204,9 +204,14 @@ export function commandOutput(result: CommandResult): string {
     ].join("\n")
 }
 
-export function createSourceFile(text: string): ts.SourceFile {
+export function createSourceFile(text: string): ts.SourceFile
+export function createSourceFile(fileName: string, text: string): ts.SourceFile
+export function createSourceFile(fileNameOrText: string, maybeText?: string): ts.SourceFile {
+    const fileName = maybeText === undefined ? "source.ts" : fileNameOrText
+    const text     = maybeText === undefined ? fileNameOrText : maybeText
+
     return ts.createSourceFile(
-        "source.ts",
+        fileName,
         trimIndent(text),
         ts.ScriptTarget.Latest,
         true,
@@ -246,6 +251,24 @@ export function findFirst<Node extends ts.Node>(
     visit(root)
 
     return found
+}
+
+export function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration | undefined {
+    return findFirst(sourceFile, (node): node is ts.ClassDeclaration => {
+        return ts.isClassDeclaration(node) && node.name?.text === name
+    })
+}
+
+export function findInterface(sourceFile: ts.SourceFile, name: string): ts.InterfaceDeclaration | undefined {
+    return findFirst(sourceFile, (node): node is ts.InterfaceDeclaration => {
+        return ts.isInterfaceDeclaration(node) && node.name.text === name
+    })
+}
+
+export function findVariable(sourceFile: ts.SourceFile, name: string): ts.VariableDeclaration | undefined {
+    return findFirst(sourceFile, (node): node is ts.VariableDeclaration => {
+        return ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name
+    })
 }
 
 // Полноценный тайпчек текста как модуля, импортирующего "ts-mixin-class":
