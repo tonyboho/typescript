@@ -1,7 +1,7 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { mixin } from "ts-mixin-class"
+import { base, factory, mixin, requirements } from "ts-mixin-class"
 
 class RequiredBase<T> {
     requiredValue: T
@@ -75,6 +75,9 @@ it("uses a local required-base mixin", async (t: Test) => {
     t.equal(canonicalRequired.mixinMethod(), "canonical/mixin", "Canonical required-base mixin methods work")
     t.true(canonicalRequired instanceof RequiredMixin, "Canonical required-base mixin matches itself")
     t.true(canonicalRequired instanceof RequiredBase, "Canonical required-base mixin inherits from the required base")
+    t.is(typeof RequiredMixin[factory], "function", "Required-base mixin factory is visible through the exported metadata symbol")
+    t.expect(RequiredMixin[requirements]).toEqual([])
+    t.equal(RequiredMixin[base], RequiredBase, "Required-base mixin reports its required base through the exported metadata symbol")
     t.true(consumer instanceof RequiredMixin, "Consumer matches the required-base mixin")
     t.true(consumer instanceof RealBase, "Consumer remains an instance of the concrete base")
     t.true(defaultConsumer instanceof RequiredMixin, "No-base consumer matches the required-base mixin")

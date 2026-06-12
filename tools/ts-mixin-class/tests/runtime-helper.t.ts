@@ -1,7 +1,15 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
-import { defineMixinClass, mixinChain, type AnyConstructor, type MixinFactory } from "../src/index.js"
+import {
+    base,
+    defineMixinClass,
+    factory,
+    mixinChain,
+    requirements,
+    type AnyConstructor,
+    type MixinFactory
+} from "../src/index.js"
 
 type NamedInstance = {
     who(): string
@@ -35,6 +43,24 @@ it("caches mixin applications for the same base", async (t: Test) => {
     const B = createNamedMixin("B", [ A ])
 
     t.equal(mixinChain(Base, B), mixinChain(Base, B), "Repeated chain creation returns the cached class")
+})
+
+it("exposes runtime metadata through exported symbols", async (t: Test) => {
+    class RequiredBase {
+    }
+
+    const A = createNamedMixin("A")
+    const B = createNamedMixin("B", [ A ])
+    const RequiredMixin = defineMixinClass("RequiredMixin", ((base: AnyConstructor<RequiredBase>) => {
+        return class extends base {}
+    }) as unknown as MixinFactory, [], RequiredBase)
+
+    t.is(typeof A[factory], "function", "Mixin factory is available through the exported symbol")
+    t.expect(B[requirements]).toEqual([ A ])
+    t.equal(RequiredMixin[base], RequiredBase, "Required base is available through the exported symbol")
+    t.false("$mixin" in A, "String metadata property is not exposed on the runtime class")
+    t.false("$requirements" in A, "String requirements property is not exposed on the runtime class")
+    t.false("$requiredBase" in RequiredMixin, "String required-base property is not exposed on the runtime class")
 })
 
 it("reuses canonical requirement classes while defining sibling mixins", async (t: Test) => {

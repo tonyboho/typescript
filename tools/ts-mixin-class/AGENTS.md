@@ -45,6 +45,11 @@ Implemented snapshot:
 - Generated top-level helper names use a double-underscore prefix, for example
   `__Source$mixin`, `__Consumer$base`, `__Consumer$empty`, and
   `__Source$mixinValue`, to reduce accidental collisions with user declarations.
+- Runtime mixin metadata is exposed through exported unique symbols
+  (`factory`, `requirements`, `base`) instead of string properties, so class values
+  stay introspectable without showing `$mixin`-style fields as normal public API
+  members. Fixture tests exercise user-facing introspection for factory, requirements,
+  and required-base metadata.
 - Declaration package-boundary coverage includes named and default-exported mixins.
   Tests assert that required generated factories are exported in `.d.ts`, default mixin
   declarations preserve `export default`, and downstream consumers can import default

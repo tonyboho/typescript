@@ -111,6 +111,8 @@ const defineMixinClassName = "defineMixinClass"
 const mixinChainName = "mixinChain"
 const mixinFactoryName = "MixinFactory"
 const runtimeMixinClassName = "RuntimeMixinClass"
+const metadataBaseImportName = "base"
+const metadataBaseLocalName = "__mixinBase"
 const mixinFactorySuffix = "$mixin"
 const consumerBaseSuffix = "$base"
 const consumerEmptyBaseSuffix = "$empty"
@@ -129,10 +131,14 @@ export type ClassStatics<C> = Omit<C, "prototype">
 
 export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
 
+export const factory: unique symbol = Symbol.for("ts-mixin-class.factory") as any
+export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements") as any
+export const base: unique symbol = Symbol.for("ts-mixin-class.base") as any
+
 export type RuntimeMixinClass<RequiredBase extends object = object> = {
-    $mixin: MixinFactory,
-    $requirements: readonly RuntimeMixinClass[],
-    $requiredBase: AnyConstructor<RequiredBase>
+    readonly [factory]: MixinFactory,
+    readonly [requirements]: readonly RuntimeMixinClass[],
+    readonly [base]: AnyConstructor<RequiredBase>
 }
 
 type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass
@@ -154,29 +160,29 @@ export function mixin(..._args: unknown[]): (..._decoratorArgs: unknown[]) => vo
 
 export function defineMixinClass(
     name: string,
-    factory: MixinFactory,
-    requirements: readonly RuntimeMixinClassValue[] = [],
+    mixinFactory: MixinFactory,
+    mixinRequirements: readonly RuntimeMixinClassValue[] = [],
     requiredBase: AnyConstructor<any> = Object
 ): RuntimeMixinClassValue {
-    const requirementList = [ ...requirements ]
+    const requirementList = [ ...mixinRequirements ]
     const requirementLinearization = linearizeRuntimeRequirements(requirementList)
-    const base = applyRuntimeMixins(requiredBase, requirementLinearization.slice().reverse())
-    const mixinClass = factory(base) as RuntimeMixinClassValue
+    const canonicalBase = applyRuntimeMixins(requiredBase, requirementLinearization.slice().reverse())
+    const mixinClass = mixinFactory(canonicalBase) as RuntimeMixinClassValue
     const applications = new WeakMap<AnyConstructor<any>, AnyConstructor<any>>()
 
-    applications.set(base, mixinClass)
+    applications.set(canonicalBase, mixinClass)
 
     runtimeMixinMetadata.set(mixinClass, {
-        factory,
+        factory        : mixinFactory,
         requirements   : requirementList,
         requiredBase,
         linearization  : [ mixinClass, ...requirementLinearization ],
         applications
     })
 
-    Object.defineProperty(mixinClass, "$mixin", { value : factory })
-    Object.defineProperty(mixinClass, "$requirements", { value : requirementList })
-    Object.defineProperty(mixinClass, "$requiredBase", { value : requiredBase })
+    Object.defineProperty(mixinClass, factory, { value : mixinFactory })
+    Object.defineProperty(mixinClass, requirements, { value : requirementList })
+    Object.defineProperty(mixinClass, base, { value : requiredBase })
     Object.defineProperty(mixinClass, Symbol.hasInstance, {
         value(instance: unknown) {
             return hasRuntimeMixinInstance(instance, mixinClass)
@@ -2592,7 +2598,7 @@ function runtimeMixinClassRequiredBaseInstanceType(
     return factory.createTypeReferenceNode("InstanceType", [
         factory.createIndexedAccessTypeNode(
             factory.createTypeQueryNode(factory.createIdentifier(valueName)),
-            factory.createLiteralTypeNode(factory.createStringLiteral("$requiredBase"))
+            factory.createTypeQueryNode(factory.createIdentifier(metadataBaseLocalName))
         )
     ])
 }
@@ -3044,6 +3050,11 @@ function createHelperTypeImport(tsInstance: TypeScript, options: TransformOption
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(anyConstructorName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(classStaticsName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(mixinFactoryName)),
+                factory.createImportSpecifier(
+                    true,
+                    factory.createIdentifier(metadataBaseImportName),
+                    factory.createIdentifier(metadataBaseLocalName)
+                ),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(runtimeMixinClassName))
             ])
         ),

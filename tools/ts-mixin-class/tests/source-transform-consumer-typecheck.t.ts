@@ -7,7 +7,7 @@ import { createSourceFile, typecheckText } from "./util.js"
 
 it("transformed mixin output typechecks, including generics, statics and super calls", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
-        import { mixin } from "ts-mixin-class"
+        import { base, factory, mixin, requirements } from "ts-mixin-class"
 
         @mixin()
         export class SourceClass1<T> {
@@ -36,19 +36,31 @@ it("transformed mixin output typechecks, including generics, statics and super c
         const v1: number = direct.passThrough1(3)
         const v2: number = SourceClass1.staticHelper(2)
         const v3: SourceClass1<number> = direct.makeAnother()
+        const v4 = SourceClass1[factory]
+        const v5 = SourceClass1[requirements]
+        const v6 = SourceClass1[base]
 
         // @ts-expect-error дженерик T = number, строка не подходит
         const e1: number = direct.passThrough1("x")
 
+        // @ts-expect-error runtime metadata is exposed through symbols, not string API members.
+        const e2 = SourceClass1.$mixin
+
+        // @ts-expect-error runtime metadata is exposed through symbols, not string API members.
+        const e3 = SourceClass1.$requirements
+
+        // @ts-expect-error runtime metadata is exposed through symbols, not string API members.
+        const e4 = SourceClass1.$requiredBase
+
         const child = new ChildMixin<boolean>()
 
-        const v4: string = child.childMethod(true)
-        const v5: boolean = child.passThrough1(false)
+        const v7: string = child.childMethod(true)
+        const v8: boolean = child.passThrough1(false)
 
         // @ts-expect-error childMethod принимает T = boolean
-        const e2: string = child.childMethod("x")
+        const e5: string = child.childMethod("x")
 
-        void [v1, v2, v3, v4, v5, e1, e2]
+        void [v1, v2, v3, v4, v5, v6, v7, v8, e1, e2, e3, e4, e5]
     `))
 
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
