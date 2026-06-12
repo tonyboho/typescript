@@ -42,6 +42,10 @@ Implemented snapshot:
 - Generated top-level helper names use a double-underscore prefix, for example
   `__Source$mixin`, `__Consumer$base`, `__Consumer$empty`, and
   `__Source$mixinValue`, to reduce accidental collisions with user declarations.
+- Declaration package-boundary coverage includes named and default-exported mixins.
+  Tests assert that required generated factories are exported in `.d.ts`, default mixin
+  declarations preserve `export default`, and downstream consumers can import default
+  mixins through package exports.
 - Consumer constructor arguments are intentionally permissive (`AnyConstructor`) even for
   generic bases. Instance members, `super`, runtime inheritance, and statics are typed;
   construction will later be modeled through an explicit static factory/new protocol
@@ -49,9 +53,7 @@ Implemented snapshot:
 
 Current plan:
 
-- Harden public declaration emit for package-quality output: exported helper/intermediate
-  declarations, stable public names, default-exported mixin declaration shape, and
-  README/API documentation.
+- Harden public declaration emit for package-quality output: README/API documentation.
 - Continue IDE dogfooding and add regression tests for any editor operation that still
   behaves differently from plain TypeScript. Watch overlapping rename edits, SourceFile
   caching/reuse (`hasDifferentAstShape`), and features that distinguish interface/type/

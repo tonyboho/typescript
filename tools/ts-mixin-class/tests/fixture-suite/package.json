@@ -6,6 +6,10 @@
         "./mixins": {
             "types": "./dist/standard/mixins.d.ts",
             "default": "./dist/standard/mixins.js"
+        },
+        "./default-mixin": {
+            "types": "./dist/standard/default-mixin.d.ts",
+            "default": "./dist/standard/default-mixin.js"
         }
     },
     "scripts": {

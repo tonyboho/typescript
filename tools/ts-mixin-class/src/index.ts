@@ -779,19 +779,25 @@ function collectDeclarationFileMixinCandidates(
 ): Candidate[] {
     const candidates: Candidate[] = []
     const interfaces = new Map<string, ts.InterfaceDeclaration>()
+    const defaultExportNames = new Set<string>()
 
     for (const statement of sourceFile.statements) {
         if (tsInstance.isInterfaceDeclaration(statement)) {
             interfaces.set(statement.name.text, statement)
+            continue
+        }
+
+        if (tsInstance.isExportAssignment(statement) && tsInstance.isIdentifier(statement.expression)) {
+            defaultExportNames.add(statement.expression.text)
         }
     }
 
     for (const statement of sourceFile.statements) {
-        if (!tsInstance.isVariableStatement(statement) ||
-            !hasModifier(tsInstance, statement, tsInstance.SyntaxKind.ExportKeyword)
-        ) {
+        if (!tsInstance.isVariableStatement(statement)) {
             continue
         }
+
+        const exportedStatement = hasModifier(tsInstance, statement, tsInstance.SyntaxKind.ExportKeyword)
 
         for (const declaration of statement.declarationList.declarations) {
             if (!tsInstance.isIdentifier(declaration.name) ||
@@ -801,13 +807,19 @@ function collectDeclarationFileMixinCandidates(
                 continue
             }
 
+            const defaultExport = defaultExportNames.has(declaration.name.text)
+
+            if (!exportedStatement && !defaultExport) {
+                continue
+            }
+
             candidates.push({
                 sourceFile,
                 name                 : declaration.name.text,
                 dependencyNames      : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text)),
                 requiredBaseName     : undefined,
                 declarationHeritage  : true,
-                defaultExport        : false
+                defaultExport
             })
         }
     }
