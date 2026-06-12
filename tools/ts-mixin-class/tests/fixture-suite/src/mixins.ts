@@ -1,5 +1,9 @@
 import { mixin } from "ts-mixin-class"
 
+export interface PlainContract {
+    contractMethod(): string
+}
+
 @mixin()
 export class SourceClass1<A1> {
     value1: string = "value1"
@@ -31,6 +35,15 @@ export class SourceClass2<A2> {
 
     static staticMethod2(): string {
         return "staticMethod2"
+    }
+}
+
+@mixin()
+export class ContractMixin implements PlainContract {
+    contractValue: string = "contract"
+
+    contractMethod(): string {
+        return this.contractValue
     }
 }
 

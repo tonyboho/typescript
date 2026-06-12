@@ -179,6 +179,32 @@ it("expands a dependent mixin with a typed base and a dependency chain", async (
         "Generated interface extends the dependency")
 })
 
+it("keeps non-mixin implements entries on a mixin as type-only contracts", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        interface PlainContract {
+            contractMethod (): string
+        }
+
+        @mixin()
+        class SourceMixin implements PlainContract {
+            contractMethod (): string {
+                return "contract"
+            }
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("interface SourceMixin extends PlainContract"),
+        "Generated mixin interface keeps the plain TypeScript contract")
+    t.true(printed.includes("defineMixinClass(\"SourceMixin\", __SourceMixin$mixin as unknown as MixinFactory, [])"),
+        "Plain contract is not registered as a runtime mixin dependency")
+    t.false(printed.includes("mixinChain(PlainContract"),
+        "Plain contract is not used in the runtime chain")
+    t.expect(typecheckText(printed)).toEqual([])
+})
+
 it("expands a mixin required base declared with extends", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { mixin } from "ts-mixin-class"

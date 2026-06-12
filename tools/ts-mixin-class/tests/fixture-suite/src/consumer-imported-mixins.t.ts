@@ -1,6 +1,6 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
-import { RequiredBase, RequiredMixin, SourceClass1, SourceClass2 } from "./mixins.js"
+import { ContractMixin, RequiredBase, RequiredMixin, SourceClass1, SourceClass2, type PlainContract } from "./mixins.js"
 
 
 class Base<T> {
@@ -46,13 +46,19 @@ class RequiredConsumer extends RequiredConsumerBase implements RequiredMixin {
     }
 }
 
+class ContractConsumer implements ContractMixin {
+}
+
 
 it("uses imported mixins with a generic consumer base", async (t: Test) => {
     const instance = new Consumer(42)
     const required = new RequiredConsumer()
+    const contract = new ContractConsumer()
     const canonical1 = new SourceClass1<number>()
     const canonical2 = new SourceClass2<boolean>()
+    const canonicalContract = new ContractMixin()
     const canonicalRequired = new RequiredMixin()
+    const typedContract: PlainContract = contract
 
     t.equal(instance.value1, "value1", "Class decorated with @mixin() compiles and runs")
     t.equal(instance.value2, "value2", "Class decorated with @mixin() compiles and runs")
@@ -78,6 +84,12 @@ it("uses imported mixins with a generic consumer base", async (t: Test) => {
     t.equal(RequiredConsumer.staticRequiredMixin(), "staticRequiredMixin", "Imported required-base consumer keeps mixin statics")
     t.true(required instanceof RequiredMixin, "Imported required-base consumer matches the mixin")
     t.true(required instanceof RequiredBase, "Imported required-base consumer keeps the required base")
+
+    t.equal(contract.contractMethod(), "contract", "Consumer gets behavior from a mixin with a plain implements contract")
+    t.equal(typedContract.contractMethod(), "contract", "Mixin plain implements contract is preserved on the consumer type")
+    t.true(contract instanceof ContractMixin, "Consumer matches the mixin with a plain implements contract")
+    t.equal(canonicalContract.contractMethod(), "contract", "Canonical mixin with a plain implements contract can be instantiated")
+    t.true(canonicalContract instanceof ContractMixin, "Canonical mixin with a plain implements contract matches itself")
 
     t.equal(canonical1.passThrough1(42), 42, "Imported canonical mixin class can be instantiated")
     t.equal(canonical1.method1(), "value1", "Imported canonical mixin class methods work")
