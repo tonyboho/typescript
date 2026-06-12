@@ -588,38 +588,73 @@ it("transformed consumer output typechecks end to end", async (t: Test) => {
 })
 
 it("reports unsupported mixin class declarations", async (t: Test) => {
-    t.throwsOk(() => {
-        transformSourceFile(ts, createSourceFile(`
-            import { mixin } from "ts-mixin-class"
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
 
-            @mixin()
-            class SourceClass {
-                constructor () {}
+        @mixin()
+        abstract class AbstractMixin {
+        }
+
+        @mixin()
+        class ConstructorMixin {
+            constructor () {}
+        }
+
+        @mixin()
+        class PrivateMixin {
+            private value: string = "x"
+        }
+
+        @mixin()
+        class HashPrivateMixin {
+            #value: string = "x"
+        }
+
+        @mixin()
+        class AbstractMemberMixin {
+            abstract value: string
+        }
+
+        @mixin()
+        class MissingPropertyTypeMixin {
+            value = "x"
+        }
+
+        @mixin()
+        class MissingMethodReturnTypeMixin {
+            method () {
+                return "x"
             }
-        `))
-    }, "cannot declare a constructor", "constructor on a mixin class is rejected")
+        }
 
-    t.throwsOk(() => {
-        transformSourceFile(ts, createSourceFile(`
-            import { mixin } from "ts-mixin-class"
-
-            @mixin()
-            class SourceClass {
-                private value: string = "x"
+        @mixin()
+        class MissingParameterTypeMixin {
+            method (value): string {
+                return String(value)
             }
-        `))
-    }, "cannot be `private` or `protected`", "private members are rejected")
+        }
 
-    t.throwsOk(() => {
-        transformSourceFile(ts, createSourceFile(`
-            import { mixin } from "ts-mixin-class"
-
-            @mixin()
-            class SourceClass {
-                value = "x"
+        @mixin()
+        class MissingAccessorTypeMixin {
+            get value () {
+                return "x"
             }
-        `))
-    }, "explicit type annotation", "property without a type annotation is rejected")
+        }
+    `))
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.true(messages.includes("Invalid mixin class declaration"), messages)
+    t.true(messages.includes("Mixin class AbstractMixin cannot be abstract"), messages)
+    t.true(messages.includes("Mixin class ConstructorMixin cannot declare a constructor"), messages)
+    t.true(messages.includes("Mixin class PrivateMixin member value cannot be private or protected"), messages)
+    t.true(messages.includes("Mixin class HashPrivateMixin member #value cannot use ECMAScript private names"), messages)
+    t.true(messages.includes("Mixin class AbstractMemberMixin member value cannot be abstract"), messages)
+    t.true(messages.includes("Mixin class MissingPropertyTypeMixin property value must have an explicit type annotation"), messages)
+    t.true(messages.includes("Mixin class MissingMethodReturnTypeMixin method method must have an explicit return type annotation"), messages)
+    t.true(messages.includes("Mixin class MissingParameterTypeMixin method parameter value must have an explicit type annotation"), messages)
+    t.true(messages.includes("Mixin class MissingAccessorTypeMixin accessor value must have an explicit type annotation"), messages)
 })
 
 function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration | undefined {

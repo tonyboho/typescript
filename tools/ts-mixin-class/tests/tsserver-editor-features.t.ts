@@ -65,6 +65,16 @@ const linearizationDiagnosticParts = [
     "LinearizationB -> LinearizationA"
 ]
 
+const invalidMixinDiagnosticParts = [
+    "Invalid mixin class declaration",
+    "Mixin class ConstructorMixin cannot declare a constructor",
+    "Mixin class PrivateMixin member value cannot be private or protected",
+    "Mixin class MissingPropertyTypeMixin property value must have an explicit type annotation",
+    "Mixin class MissingMethodReturnTypeMixin method method must have an explicit return type annotation",
+    "Mixin class MissingParameterTypeMixin method parameter value must have an explicit type annotation",
+    "Mixin class MissingAccessorTypeMixin accessor value must have an explicit type annotation"
+]
+
 const sourceText = trimIndent(`
     import { mixin } from "ts-mixin-class"
 
@@ -262,6 +272,50 @@ const diagnosticText = trimIndent(`
     }
 
     class BadLinearizationConsumer implements BadLinearizationMixin {
+    }
+`)
+
+const invalidMixinDiagnosticText = trimIndent(`
+    import { mixin } from "ts-mixin-class"
+
+    @mixin()
+    abstract class AbstractMixin {
+    }
+
+    @mixin()
+    class ConstructorMixin {
+        constructor() {}
+    }
+
+    @mixin()
+    class PrivateMixin {
+        private value: string = "x"
+    }
+
+    @mixin()
+    class MissingPropertyTypeMixin {
+        value = "x"
+    }
+
+    @mixin()
+    class MissingMethodReturnTypeMixin {
+        method() {
+            return "x"
+        }
+    }
+
+    @mixin()
+    class MissingParameterTypeMixin {
+        method(value): string {
+            return String(value)
+        }
+    }
+
+    @mixin()
+    class MissingAccessorTypeMixin {
+        get value() {
+            return "x"
+        }
     }
 `)
 
@@ -632,6 +686,40 @@ it("tsserver semantic diagnostics report imported required-base mixin errors", a
         const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
 
         assertDiagnosticParts(t, messages, requiredBaseDiagnosticParts)
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+it("tsserver semantic diagnostics report invalid mixin declarations with custom messages", async (t: Test) => {
+    const fixture = await createTypeScriptFixture({
+        experimentalDecorators : false,
+        compilerOptions        : {
+            declaration : true
+        },
+        sourceFiles            : [
+            {
+                fileName : "source.ts",
+                text     : invalidMixinDiagnosticText
+            }
+        ]
+    })
+
+    try {
+        const sourceFile = requiredFixtureSourceFile(fixture.sourceFiles, "source.ts")
+        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
+            t,
+            await runTypeScriptServerRequest(
+                fixture.directory,
+                sourceFile,
+                invalidMixinDiagnosticText,
+                "semanticDiagnosticsSync",
+                { file : sourceFile }
+            )
+        )
+        const messages = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
+
+        assertDiagnosticParts(t, messages, invalidMixinDiagnosticParts)
     } finally {
         await fixture.dispose()
     }

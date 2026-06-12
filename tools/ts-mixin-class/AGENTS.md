@@ -15,23 +15,31 @@ Implemented snapshot:
   to RequiredBase or its descendants", not "M is permanently based on RequiredBase".
   Explicit-base consumers get typecheck constraints; no-base consumers start from the
   required base. This works for same-file, imported source, and `.d.ts` package-boundary
-  mixins, including generated value imports for required bases.
+  mixins, including generated value imports for required bases. Required-base mismatches
+  produce a custom TypeScript diagnostic message through a generated conditional type.
 - Cross-file registry: program pre-scan + module resolution handles imported mixins,
   transitive dependencies, required-base metadata, and declaration-file consumers.
 - Fixture coverage: real `tsc + ts-patch` builds in standard/legacy decorator modes,
   runtime Siesta runs, declaration-package consumers, no-base consumers, generic bases,
   statics, self-reference, `super` chains, required-base positive/negative cases,
   consumer contract negative builds, generated diamond/conflicting-order diagnostics,
-  and tsserver editor behavior.
+  custom diagnostic-message checks, declaration-enabled tsserver diagnostics, and
+  tsserver editor behavior.
+- Invalid mixin declaration constraints (abstract mixin/member, constructor,
+  private/protected/#private members, missing explicit property/method/accessor/parameter
+  types, unsupported members) are reported as custom TypeScript diagnostics generated
+  through type-level diagnostic aliases instead of transformer exceptions.
 
 Current plan:
 
-- Continue diagnostics cleanup. Required-base mismatches and consumer-side C3
-  linearization conflicts now surface as normal TypeScript diagnostics on the original
-  consumer class heritage, so `@ts-expect-error` works in fixture builds. Remaining
-  transformer-only failures (`MixinTransformError`: invalid mixin declarations,
-  unsupported shapes) still need source-positioned diagnostics and clearer user-facing
-  explanations. Static-name collision reporting is not implemented.
+- Finish remaining diagnostics cleanup. Required-base mismatches, consumer-side C3
+  linearization conflicts, and invalid mixin declarations now surface as normal
+  TypeScript diagnostics with custom user-facing messages, work with `@ts-expect-error`
+  where applicable, and are covered through tsserver with `declaration: true`.
+  Remaining unsupported-shape failures (notably `export default` mixin classes,
+  anonymous/unnamed consumers, unsupported base expressions, and missing imported runtime
+  values) still need source-positioned diagnostics. Static-name collision reporting is
+  not implemented.
 - Harden public declaration emit for package-quality output: exported helper/intermediate
   declarations, stable public names, unsupported `export default` behavior, and
   README/API documentation.
@@ -58,10 +66,9 @@ Implementation notes:
   package marker.
 - Generated code imports `type AnyConstructor` / `type ClassStatics` from the package
   (specifier-level type imports - `createImportClause` changed its signature in TS 6).
-- Invalid mixin declaration constraints (constructor/private/protected/abstract on a
-  mixin class, members without explicit type annotations) currently throw
-  `MixinTransformError`; proper source-positioned diagnostic reporting is still planned.
-  `extends` on a mixin is allowed and means "required base".
+- Diagnostics that must work in both `tsc` and tsserver are generated via type-level
+  diagnostics rather than real custom TS diagnostic codes. `extends` on a mixin is
+  allowed and means "required base".
 - Known not-yet-handled: name collisions with the injected helper type import, mixin
   classes nested in namespaces/functions, `export default` mixin classes.
 - `README.md` is stale and still describes the early skeleton/no-op transformer.
