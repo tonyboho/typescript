@@ -67,14 +67,14 @@ it("supports consumer inheritance and super chains", async (t: Test) => {
     t.equal(BaseConsumer.staticBase(), "staticBase", "Consumer inherits base statics")
 
     t.equal(sub.method2(), "sub/value2", "SubConsumer super chain works")
-    t.true(noBase instanceof SourceClass1, "No-base consumer matches the first consumed mixin")
-    t.true(noBase instanceof SourceClass2, "No-base consumer matches the second consumed mixin")
-    t.true(baseConsumer instanceof SourceClass1, "Explicit-base consumer matches the first consumed mixin")
-    t.true(baseConsumer instanceof SourceClass2, "Explicit-base consumer matches the second consumed mixin")
-    t.true(sub instanceof BaseConsumer, "SubConsumer remains instanceof consumer")
-    t.true(sub instanceof Base, "SubConsumer remains instanceof explicit base")
-    t.true(sub instanceof SourceClass1, "Subclass remains instanceof inherited consumed mixin 1")
-    t.true(sub instanceof SourceClass2, "Subclass remains instanceof inherited consumed mixin 2")
+    t.isInstanceOf(noBase, SourceClass1, "No-base consumer matches the first consumed mixin")
+    t.isInstanceOf(noBase, SourceClass2, "No-base consumer matches the second consumed mixin")
+    t.isInstanceOf(baseConsumer, SourceClass1, "Explicit-base consumer matches the first consumed mixin")
+    t.isInstanceOf(baseConsumer, SourceClass2, "Explicit-base consumer matches the second consumed mixin")
+    t.isInstanceOf(sub, BaseConsumer, "SubConsumer remains instanceof consumer")
+    t.isInstanceOf(sub, Base, "SubConsumer remains instanceof explicit base")
+    t.isInstanceOf(sub, SourceClass1, "Subclass remains instanceof inherited consumed mixin 1")
+    t.isInstanceOf(sub, SourceClass2, "Subclass remains instanceof inherited consumed mixin 2")
 })
 
 void [ t1, t2, t3, t4, t5, t6, t7, t8, e1, e2, asMixin1, asMixin2, asBase ]

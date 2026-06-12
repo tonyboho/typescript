@@ -39,9 +39,9 @@ const t4: string | undefined = constructed.mixinMethod()
 InstanceTypeConsumer.new({ missingValue : "x" })
 
 it("constructs consumers through Base.new instance-type config objects", async (t: Test) => {
-    t.true(constructed instanceof InstanceTypeConsumer, "Base.new returns the instance-type consumer instance")
-    t.true(constructed instanceof InstanceTypeBase, "Base.new keeps the instance-type explicit base")
-    t.true(constructed instanceof InstanceTypeMixin, "Base.new keeps the instance-type consumed mixin instanceof")
+    t.isInstanceOf(constructed, InstanceTypeConsumer, "Base.new returns the instance-type consumer instance")
+    t.isInstanceOf(constructed, InstanceTypeBase, "Base.new keeps the instance-type explicit base")
+    t.isInstanceOf(constructed, InstanceTypeMixin, "Base.new keeps the instance-type consumed mixin instanceof")
     t.equal(constructed.skippedBaseValue, "base", "Instance-type config allows base fields without public")
     t.equal(constructed.skippedMixinValue, "mixin", "Instance-type config allows mixin fields without public")
     t.equal(constructed.skippedOwnValue, "own", "Instance-type config allows consumer fields without public")

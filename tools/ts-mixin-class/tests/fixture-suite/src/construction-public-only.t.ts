@@ -78,9 +78,9 @@ ConstructableConsumer.new({
 })
 
 it("constructs consumers through Base.new public-only config objects", async (t: Test) => {
-    t.true(constructed instanceof ConstructableConsumer, "Base.new returns the consumer instance")
-    t.true(constructed instanceof ConstructableBase, "Base.new keeps the explicit base")
-    t.true(constructed instanceof ConstructableMixin, "Base.new keeps consumed mixin instanceof")
+    t.isInstanceOf(constructed, ConstructableConsumer, "Base.new returns the consumer instance")
+    t.isInstanceOf(constructed, ConstructableBase, "Base.new keeps the explicit base")
+    t.isInstanceOf(constructed, ConstructableMixin, "Base.new keeps consumed mixin instanceof")
     t.equal(constructed.baseValue, "configured", "Base config property is assigned")
     t.equal(constructed.mixinValue, 42, "Mixin config property is assigned")
     t.equal(constructed.ownValue, true, "Consumer config property is assigned")

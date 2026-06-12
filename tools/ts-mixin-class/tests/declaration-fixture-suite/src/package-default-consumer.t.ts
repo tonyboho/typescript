@@ -24,7 +24,7 @@ it("uses a default-exported mixin from another package through declarations", as
     t.equal(consumer.defaultMethod(), "default", "Declaration default mixin method works")
     t.equal(consumer.ownDefault(), "default", "Declaration default mixin is available through super")
     t.equal(DefaultDeclarationConsumer.staticDefault(), "staticDefault", "Declaration default mixin statics are copied")
-    t.true(consumer instanceof DefaultMixin, "Declaration default mixin instanceof works")
+    t.isInstanceOf(consumer, DefaultMixin, "Declaration default mixin instanceof works")
 })
 
 void [ v1, v2, v3, v4, e1 ]

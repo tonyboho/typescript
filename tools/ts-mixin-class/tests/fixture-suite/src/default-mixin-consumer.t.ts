@@ -23,9 +23,9 @@ it("uses a default-exported mixin", async (t: Test) => {
     t.equal(consumer.defaultMethod(), "default", "Default mixin method is applied")
     t.equal(consumer.own(), "default", "Consumer super reaches the default mixin")
     t.equal(DefaultConsumer.staticDefault(), "staticDefault", "Default mixin statics are copied")
-    t.true(consumer instanceof DefaultMixin, "Default-imported mixin instanceof works")
+    t.isInstanceOf(consumer, DefaultMixin, "Default-imported mixin instanceof works")
     t.equal(canonical.defaultMethod(), "default", "Default canonical mixin class can be instantiated")
-    t.true(canonical instanceof DefaultMixin, "Default canonical mixin instance matches its mixin class")
+    t.isInstanceOf(canonical, DefaultMixin, "Default canonical mixin instance matches its mixin class")
 })
 
 void [ v1, v2, v3, v4, v5 ]

@@ -83,13 +83,13 @@ const t7: number | undefined = inferredNumberContainer.item
 const e3: string | undefined = inferredNumberContainer.item
 
 it("constructs generic consumers through Base.new public-only config objects", async (t: Test) => {
-    t.true(genericConstructed instanceof GenericConsumer, "Generated static new returns a generic consumer")
+    t.isInstanceOf(genericConstructed, GenericConsumer, "Generated static new returns a generic consumer")
     t.equal(genericConstructed.genericBaseValue, "base", "Generic base config property is assigned")
     t.equal(genericConstructed.genericMixinValue, "mixin", "Generic mixin config property is assigned")
     t.equal(genericConstructed.genericOwnValue, "own", "Generic consumer config property is assigned")
 
-    t.true(stringContainer instanceof GenericContainer, "Generated static new returns a generic container")
-    t.true(stringContainer instanceof GenericContainerMixin, "Generic container keeps consumed mixin instanceof")
+    t.isInstanceOf(stringContainer, GenericContainer, "Generated static new returns a generic container")
+    t.isInstanceOf(stringContainer, GenericContainerMixin, "Generic container keeps consumed mixin instanceof")
     t.equal(stringContainer.item, "value", "Generic property is initialized through .new config")
     t.equal(stringContainer.touched, true, "Generic container mixin property is initialized through .new config")
     t.equal(numberContainer.item, 1, "Explicit generic .new type argument initializes a numeric property")

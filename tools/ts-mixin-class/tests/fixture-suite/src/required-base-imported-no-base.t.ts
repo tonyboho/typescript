@@ -23,7 +23,7 @@ it("no-base imported required-base mixin", async (t: Test) => {
     t.equal(consumer.ownRequired(), "requiredBase/requiredMixin", "No-base imported consumer can call mixin through super")
     t.equal(NoBaseImportedRequiredConsumer.staticRequired(), "staticRequired", "No-base imported consumer keeps required base statics")
     t.equal(NoBaseImportedRequiredConsumer.staticRequiredMixin(), "staticRequiredMixin", "No-base imported consumer keeps mixin statics")
-    t.true(consumer instanceof RequiredMixin, "No-base imported consumer matches the mixin")
+    t.isInstanceOf(consumer, RequiredMixin, "No-base imported consumer matches the mixin")
 })
 
 void [ v1, v2, v3, v4, v5 ]

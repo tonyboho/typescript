@@ -53,11 +53,11 @@ const e2: string = c.childMethod("x")
 it("self-reference", async (t: Test) => {
     t.equal(c.childMethod(true), "child/true/value1", "super calls in dependent mixin body work")
     t.equal(c.baseValue, 42, "Consumer gets base field")
-    t.true(c instanceof ChildMixin, "Consumer matches the direct dependent mixin")
-    t.true(c instanceof SourceClass1, "Consumer matches the transitive consumed mixin")
+    t.isInstanceOf(c, ChildMixin, "Consumer matches the direct dependent mixin")
+    t.isInstanceOf(c, SourceClass1, "Consumer matches the transitive consumed mixin")
     t.equal(canonicalChild.childMethod(5), "child/5/value1", "Canonical dependent mixin class can be instantiated")
-    t.true(canonicalChild instanceof ChildMixin, "Canonical dependent mixin instance matches the direct mixin")
-    t.true(canonicalChild instanceof SourceClass1, "Canonical dependent mixin instance matches the transitive mixin")
+    t.isInstanceOf(canonicalChild, ChildMixin, "Canonical dependent mixin instance matches the direct mixin")
+    t.isInstanceOf(canonicalChild, SourceClass1, "Canonical dependent mixin instance matches the transitive mixin")
     t.equal(typeof ChildMixin[factory], "function", "Mixin factory is visible through the exported metadata symbol")
     t.expect(ChildMixin[requirements]).toEqual([ SourceClass1 ])
     t.expect(SourceClass1[requirements]).toEqual([])
@@ -67,7 +67,7 @@ it("self-reference", async (t: Test) => {
 
     t.equal(fresh.value1, "value1", "Self-created instance has mixin fields")
     t.false("baseValue" in fresh, "Self-created instance does not drag consumer base")
-    t.true(fresh instanceof SourceClass1, "Self-created instance is an instance of the outer mixin const")
+    t.isInstanceOf(fresh, SourceClass1, "Self-created instance is an instance of the outer mixin const")
 })
 
 void [ t1, t2, t3, t4, e1, e2, another, ChildMixin ]

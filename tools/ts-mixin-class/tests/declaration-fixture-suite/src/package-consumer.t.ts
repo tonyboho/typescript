@@ -69,10 +69,10 @@ it("uses mixins from another package through declarations", async (t: Test) => {
     t.equal(required.ownRequired(), "declaration/requiredBase/requiredMixin", "Declaration required-base mixin is available through super")
     t.equal(DeclarationRequiredConsumer.staticRequired(), "staticRequired", "Declaration required-base consumer keeps base statics")
     t.equal(DeclarationRequiredConsumer.staticRequiredMixin(), "staticRequiredMixin", "Declaration required-base consumer keeps mixin statics")
-    t.true(consumer instanceof SourceClass1, "Declaration-imported first mixin instanceof works")
-    t.true(consumer instanceof SourceClass2, "Declaration-imported second mixin instanceof works")
-    t.true(required instanceof RequiredMixin, "Declaration required-base consumer matches the mixin")
-    t.true(required instanceof RequiredBase, "Declaration required-base consumer keeps the required base")
+    t.isInstanceOf(consumer, SourceClass1, "Declaration-imported first mixin instanceof works")
+    t.isInstanceOf(consumer, SourceClass2, "Declaration-imported second mixin instanceof works")
+    t.isInstanceOf(required, RequiredMixin, "Declaration required-base consumer matches the mixin")
+    t.isInstanceOf(required, RequiredBase, "Declaration required-base consumer keeps the required base")
 })
 
 void [ v1, v2, v3, v4, v5, v6, e1, e2, e3 ]

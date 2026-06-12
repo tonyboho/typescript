@@ -37,7 +37,7 @@ it("Base.new creates an instance and initializes non-method properties", async (
         count : 10
     })
 
-    t.true(instance instanceof Configured, "Static constructor returns a class instance")
+    t.isInstanceOf(instance, Configured, "Static constructor returns a class instance")
     t.equal(instance.value, "configured", "Static constructor assigns string property")
     t.equal(instance.count, 10, "Static constructor assigns numeric property")
     t.equal(instance.method(), "configured", "Methods stay available on the constructed instance")
@@ -54,10 +54,10 @@ it("linearizes mixin requirements with C3 order", async (t: Test) => {
     const instance = new Consumer()
 
     t.equal(instance.who(), "D>B>C>A>Base", "Diamond dependencies follow C3 method resolution order")
-    t.true(instance instanceof A, "Instance matches transitive mixin A")
-    t.true(instance instanceof B, "Instance matches transitive mixin B")
-    t.true(instance instanceof C, "Instance matches transitive mixin C")
-    t.true(instance instanceof D, "Instance matches direct mixin D")
+    t.isInstanceOf(instance, A, "Instance matches transitive mixin A")
+    t.isInstanceOf(instance, B, "Instance matches transitive mixin B")
+    t.isInstanceOf(instance, C, "Instance matches transitive mixin C")
+    t.isInstanceOf(instance, D, "Instance matches direct mixin D")
 })
 
 it("caches mixin applications for the same base", async (t: Test) => {
@@ -143,9 +143,9 @@ it("applies mixins with a required base to consumer-provided descendants", async
     const instance = new Consumer()
 
     t.equal(instance.who(), "RequiredMixin>RealBase", "Mixin super calls the consumer-provided descendant base")
-    t.true(instance instanceof RealBase, "Consumer still inherits from the concrete base")
-    t.true(instance instanceof RequiredBase, "Consumer satisfies the required base")
-    t.true(instance instanceof RequiredMixin, "Consumer matches the required-base mixin")
+    t.isInstanceOf(instance, RealBase, "Consumer still inherits from the concrete base")
+    t.isInstanceOf(instance, RequiredBase, "Consumer satisfies the required base")
+    t.isInstanceOf(instance, RequiredMixin, "Consumer matches the required-base mixin")
     t.equal(new RequiredMixin().who(), "RequiredMixin>RequiredBase", "Canonical mixin class uses the required base")
 })
 

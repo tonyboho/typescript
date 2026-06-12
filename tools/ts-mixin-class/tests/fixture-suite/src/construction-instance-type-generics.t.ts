@@ -49,8 +49,8 @@ const t5: number | undefined = explicit.skippedOwnValue
 InstanceTypeGenericConsumer.new<number>({ skippedOwnValue : "own" })
 
 it("constructs generic consumers through Base.new instance-type config objects", async (t: Test) => {
-    t.true(inferred instanceof InstanceTypeGenericConsumer, "Generated static new returns a generic instance-type consumer")
-    t.true(inferred instanceof InstanceTypeGenericMixin, "Generic instance-type consumer keeps consumed mixin instanceof")
+    t.isInstanceOf(inferred, InstanceTypeGenericConsumer, "Generated static new returns a generic instance-type consumer")
+    t.isInstanceOf(inferred, InstanceTypeGenericMixin, "Generic instance-type consumer keeps consumed mixin instanceof")
     t.equal(inferred.skippedBaseValue, "base", "Generic instance-type base config property is assigned")
     t.equal(inferred.skippedMixinValue, "mixin", "Generic instance-type mixin config property is assigned")
     t.equal(inferred.skippedOwnValue, "own", "Generic instance-type consumer config property is assigned")

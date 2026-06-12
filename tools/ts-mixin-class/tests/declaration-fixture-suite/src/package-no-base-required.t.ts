@@ -23,7 +23,7 @@ it("uses a declaration required-base mixin without an explicit consumer base", a
     t.equal(consumer.ownRequired(), "requiredBase/requiredMixin", "Declaration no-base consumer can call mixin through super")
     t.equal(DeclarationNoBaseRequiredConsumer.staticRequired(), "staticRequired", "Declaration no-base consumer keeps required base statics")
     t.equal(DeclarationNoBaseRequiredConsumer.staticRequiredMixin(), "staticRequiredMixin", "Declaration no-base consumer keeps mixin statics")
-    t.true(consumer instanceof RequiredMixin, "Declaration no-base consumer matches the mixin")
+    t.isInstanceOf(consumer, RequiredMixin, "Declaration no-base consumer matches the mixin")
 })
 
 void [ v1, v2, v3, v4, v5 ]
