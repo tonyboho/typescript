@@ -525,13 +525,14 @@ it("fixture type-errors keeps expect-error suppressions for expected diagnostics
     const expectErrorLines = typeErrorsSource
         .split("\n")
         .filter((line) => line.includes("@ts-expect-error"))
+    const expectErrorText = expectErrorLines.join("\n")
 
     t.equal(expectErrorLines.length, 5, "Fixture has one suppression per expected diagnostic")
-    t.true(expectErrorLines.some((line) => line.includes("ContractSourceClass1")), expectErrorLines.join("\n"))
-    t.true(expectErrorLines.some((line) => line.includes("ContractSourceClass2")), expectErrorLines.join("\n"))
-    t.true(expectErrorLines.some((line) => line.includes("RequiredMixin")), expectErrorLines.join("\n"))
-    t.true(expectErrorLines.some((line) => line.includes("BadLinearizationMixin")), expectErrorLines.join("\n"))
-    t.true(expectErrorLines.some((line) => line.includes("StaticCollisionLeftMixin")), expectErrorLines.join("\n"))
+    t.match(expectErrorText, "ContractSourceClass1", "Fixture suppresses the first contract diagnostic")
+    t.match(expectErrorText, "ContractSourceClass2", "Fixture suppresses the second contract diagnostic")
+    t.match(expectErrorText, "RequiredMixin", "Fixture suppresses the required-base diagnostic")
+    t.match(expectErrorText, "BadLinearizationMixin", "Fixture suppresses the linearization diagnostic")
+    t.match(expectErrorText, "StaticCollisionLeftMixin", "Fixture suppresses the static collision diagnostic")
 })
 
 function removeExpectErrorLines(source: string): string {

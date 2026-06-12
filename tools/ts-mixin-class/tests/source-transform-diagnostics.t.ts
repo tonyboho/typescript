@@ -28,15 +28,13 @@ it("transformed required-base mixin rejects unrelated consumer bases at typechec
     `))
 
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
 
-    t.true(
-        diagnostics.some((diagnostic) => {
-            return diagnostic.includes("Mixin required base mismatch") &&
-                diagnostic.includes("RequiredMixin") &&
-                diagnostic.includes("RequiredBase")
-        }),
-        diagnostics.join("\n")
-    )
+    assertMessageParts(t, messages, [
+        "Mixin required base mismatch",
+        "RequiredMixin",
+        "RequiredBase"
+    ])
 })
 
 it("reports unsupported mixin class declarations", async (t: Test) => {
@@ -97,16 +95,18 @@ it("reports unsupported mixin class declarations", async (t: Test) => {
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
     const messages = diagnostics.join("\n")
 
-    t.true(messages.includes("Invalid mixin class declaration"), messages)
-    t.true(messages.includes("Mixin class AbstractMixin cannot be abstract"), messages)
-    t.true(messages.includes("Mixin class ConstructorMixin cannot declare a constructor"), messages)
-    t.true(messages.includes("Mixin class PrivateMixin member value cannot be private or protected"), messages)
-    t.true(messages.includes("Mixin class HashPrivateMixin member #value cannot use ECMAScript private names"), messages)
-    t.true(messages.includes("Mixin class AbstractMemberMixin member value cannot be abstract"), messages)
-    t.true(messages.includes("Mixin class MissingPropertyTypeMixin property value must have an explicit type annotation"), messages)
-    t.true(messages.includes("Mixin class MissingMethodReturnTypeMixin method method must have an explicit return type annotation"), messages)
-    t.true(messages.includes("Mixin class MissingParameterTypeMixin method parameter value must have an explicit type annotation"), messages)
-    t.true(messages.includes("Mixin class MissingAccessorTypeMixin accessor value must have an explicit type annotation"), messages)
+    assertMessageParts(t, messages, [
+        "Invalid mixin class declaration",
+        "Mixin class AbstractMixin cannot be abstract",
+        "Mixin class ConstructorMixin cannot declare a constructor",
+        "Mixin class PrivateMixin member value cannot be private or protected",
+        "Mixin class HashPrivateMixin member #value cannot use ECMAScript private names",
+        "Mixin class AbstractMemberMixin member value cannot be abstract",
+        "Mixin class MissingPropertyTypeMixin property value must have an explicit type annotation",
+        "Mixin class MissingMethodReturnTypeMixin method method must have an explicit return type annotation",
+        "Mixin class MissingParameterTypeMixin method parameter value must have an explicit type annotation",
+        "Mixin class MissingAccessorTypeMixin accessor value must have an explicit type annotation"
+    ])
 })
 
 it("reports anonymous default mixin classes with a custom diagnostic", async (t: Test) => {
@@ -121,9 +121,11 @@ it("reports anonymous default mixin classes with a custom diagnostic", async (t:
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
     const messages = diagnostics.join("\n")
 
-    t.true(messages.includes("Invalid mixin class declaration"), messages)
-    t.true(messages.includes("default-exported mixin class must be named"), messages)
-    t.true(messages.includes("export default class MyMixin"), messages)
+    assertMessageParts(t, messages, [
+        "Invalid mixin class declaration",
+        "default-exported mixin class must be named",
+        "export default class MyMixin"
+    ])
 })
 
 it("reports anonymous mixin consumer class declarations with a custom diagnostic", async (t: Test) => {
@@ -141,9 +143,11 @@ it("reports anonymous mixin consumer class declarations with a custom diagnostic
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
     const messages = diagnostics.join("\n")
 
-    t.true(messages.includes("Invalid mixin consumer declaration"), messages)
-    t.true(messages.includes("A mixin consumer class must be named"), messages)
-    t.true(messages.includes("export default class Consumer"), messages)
+    assertMessageParts(t, messages, [
+        "Invalid mixin consumer declaration",
+        "A mixin consumer class must be named",
+        "export default class Consumer"
+    ])
 })
 
 it("reports unsupported mixin consumer base expressions with a custom diagnostic", async (t: Test) => {
@@ -166,10 +170,12 @@ it("reports unsupported mixin consumer base expressions with a custom diagnostic
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
     const messages = diagnostics.join("\n")
 
-    t.true(messages.includes("Unsupported mixin consumer base expression"), messages)
-    t.true(messages.includes("Consumer extends makeBase()"), messages)
-    t.true(messages.includes("Only named base classes such as Base or ns.Base are supported for now"), messages)
-    t.true(messages.includes("assign the expression to a named class or const"), messages)
+    assertMessageParts(t, messages, [
+        "Unsupported mixin consumer base expression",
+        "Consumer extends makeBase()",
+        "Only named base classes such as Base or ns.Base are supported for now",
+        "assign the expression to a named class or const"
+    ])
 })
 
 it("reports conflicting static members between consumed mixins", async (t: Test) => {
@@ -192,11 +198,13 @@ it("reports conflicting static members between consumed mixins", async (t: Test)
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
     const messages = diagnostics.join("\n")
 
-    t.true(messages.includes("Static mixin member collision"), messages)
-    t.true(messages.includes("Consumer"), messages)
-    t.true(messages.includes("LeftStaticMixin"), messages)
-    t.true(messages.includes("RightStaticMixin"), messages)
-    t.true(messages.includes("shared"), messages)
+    assertMessageParts(t, messages, [
+        "Static mixin member collision",
+        "Consumer",
+        "LeftStaticMixin",
+        "RightStaticMixin",
+        "shared"
+    ])
 })
 
 it("reports conflicting static members between consumer base and mixins", async (t: Test) => {
@@ -218,11 +226,13 @@ it("reports conflicting static members between consumer base and mixins", async 
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
     const messages = diagnostics.join("\n")
 
-    t.true(messages.includes("Static mixin member collision"), messages)
-    t.true(messages.includes("Consumer"), messages)
-    t.true(messages.includes("Base"), messages)
-    t.true(messages.includes("StaticMixin"), messages)
-    t.true(messages.includes("shared"), messages)
+    assertMessageParts(t, messages, [
+        "Static mixin member collision",
+        "Consumer",
+        "Base",
+        "StaticMixin",
+        "shared"
+    ])
 })
 
 it("reports method-shaped static collisions only in strict mode", async (t: Test) => {
@@ -253,9 +263,11 @@ it("reports method-shaped static collisions only in strict mode", async (t: Test
     const defaultMessages = defaultDiagnostics.join("\n")
     const strictMessages = strictDiagnostics.join("\n")
 
-    t.false(defaultMessages.includes("Static mixin member collision"), defaultMessages)
-    t.true(strictMessages.includes("Static mixin member collision"), strictMessages)
-    t.true(strictMessages.includes("shared"), strictMessages)
+    t.notMatch(defaultMessages, "Static mixin member collision", "Default mode does not report method-shaped collisions")
+    assertMessageParts(t, strictMessages, [
+        "Static mixin member collision",
+        "shared"
+    ])
 })
 
 it("can disable static collision diagnostics", async (t: Test) => {
@@ -282,5 +294,11 @@ it("can disable static collision diagnostics", async (t: Test) => {
     const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
     const messages = diagnostics.join("\n")
 
-    t.false(messages.includes("Static mixin member collision"), messages)
+    t.notMatch(messages, "Static mixin member collision", "Disabled static collision check does not report collisions")
 })
+
+function assertMessageParts(t: Test, messages: string, expectedParts: string[]): void {
+    for (const expectedPart of expectedParts) {
+        t.match(messages, expectedPart, `Diagnostics include ${expectedPart}`)
+    }
+}

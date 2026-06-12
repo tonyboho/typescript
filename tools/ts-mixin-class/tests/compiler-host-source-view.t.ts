@@ -41,15 +41,15 @@ it("compiler host preserves source text in IDE mode while exposing transformed A
     const host       = createMemoryCompilerHost(new Map([ [ sourceFileName, sourceText ] ]), preserveCompilerOptions)
     const sourceFile = getTransformedSourceFile(t, host, preserveCompilerOptions, {})
 
-    t.is(sourceFile.text, sourceText, "IDE/default noEmit mode keeps original source text")
-    t.true(findClass(sourceFile, "SourceClass") !== undefined, "IDE AST keeps the original mixin class for editor navigation")
-    t.true(findVariable(sourceFile, "__SourceClass$mixin") === undefined, "IDE AST does not place a runtime factory over source ranges")
-    t.true(findClass(sourceFile, "__Consumer$empty") !== undefined, "Transformed AST has a generated empty consumer base")
-    t.true(findClass(sourceFile, "__Consumer$base") !== undefined, "Transformed AST has generated consumer base")
+    t.equal(sourceFile.text, sourceText, "IDE/default noEmit mode keeps original source text")
+    t.not.isStrict(findClass(sourceFile, "SourceClass"), undefined, "IDE AST keeps the original mixin class for editor navigation")
+    t.isStrict(findVariable(sourceFile, "__SourceClass$mixin"), undefined, "IDE AST does not place a runtime factory over source ranges")
+    t.not.isStrict(findClass(sourceFile, "__Consumer$empty"), undefined, "Transformed AST has a generated empty consumer base")
+    t.not.isStrict(findClass(sourceFile, "__Consumer$base"), undefined, "Transformed AST has generated consumer base")
 
     const consumer = findClass(sourceFile, "Consumer")
 
-    t.ok(consumer, "Transformed AST keeps the consumer class")
+    t.not.isStrict(consumer, undefined, "Transformed AST keeps the consumer class")
     t.equal(
         sourceFile.text.slice(consumer?.name?.getStart(sourceFile), consumer?.name?.getEnd()),
         "Consumer",
@@ -65,17 +65,17 @@ it('mode "ide" keeps original source text even when emit is enabled', async (t: 
     const host       = createMemoryCompilerHost(new Map([ [ sourceFileName, sourceText ] ]), emitOptions)
     const sourceFile = getTransformedSourceFile(t, host, emitOptions, { mode : "ide" })
 
-    t.is(sourceFile.text, sourceText, 'mode "ide" keeps original source text')
-    t.true(findClass(sourceFile, "__Consumer$empty") !== undefined, 'mode "ide" exposes the generated empty consumer base')
-    t.true(findClass(sourceFile, "__Consumer$base") !== undefined, 'mode "ide" still exposes the consumer transform')
+    t.equal(sourceFile.text, sourceText, 'mode "ide" keeps original source text')
+    t.not.isStrict(findClass(sourceFile, "__Consumer$empty"), undefined, 'mode "ide" exposes the generated empty consumer base')
+    t.not.isStrict(findClass(sourceFile, "__Consumer$base"), undefined, 'mode "ide" still exposes the consumer transform')
 })
 
 it('mode "emit" prints transformed source even when noEmit is set', async (t: Test) => {
     const host       = createMemoryCompilerHost(new Map([ [ sourceFileName, sourceText ] ]), preserveCompilerOptions)
     const sourceFile = getTransformedSourceFile(t, host, preserveCompilerOptions, { mode : "emit" })
 
-    t.true(sourceFile.text !== sourceText, 'mode "emit" replaces the source text')
-    t.true(sourceFile.text.includes("__SourceClass$mixin"), 'mode "emit" source text contains generated declarations')
+    t.not.isStrict(sourceFile.text, sourceText, 'mode "emit" replaces the source text')
+    t.match(sourceFile.text, "__SourceClass$mixin", 'mode "emit" source text contains generated declarations')
 })
 
 it("unknown mode option throws", async (t: Test) => {

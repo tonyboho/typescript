@@ -26,7 +26,7 @@ export function assertResponseBody<Body>(t: Test, response: TsServerResponse): B
 
 export function assertDiagnosticParts(t: Test, messages: string, expectedParts: string[]): void {
     for (const expectedPart of expectedParts) {
-        t.true(messages.includes(expectedPart), messages)
+        t.match(messages, expectedPart, `Diagnostics include ${expectedPart}`)
     }
 }
 

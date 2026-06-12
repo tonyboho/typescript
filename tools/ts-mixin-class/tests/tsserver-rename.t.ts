@@ -33,10 +33,10 @@ it("tsserver rename updates mixin method usages from self, external and super ca
                 "renamedMixinMethod"
             )
 
-            t.true(renamedText.includes("renamedMixinMethod(): string"), `Renames declaration from ${scenario.description}`)
-            t.true(renamedText.includes("this.renamedMixinMethod()"), `Renames self usage from ${scenario.description}`)
-            t.true(renamedText.includes("mixed.renamedMixinMethod()"), `Renames external usage from ${scenario.description}`)
-            t.true(renamedText.includes("super.renamedMixinMethod()"), `Renames super usage from ${scenario.description}`)
+            t.match(renamedText, "renamedMixinMethod(): string", `Renames declaration from ${scenario.description}`)
+            t.match(renamedText, "this.renamedMixinMethod()", `Renames self usage from ${scenario.description}`)
+            t.match(renamedText, "mixed.renamedMixinMethod()", `Renames external usage from ${scenario.description}`)
+            t.match(renamedText, "super.renamedMixinMethod()", `Renames super usage from ${scenario.description}`)
         }
     } finally {
         await dispose()
@@ -55,9 +55,9 @@ it("tsserver rename updates plain class members from instance and static usages"
             "renamedBaseProperty"
         )
 
-        t.true(renamedPropertyText.includes("renamedBaseProperty: number"), "Renames plain property declaration")
-        t.true(renamedPropertyText.includes("this.renamedBaseProperty"), "Renames plain property self usage")
-        t.true(renamedPropertyText.includes("plain.renamedBaseProperty"), "Renames plain property external usage")
+        t.match(renamedPropertyText, "renamedBaseProperty: number", "Renames plain property declaration")
+        t.match(renamedPropertyText, "this.renamedBaseProperty", "Renames plain property self usage")
+        t.match(renamedPropertyText, "plain.renamedBaseProperty", "Renames plain property external usage")
 
         const renamedMethodText = assertRenameAllowed(
             t,
@@ -67,8 +67,8 @@ it("tsserver rename updates plain class members from instance and static usages"
             "renamedBaseMethod"
         )
 
-        t.true(renamedMethodText.includes("renamedBaseMethod(): number"), "Renames plain method declaration")
-        t.true(renamedMethodText.includes("plain.renamedBaseMethod()"), "Renames plain method external usage")
+        t.match(renamedMethodText, "renamedBaseMethod(): number", "Renames plain method declaration")
+        t.match(renamedMethodText, "plain.renamedBaseMethod()", "Renames plain method external usage")
 
         const renamedStaticPropertyText = assertRenameAllowed(
             t,
@@ -78,9 +78,9 @@ it("tsserver rename updates plain class members from instance and static usages"
             "renamedBaseStaticProperty"
         )
 
-        t.true(renamedStaticPropertyText.includes("renamedBaseStaticProperty: number"), "Renames plain static property declaration")
-        t.true(renamedStaticPropertyText.includes("this.renamedBaseStaticProperty"), "Renames plain static property self usage")
-        t.true(renamedStaticPropertyText.includes("PlainConsumer.renamedBaseStaticProperty"), "Renames plain static property external usage")
+        t.match(renamedStaticPropertyText, "renamedBaseStaticProperty: number", "Renames plain static property declaration")
+        t.match(renamedStaticPropertyText, "this.renamedBaseStaticProperty", "Renames plain static property self usage")
+        t.match(renamedStaticPropertyText, "PlainConsumer.renamedBaseStaticProperty", "Renames plain static property external usage")
 
         const renamedStaticMethodText = assertRenameAllowed(
             t,
@@ -90,8 +90,8 @@ it("tsserver rename updates plain class members from instance and static usages"
             "renamedBaseStaticMethod"
         )
 
-        t.true(renamedStaticMethodText.includes("renamedBaseStaticMethod(): number"), "Renames plain static method declaration")
-        t.true(renamedStaticMethodText.includes("PlainConsumer.renamedBaseStaticMethod()"), "Renames plain static method external usage")
+        t.match(renamedStaticMethodText, "renamedBaseStaticMethod(): number", "Renames plain static method declaration")
+        t.match(renamedStaticMethodText, "PlainConsumer.renamedBaseStaticMethod()", "Renames plain static method external usage")
     } finally {
         await dispose()
     }
@@ -115,10 +115,10 @@ it("tsserver rename updates mixin property usages from self, external and super 
                 "renamedMixinProperty"
             )
 
-            t.true(renamedText.includes("renamedMixinProperty: string"), `Renames declaration from ${scenario.description}`)
-            t.true(renamedText.includes("this.renamedMixinProperty"), `Renames self usage from ${scenario.description}`)
-            t.true(renamedText.includes("mixed.renamedMixinProperty"), `Renames external usage from ${scenario.description}`)
-            t.true(renamedText.includes("super.renamedMixinProperty"), `Renames super usage from ${scenario.description}`)
+            t.match(renamedText, "renamedMixinProperty: string", `Renames declaration from ${scenario.description}`)
+            t.match(renamedText, "this.renamedMixinProperty", `Renames self usage from ${scenario.description}`)
+            t.match(renamedText, "mixed.renamedMixinProperty", `Renames external usage from ${scenario.description}`)
+            t.match(renamedText, "super.renamedMixinProperty", `Renames super usage from ${scenario.description}`)
         }
     } finally {
         await dispose()
@@ -141,9 +141,9 @@ it("tsserver rename updates mixin static members from self and external accesses
                 "renamedMixinStaticProperty"
             )
 
-            t.true(renamedText.includes("renamedMixinStaticProperty: string"), `Renames static property declaration from ${scenario.description}`)
-            t.true(renamedText.includes("this.renamedMixinStaticProperty"), `Renames static property self usage from ${scenario.description}`)
-            t.true(renamedText.includes("MixinConsumer.renamedMixinStaticProperty"), `Renames static property external usage from ${scenario.description}`)
+            t.match(renamedText, "renamedMixinStaticProperty: string", `Renames static property declaration from ${scenario.description}`)
+            t.match(renamedText, "this.renamedMixinStaticProperty", `Renames static property self usage from ${scenario.description}`)
+            t.match(renamedText, "MixinConsumer.renamedMixinStaticProperty", `Renames static property external usage from ${scenario.description}`)
         }
 
         const renamedMethodText = assertRenameAllowed(
@@ -154,8 +154,8 @@ it("tsserver rename updates mixin static members from self and external accesses
             "renamedMixinStaticMethod"
         )
 
-        t.true(renamedMethodText.includes("renamedMixinStaticMethod(): string"), "Renames static method declaration")
-        t.true(renamedMethodText.includes("MixinConsumer.renamedMixinStaticMethod()"), "Renames static method external usage")
+        t.match(renamedMethodText, "renamedMixinStaticMethod(): string", "Renames static method declaration")
+        t.match(renamedMethodText, "MixinConsumer.renamedMixinStaticMethod()", "Renames static method external usage")
     } finally {
         await dispose()
     }

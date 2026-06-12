@@ -28,16 +28,15 @@ it("expands a consumer class into a merged intermediate base", async (t: Test) =
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("interface __Consumer$base<A> extends SourceClass1<string>, SourceClass2<A>"),
+    t.match(printed, "interface __Consumer$base<A> extends SourceClass1<string>, SourceClass2<A>",
         "Merged interface repeats the implements list verbatim")
-    t.true(
-        printed.includes(
-            "class __Consumer$base<A> extends (mixinChain(Base, SourceClass1, SourceClass2) as unknown as " +
-            "typeof Base & ClassStatics<typeof SourceClass1> & ClassStatics<typeof SourceClass2>)"
-        ),
+    t.match(
+        printed,
+        "class __Consumer$base<A> extends (mixinChain(Base, SourceClass1, SourceClass2) as unknown as " +
+            "typeof Base & ClassStatics<typeof SourceClass1> & ClassStatics<typeof SourceClass2>)",
         "Intermediate base delegates the runtime chain to the helper with the statics cast"
     )
-    t.true(printed.includes("class Consumer<A> extends __Consumer$base<A> implements SourceClass1<string>, SourceClass2<A>"),
+    t.match(printed, "class Consumer<A> extends __Consumer$base<A> implements SourceClass1<string>, SourceClass2<A>",
         "Consumer extends the intermediate base and keeps its implements clause")
 })
 
@@ -55,16 +54,15 @@ it("expands a consumer class without an explicit base", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("class __Consumer$empty {\n}"),
+    t.match(printed, "class __Consumer$empty {\n}",
         "An explicit empty base class is generated")
-    t.true(
-        printed.includes(
-            "class __Consumer$base<T> extends (mixinChain(__Consumer$empty, SourceClass1) as unknown as " +
-            "typeof __Consumer$empty & ClassStatics<typeof SourceClass1>)"
-        ),
+    t.match(
+        printed,
+        "class __Consumer$base<T> extends (mixinChain(__Consumer$empty, SourceClass1) as unknown as " +
+            "typeof __Consumer$empty & ClassStatics<typeof SourceClass1>)",
         "Helper chain starts at the generated empty base and keeps mixin statics"
     )
-    t.false(printed.includes("mixinChain(Object, SourceClass1)"),
+    t.notMatch(printed, "mixinChain(Object, SourceClass1)",
         "Helper chain does not use Object as the implicit consumer base")
 })
 
@@ -97,7 +95,7 @@ it("emits a generic consumer base class", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("interface __Consumer$base<A> extends Base<A>, SourceClass1<string>"),
+    t.match(printed, "interface __Consumer$base<A> extends Base<A>, SourceClass1<string>",
         "Merged interface includes the instantiated generic base")
 })
 
@@ -120,9 +118,9 @@ it("consumer transitively applies mixin dependencies", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("mixinChain(__Consumer$empty, ChildMixin)"),
+    t.match(printed, "mixinChain(__Consumer$empty, ChildMixin)",
         "Consumer delegates transitive dependency application to the runtime helper")
-    t.true(printed.includes("interface __Consumer$base<T> extends ChildMixin<T>"),
+    t.match(printed, "interface __Consumer$base<T> extends ChildMixin<T>",
         "Merged interface lists only the direct implements entries")
 })
 
@@ -145,9 +143,9 @@ it("does not treat non-mixin implements entries as mixins", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("interface __Consumer$base<T> extends SourceClass1<T> {"),
+    t.match(printed, "interface __Consumer$base<T> extends SourceClass1<T> {",
         "Merged interface contains only mixin entries")
-    t.true(printed.includes("implements SourceClass1<T>, PlainContract"),
+    t.match(printed, "implements SourceClass1<T>, PlainContract",
         "Consumer keeps the full implements list")
 })
 
@@ -177,17 +175,19 @@ it("generates public-only static construction config overloads by default", asyn
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes(
+    t.match(
+        printed,
         "static new<T>(props?: Pick<Consumer<T>, \"baseValue\" | \"mixinValue\" | \"ownValue\"> & " +
-        "Partial<Pick<Consumer<T>, \"optionalBaseValue\" | \"optionalMixinValue\" | \"optionalOwnValue\">>): Consumer<T>;"
-    ), "Default public-only construction config preserves required and optional property names")
-    t.false(printed.includes("\"mixinMethod\""),
+            "Partial<Pick<Consumer<T>, \"optionalBaseValue\" | \"optionalMixinValue\" | \"optionalOwnValue\">>): Consumer<T>;",
+        "Default public-only construction config preserves required and optional property names"
+    )
+    t.notMatch(printed, "\"mixinMethod\"",
         "Generated construction config does not include methods")
-    t.false(printed.includes("\"skippedBaseValue\""),
+    t.notMatch(printed, "\"skippedBaseValue\"",
         "Public-only construction config ignores base fields without an explicit public modifier")
-    t.false(printed.includes("\"skippedMixinValue\""),
+    t.notMatch(printed, "\"skippedMixinValue\"",
         "Public-only construction config ignores mixin fields without an explicit public modifier")
-    t.false(printed.includes("\"skippedOwnValue\""),
+    t.notMatch(printed, "\"skippedOwnValue\"",
         "Public-only construction config ignores consumer fields without an explicit public modifier")
 })
 
@@ -212,8 +212,8 @@ it("can use instance-type construction config mode", async (t: Test) => {
     })
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("static new<T>(props?: Partial<Consumer<T>>): Consumer<T>;"),
+    t.match(printed, "static new<T>(props?: Partial<Consumer<T>>): Consumer<T>;",
         "Instance-type construction config mode uses the whole consumer instance shape")
-    t.false(printed.includes("Pick<Consumer<T>"),
+    t.notMatch(printed, "Pick<Consumer<T>",
         "Instance-type construction config mode skips static public-property collection")
 })

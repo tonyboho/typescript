@@ -33,12 +33,12 @@ it("builds and runs the declaration fixture suite", async (t: Test) => {
         "utf8"
     )
 
-    t.true(mixinsDeclaration.includes("export declare const __SourceClass1$mixin"), "Named mixin factory is exported for downstream generated imports")
-    t.true(mixinsDeclaration.includes("export declare const SourceClass1"), "Named mixin runtime value is exported")
-    t.true(defaultMixinDeclaration.includes("export declare const __DefaultMixin$mixin"), "Default mixin factory is exported for downstream generated imports")
-    t.true(defaultMixinDeclaration.includes("declare const DefaultMixin"), "Default mixin runtime value is declared")
-    t.true(defaultMixinDeclaration.includes("export default DefaultMixin"), "Default mixin declaration preserves default export shape")
-    t.false(defaultMixinDeclaration.includes("export declare const DefaultMixin"), "Default mixin value is not accidentally exported as a named value")
+    t.match(mixinsDeclaration, "export declare const __SourceClass1$mixin", "Named mixin factory is exported for downstream generated imports")
+    t.match(mixinsDeclaration, "export declare const SourceClass1", "Named mixin runtime value is exported")
+    t.match(defaultMixinDeclaration, "export declare const __DefaultMixin$mixin", "Default mixin factory is exported for downstream generated imports")
+    t.match(defaultMixinDeclaration, "declare const DefaultMixin", "Default mixin runtime value is declared")
+    t.match(defaultMixinDeclaration, "export default DefaultMixin", "Default mixin declaration preserves default export shape")
+    t.notMatch(defaultMixinDeclaration, "export declare const DefaultMixin", "Default mixin value is not accidentally exported as a named value")
 
     assertSuccessfulCommand(
         t,

@@ -58,7 +58,7 @@ it("self-reference", async (t: Test) => {
     t.equal(canonicalChild.childMethod(5), "child/5/value1", "Canonical dependent mixin class can be instantiated")
     t.true(canonicalChild instanceof ChildMixin, "Canonical dependent mixin instance matches the direct mixin")
     t.true(canonicalChild instanceof SourceClass1, "Canonical dependent mixin instance matches the transitive mixin")
-    t.is(typeof ChildMixin[factory], "function", "Mixin factory is visible through the exported metadata symbol")
+    t.equal(typeof ChildMixin[factory], "function", "Mixin factory is visible through the exported metadata symbol")
     t.expect(ChildMixin[requirements]).toEqual([ SourceClass1 ])
     t.expect(SourceClass1[requirements]).toEqual([])
     t.equal(ChildMixin[base], Object, "Dependent mixin without required base reports Object")

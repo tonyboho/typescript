@@ -122,10 +122,10 @@ it("reports imported declaration mixins without runtime values", async (t: Test)
         )
         const output = commandOutput(result)
 
-        t.true(result.exitCode !== 0, "Broken declaration-only mixin package fails to build")
-        t.true(output.includes("Missing mixin runtime value"), output)
-        t.true(output.includes("BrokenMixin"), output)
-        t.true(output.includes("broken-mixin-package"), output)
+        t.not.isStrict(result.exitCode, 0, "Broken declaration-only mixin package fails to build")
+        t.match(output, "Missing mixin runtime value", "Reports missing runtime value")
+        t.match(output, "BrokenMixin", "Diagnostic names the broken mixin")
+        t.match(output, "broken-mixin-package", "Diagnostic names the package")
     } finally {
         await fixture.dispose()
     }

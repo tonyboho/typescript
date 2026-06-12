@@ -75,7 +75,7 @@ it("uses a local required-base mixin", async (t: Test) => {
     t.equal(canonicalRequired.mixinMethod(), "canonical/mixin", "Canonical required-base mixin methods work")
     t.true(canonicalRequired instanceof RequiredMixin, "Canonical required-base mixin matches itself")
     t.true(canonicalRequired instanceof RequiredBase, "Canonical required-base mixin inherits from the required base")
-    t.is(typeof RequiredMixin[factory], "function", "Required-base mixin factory is visible through the exported metadata symbol")
+    t.equal(typeof RequiredMixin[factory], "function", "Required-base mixin factory is visible through the exported metadata symbol")
     t.expect(RequiredMixin[requirements]).toEqual([])
     t.equal(RequiredMixin[base], RequiredBase, "Required-base mixin reports its required base through the exported metadata symbol")
     t.true(consumer instanceof RequiredMixin, "Consumer matches the required-base mixin")

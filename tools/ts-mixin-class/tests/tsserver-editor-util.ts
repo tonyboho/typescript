@@ -339,12 +339,7 @@ export async function assertQuickInfo(
         await request(sourceFile, "quickinfo", args)
     )
 
-    t.true(
-        expectedParts.every((expectedPart) => {
-            return quickInfo.displayString?.includes(expectedPart) === true
-        }),
-        quickInfo.displayString ?? `Missing quickinfo for ${memberName}`
-    )
+    assertQuickInfoParts(t, quickInfo.displayString, expectedParts, `Missing quickinfo for ${memberName}`)
 }
 
 export async function assertImportedQuickInfo(
@@ -358,12 +353,7 @@ export async function assertImportedQuickInfo(
         await importedRequest(sourceFile, "quickinfo", args)
     )
 
-    t.true(
-        expectedParts.every((expectedPart) => {
-            return quickInfo.displayString?.includes(expectedPart) === true
-        }),
-        quickInfo.displayString ?? "Missing imported quickinfo"
-    )
+    assertQuickInfoParts(t, quickInfo.displayString, expectedParts, "Missing imported quickinfo")
 }
 
 export async function assertFixtureLikeQuickInfo(
@@ -377,12 +367,24 @@ export async function assertFixtureLikeQuickInfo(
         await requestWithSourceText(sourceFile, fixtureLikeConsumerText, "quickinfo", args)
     )
 
-    t.true(
-        expectedParts.every((expectedPart) => {
-            return quickInfo.displayString?.includes(expectedPart) === true
-        }),
-        quickInfo.displayString ?? "Missing fixture-like quickinfo"
-    )
+    assertQuickInfoParts(t, quickInfo.displayString, expectedParts, "Missing fixture-like quickinfo")
+}
+
+function assertQuickInfoParts(
+    t: Test,
+    displayString: string | undefined,
+    expectedParts: string[],
+    missingMessage: string
+): void {
+    t.not.isStrict(displayString, undefined, missingMessage)
+
+    if (displayString === undefined) {
+        return
+    }
+
+    for (const expectedPart of expectedParts) {
+        t.match(displayString, expectedPart, `Quick info includes ${expectedPart}`)
+    }
 }
 
 export async function request(sourceFile: string, command: string, args: unknown): Promise<TsServerResponse> {

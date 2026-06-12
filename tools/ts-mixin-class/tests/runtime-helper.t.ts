@@ -77,7 +77,7 @@ it("exposes runtime metadata through exported symbols", async (t: Test) => {
         return class extends base {}
     }) as unknown as MixinFactory, [], RequiredBase)
 
-    t.is(typeof A[factory], "function", "Mixin factory is available through the exported symbol")
+    t.equal(typeof A[factory], "function", "Mixin factory is available through the exported symbol")
     t.expect(B[requirements]).toEqual([ A ])
     t.equal(RequiredMixin[base], RequiredBase, "Required base is available through the exported symbol")
     t.false("$mixin" in A, "String metadata property is not exposed on the runtime class")
