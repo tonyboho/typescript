@@ -5,79 +5,41 @@ ProgramTransformer plus a small runtime helper. The design goal is specified in
 `SPEC.md`; the original scratch spikes have mostly been promoted into fixture and
 tsserver tests.
 
-Current implementation status (SPEC.md plan):
+Implemented snapshot:
 
-- [x] Step 1: runtime helper with C3 linearization, cached mixin linearizations, cached
-  applications per `(mixin, base)`, and `Symbol.hasInstance` support. Generated consumer
-  bases call `mixinChain(Base, M1, M2)`; generated mixin values are registered with
-  `defineMixinClass(...)`. The canonical class returned by `defineMixinClass` is also
-  stored as the cached application of that mixin to its canonical requirement base, so
-  sibling/deeper dependents reuse existing chain segments instead of rebuilding them.
-- [x] Step 2: mixin-class expansion (print + reparse mode). A top-level class decorated
-  with `@mixin(...)` (imported from this package) is replaced with three declarations:
-  `interface X<T>` (instance member signatures), `const X$mixin = function <T>(base)
-  { return class extends base {...} }` (the single copy of the body) and
-  `const X = defineMixinClass(...) as unknown as ...` (the value, with statics extracted
-  via `ClassStatics`). Mixin dependencies declared with `implements` produce a typed
-  `base` parameter and a runtime dependency list.
-  If a mixin class declares `extends RequiredBase`, that base is treated as a required
-  base constraint, not as a fixed final base: the factory receives
-  `AnyConstructor<RequiredBase>`, the generated interface extends `RequiredBase`, and
-  `defineMixinClass(..., RequiredBase)` records the runtime requirement.
-  Consumers with an explicit base get a generated type-alias constraint that rejects
-  unrelated bases during typecheck. Imported/declaration mixins carry the constraint
-  through `RuntimeMixinClass<RequiredBase>` and `typeof Mixin["$requiredBase"]`.
-- [x] Step 3: cross-file mixin registry (program pre-scan + module resolution).
-  `tests/fixture-suite` imports mixin classes from `src/mixins.ts` and verifies that a
-  consumer in another file receives their members, statics, and generics at compile time.
-- [x] Step 4: consumer transformation. A class whose `implements` list references
-  mixin classes is expanded into `interface X$base` (repeats the mixin entries of the
-  implements list verbatim - declaration merging provides the member types) +
-  `class X$base extends (mixinChain(...) as unknown as typeof Base &
-  ClassStatics<...>)` (runtime chain with transitive dependencies
-  linearized/deduplicated) + the original
-  class with its `extends` switched to `X$base<TypeParams>`. Non-mixin implements
-  entries stay out of `X$base` so the contract check still applies.
-  Consumers without an explicit base get a generated empty base class (`X$empty`) and
-  the runtime chain starts from that class instead of `Object`; if a consumed mixin has
-  a required base, a no-base consumer starts from that required base instead.
-  Generic consumer bases (`extends Base<T>`) are supported for instance typing and
-  runtime.
-- [x] Step 5: fixture coverage for the core proof of concept. `tests/fixture-suite`
-  builds and runs under real `tsc + ts-patch` in standard and legacy decorator modes.
-  Coverage includes cross-file consumers (`basic.t.ts`), no-base consumers and consumer
-  subclassing (`heritage.t.ts`), static inheritance (`statics.t.ts`), self-reference
-  from inside a mixin body (`self-reference.t.ts`), required-base mixins
-  (`required-base.t.ts`), negative imported/declaration required-base builds, generic
-  bases, imported mixins, `super` chains, and runtime behavior.
-- [ ] Step 5 remaining: add more negative type fixtures (`@ts-expect-error`) for wrong
-  generic arguments/consumer contracts and add an explicit diamond/conflicting-order
-  fixture on the generated transformer output, not only the runtime helper.
-- [ ] Step 6: diagnostics. Constraint violations (constructor/private/protected/abstract
-  on a mixin class, members without explicit type annotations, unsupported exports, and
-  required-base combinations that cannot be checked structurally) currently throw
-  `MixinTransformError` or runtime errors; convert them to proper `ts.Diagnostic`
-  reporting with original source positions where possible. Static-name collision
-  reporting is still not implemented.
-- [x] Step 7 proof: declaration-file consumption between packages. `tests/fixture-suite`
-  emits declarations and `tests/declaration-fixture-suite` imports it as a workspace
-  dependency, then verifies typing and runtime through the generated `.d.ts`/`.js`
-  package boundary.
-- [ ] Step 7 remaining: harden public declaration emit for package-quality output:
-  exported helper/intermediate declarations, stable public names, unsupported
-  `export default` behavior, no-base consumer startup from imported `.d.ts`
-  required-base metadata, and README/API documentation still need review.
-- [x] Step 8: position-preserving IDE mode. The compiler host keeps original
-  `SourceFile.text` in noEmit/IDE mode and overlays a transformed AST. Tests cover
-  source-text preservation, source-position stability outside generated declarations,
-  tsserver definition, definitionAndBoundSpan, quickinfo, and rename for plain classes,
-  local/imported mixin members, fixture-like imported generic mixins, `this`, external
-  consumer access, and `super` calls.
-- [ ] Step 8 remaining: continue dogfooding in the IDE and add regression tests for any
-  editor operation that still behaves differently from plain TypeScript. Known areas to
-  watch: overlapping rename edits, SourceFile caching/reuse (`hasDifferentAstShape`),
-  and editor features that distinguish interface/type/value declarations.
-- Consumer limitations for now: consumers must be top-level named class declarations.
+- Runtime helper: C3 linearization, cached linearizations/applications, `Symbol.hasInstance`,
+  required-base runtime checks, and canonical requirement-chain reuse.
+- Emit transform: `@mixin()` classes expand into interface + factory + runtime value;
+  consumers expand through a merged intermediate base and `mixinChain(...)`.
+- Required-base mixins: `@mixin() class M extends RequiredBase` means "M can be applied
+  to RequiredBase or its descendants", not "M is permanently based on RequiredBase".
+  Explicit-base consumers get typecheck constraints; no-base consumers start from the
+  required base. This works for same-file, imported source, and `.d.ts` package-boundary
+  mixins, including generated value imports for required bases.
+- Cross-file registry: program pre-scan + module resolution handles imported mixins,
+  transitive dependencies, required-base metadata, and declaration-file consumers.
+- Fixture coverage: real `tsc + ts-patch` builds in standard/legacy decorator modes,
+  runtime Siesta runs, declaration-package consumers, no-base consumers, generic bases,
+  statics, self-reference, `super` chains, required-base positive/negative cases, and
+  tsserver editor behavior.
+
+Current plan:
+
+- Add more negative type fixtures for wrong generic arguments/consumer contracts and an
+  explicit diamond/conflicting-order fixture on generated transformer output, not only
+  the runtime helper.
+- Convert transformer failures to proper `ts.Diagnostic` reporting with original source
+  positions. Current constraint violations still throw `MixinTransformError` or runtime
+  errors in some cases. Static-name collision reporting is not implemented.
+- Harden public declaration emit for package-quality output: exported helper/intermediate
+  declarations, stable public names, unsupported `export default` behavior, and
+  README/API documentation.
+- Continue IDE dogfooding and add regression tests for any editor operation that still
+  behaves differently from plain TypeScript. Watch overlapping rename edits, SourceFile
+  caching/reuse (`hasDifferentAstShape`), and features that distinguish interface/type/
+  value declarations.
+- Consumer limitation to remove later: consumers must be top-level named class
+  declarations.
 - Generic consumer bases are supported for instance typing and runtime, but the generated
   runtime `extends` cast intentionally uses `AnyConstructor` plus
   `ClassStatics<typeof Base>` because TypeScript forbids referencing consumer type

@@ -36,7 +36,8 @@ export type RegisteredMixin = {
     fileName     : string,
     name         : string,
     // ключи реестра зависимостей (mixin-записи из implements)
-    dependencies : string[]
+    dependencies : string[],
+    requiredBaseName : string | undefined
 }
 
 export type MixinRegistry = Map<string, RegisteredMixin>
@@ -55,6 +56,10 @@ type ResolvedMixinRef = {
     localValueName   : string | undefined,
     localFactoryName : string,
     factoryImport    : { specifier: string, importedName: string } | undefined,
+    requiredBase     : {
+        localName : string,
+        import    : { specifier: string, importedName: string, localName: string } | undefined
+    } | undefined,
     dependencies     : string[],
     declaration      : ts.ClassDeclaration | undefined
 }
@@ -585,12 +590,6 @@ export function buildMixinRegistry(
         ...options
     }
 
-    type Candidate = {
-        sourceFile       : ts.SourceFile,
-        name             : string,
-        implementsNames  : string[]
-    }
-
     const candidates: Candidate[] = []
 
     for (const sourceFile of program.getSourceFiles()) {
@@ -623,11 +622,13 @@ export function buildMixinRegistry(
 
             candidates.push({
                 sourceFile,
-                name            : statement.name.text,
-                implementsNames : implementsTypes(tsInstance, statement)
+                name                 : statement.name.text,
+                dependencyNames      : implementsTypes(tsInstance, statement)
                     .map((heritageType) => heritageType.expression)
                     .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
-                    .map((expression) => expression.text)
+                    .map((expression) => expression.text),
+                requiredBaseName     : requiredBaseIdentifierName(tsInstance, statement),
+                declarationHeritage  : false
             })
         }
     }
@@ -636,9 +637,10 @@ export function buildMixinRegistry(
 
     for (const candidate of candidates) {
         registry.set(registryKey(candidate.sourceFile.fileName, candidate.name), {
-            fileName     : candidate.sourceFile.fileName,
-            name         : candidate.name,
-            dependencies : []
+            fileName          : candidate.sourceFile.fileName,
+            name              : candidate.name,
+            dependencies      : [],
+            requiredBaseName  : candidate.requiredBaseName
         })
     }
 
@@ -659,27 +661,40 @@ export function buildMixinRegistry(
             importMaps.set(fileName, importMap)
         }
 
-        for (const implementsName of candidate.implementsNames) {
-            const sameFileKey = registryKey(fileName, implementsName)
+        for (const dependencyName of candidate.dependencyNames) {
+            const sameFileKey = registryKey(fileName, dependencyName)
 
             if (registry.has(sameFileKey)) {
                 entry.dependencies.push(sameFileKey)
                 continue
             }
 
-            const imported = importMap.get(implementsName)
+            const imported = importMap.get(dependencyName)
 
             if (imported !== undefined) {
                 const importedKey = registryKey(imported.resolvedFileName, imported.importedName)
 
                 if (registry.has(importedKey)) {
                     entry.dependencies.push(importedKey)
+                    continue
                 }
+            }
+
+            if (candidate.declarationHeritage && entry.requiredBaseName === undefined) {
+                entry.requiredBaseName = dependencyName
             }
         }
     }
 
     return registry
+}
+
+type Candidate = {
+    sourceFile           : ts.SourceFile,
+    name                 : string,
+    dependencyNames      : string[],
+    requiredBaseName     : string | undefined,
+    declarationHeritage  : boolean
 }
 
 function shouldSkipRegistrySourceFile(sourceFile: ts.SourceFile): boolean {
@@ -693,8 +708,8 @@ function shouldSkipRegistrySourceFile(sourceFile: ts.SourceFile): boolean {
 function collectDeclarationFileMixinCandidates(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile
-): Array<{ sourceFile: ts.SourceFile, name: string, implementsNames: string[] }> {
-    const candidates: Array<{ sourceFile: ts.SourceFile, name: string, implementsNames: string[] }> = []
+): Candidate[] {
+    const candidates: Candidate[] = []
     const interfaces = new Map<string, ts.InterfaceDeclaration>()
 
     for (const statement of sourceFile.statements) {
@@ -720,8 +735,10 @@ function collectDeclarationFileMixinCandidates(
 
             candidates.push({
                 sourceFile,
-                name            : declaration.name.text,
-                implementsNames : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text))
+                name                 : declaration.name.text,
+                dependencyNames      : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text)),
+                requiredBaseName     : undefined,
+                declarationHeritage  : true
             })
         }
     }
@@ -814,6 +831,32 @@ function buildImportedNameMap(
     }
 
     return importMap
+}
+
+function importedRequiredBaseRef(
+    importMap: Map<string, { resolvedFileName: string, importedName: string }>,
+    resolvedFileName: string,
+    specifier: string,
+    importedName: string,
+    fallbackLocalName: string
+): ResolvedMixinRef["requiredBase"] {
+    for (const [ localName, imported ] of importMap) {
+        if (imported.resolvedFileName === resolvedFileName && imported.importedName === importedName) {
+            return {
+                localName,
+                import : undefined
+            }
+        }
+    }
+
+    return {
+        localName : fallbackLocalName,
+        import    : {
+            specifier,
+            importedName,
+            localName : fallbackLocalName
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -967,6 +1010,7 @@ function buildFileMixinContext(
                 localValueName   : name,
                 localFactoryName : name + mixinFactorySuffix,
                 factoryImport    : undefined,
+                requiredBase     : undefined,
                 dependencies     : [],
                 declaration      : statement
             }
@@ -1007,6 +1051,15 @@ function buildFileMixinContext(
                 if (registered === undefined) {
                     continue
                 }
+                const requiredBase = registered.requiredBaseName === undefined
+                    ? undefined
+                    : importedRequiredBaseRef(
+                        importMap,
+                        imported.resolvedFileName,
+                        statement.moduleSpecifier.text,
+                        registered.requiredBaseName,
+                        localName + "$requiredBase"
+                    )
 
                 const ref: ResolvedMixinRef = {
                     key,
@@ -1017,6 +1070,7 @@ function buildFileMixinContext(
                         specifier    : statement.moduleSpecifier.text,
                         importedName : imported.importedName + mixinFactorySuffix
                     },
+                    requiredBase,
                     dependencies     : registered.dependencies,
                     declaration      : undefined
                 }
@@ -1070,6 +1124,16 @@ function buildFileMixinContext(
                     specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
                     importedName : registered.name + mixinFactorySuffix
                 },
+                requiredBase     : registered.requiredBaseName === undefined
+                    ? undefined
+                    : {
+                        localName : registered.name + "$requiredBase",
+                        import    : {
+                            specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                            importedName : registered.requiredBaseName,
+                            localName    : registered.name + "$requiredBase"
+                        }
+                    },
                 dependencies     : registered.dependencies,
                 declaration      : undefined
             })
@@ -1470,7 +1534,7 @@ function expandConsumerClass(
         context
     )
     const implicitRequiredBase = extendsType === undefined
-        ? firstRequiredBaseType(tsInstance, linearized)
+        ? firstRequiredBaseType(tsInstance, context, linearized)
         : undefined
     const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
         ? name + consumerEmptyBaseSuffix
@@ -1634,11 +1698,26 @@ function cloneExpressionWithTypeArguments(
 
 function firstRequiredBaseType(
     tsInstance: TypeScript,
+    context: FileMixinContext,
     mixinRefs: ResolvedMixinRef[]
 ): ts.ExpressionWithTypeArguments | undefined {
     for (const ref of mixinRefs) {
         if (ref.declaration === undefined) {
-            continue
+            if (ref.requiredBase === undefined) {
+                continue
+            }
+
+            if (ref.requiredBase.import !== undefined) {
+                context.usedFactoryImports.set(
+                    `${ref.requiredBase.import.specifier}:${ref.requiredBase.import.localName}`,
+                    ref.requiredBase.import
+                )
+            }
+
+            return tsInstance.factory.createExpressionWithTypeArguments(
+                tsInstance.factory.createIdentifier(ref.requiredBase.localName),
+                undefined
+            )
         }
 
         const requiredBase = requiredBaseType(tsInstance, ref.declaration)
@@ -2162,6 +2241,17 @@ function requiredBaseType(
     declaration: ts.ClassDeclaration
 ): ts.ExpressionWithTypeArguments | undefined {
     return extendsClause(tsInstance, declaration)?.types[0]
+}
+
+function requiredBaseIdentifierName(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): string | undefined {
+    const requiredBase = requiredBaseType(tsInstance, declaration)
+
+    return requiredBase !== undefined && tsInstance.isIdentifier(requiredBase.expression)
+        ? requiredBase.expression.text
+        : undefined
 }
 
 function extendsClause(
