@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
@@ -21,6 +23,124 @@ type ExecFileFailure = Error & {
     code? : number | string,
     stdout? : string | Buffer,
     stderr? : string | Buffer,
+}
+
+export type TypeScriptFixtureOptions = {
+    sourceFiles : TypeScriptFixtureSourceFile[],
+    experimentalDecorators : boolean,
+    compilerOptions? : Record<string, unknown>,
+    compilerPlugins? : Record<string, unknown>[],
+    keep? : boolean
+}
+
+export type TypeScriptFixtureSourceFile = {
+    fileName : string,
+    text : string,
+}
+
+export type TypeScriptFixture = {
+    directory : string,
+    sourceFiles : Map<string, string>,
+    tsconfigFile : string,
+    dispose : () => Promise<void>
+}
+
+export async function createTypeScriptFixture(options: TypeScriptFixtureOptions): Promise<TypeScriptFixture> {
+    const directory       = await mkdtemp(path.join(tmpdir(), "ts-mixin-class-"))
+    const packageJsonFile = path.join(directory, "package.json")
+    const tsconfigFile    = path.join(directory, "tsconfig.json")
+    const sourceFilePaths = new Map(options.sourceFiles.map(({ fileName }) => [ fileName, path.join(directory, fileName) ]))
+
+    await writeJson(packageJsonFile, createPackageJson())
+    await writeJson(tsconfigFile, createTsconfig(
+        options.sourceFiles.map(({ fileName }) => fileName),
+        options.experimentalDecorators,
+        options.compilerOptions,
+        options.compilerPlugins
+    ))
+
+    for (const { fileName, text } of options.sourceFiles) {
+        const sourceFilePath = path.join(directory, fileName)
+
+        await mkdir(path.dirname(sourceFilePath), { recursive : true })
+        await writeFile(sourceFilePath, text)
+    }
+
+    await linkNodeModules(directory)
+
+    return {
+        directory,
+        sourceFiles : sourceFilePaths,
+        tsconfigFile,
+
+        async dispose() {
+            if (options.keep) {
+                return
+            }
+
+            await rm(directory, { force : true, recursive : true })
+        }
+    }
+}
+
+function createPackageJson(): unknown {
+    return {
+        name    : "ts-mixin-class-tsserver-fixture",
+        private : true,
+        type    : "module"
+    }
+}
+
+function createTsconfig(
+    sourceFileNames: string[],
+    experimentalDecorators: boolean,
+    compilerOptions: Record<string, unknown> | undefined,
+    compilerPlugins: Record<string, unknown>[] | undefined
+): unknown {
+    const {
+        plugins : compilerOptionPlugins,
+        ...restCompilerOptions
+    } = compilerOptions ?? {}
+    const extraCompilerOptionPlugins = Array.isArray(compilerOptionPlugins) ? compilerOptionPlugins : []
+
+    return {
+        compilerOptions : {
+            target                  : "ES2022",
+            module                  : "ESNext",
+            moduleResolution        : "Bundler",
+            lib                     : [ "ES2022", "DOM" ],
+            useDefineForClassFields : false,
+            skipLibCheck            : true,
+            outDir                  : "dist",
+            plugins                 : [
+                {
+                    transform        : "ts-mixin-class",
+                    transformProgram : true
+                },
+                ...(compilerPlugins ?? []),
+                ...extraCompilerOptionPlugins
+            ],
+            ...restCompilerOptions,
+            strict                  : true,
+            experimentalDecorators
+        },
+        files : sourceFileNames
+    }
+}
+
+async function linkNodeModules(directory: string): Promise<void> {
+    const nodeModules  = path.join(directory, "node_modules")
+    const bryntumScope = path.join(nodeModules, "@bryntum")
+
+    await mkdir(nodeModules, { recursive : true })
+    await mkdir(bryntumScope, { recursive : true })
+    await symlink(packageRoot, path.join(nodeModules, "ts-mixin-class"), "dir")
+    await symlink(path.join(packageRoot, "node_modules/typescript"), path.join(nodeModules, "typescript"), "dir")
+    await symlink(path.join(packageRoot, "node_modules/@bryntum/siesta"), path.join(bryntumScope, "siesta"), "dir")
+}
+
+async function writeJson(fileName: string, value: unknown): Promise<void> {
+    await writeFile(fileName, `${JSON.stringify(value, null, 4)}\n`)
 }
 
 export async function runPnpm(

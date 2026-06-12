@@ -367,6 +367,7 @@ export function createMixinClassCompilerHost(
             }
 
             if (!usePrintedSourceFile) {
+                preserveTopLevelStatementRanges(tsInstance, transformedSourceFile)
                 return setParentRecursivePreservingVersion(tsInstance, transformedSourceFile, sourceFile)
             }
 
@@ -379,6 +380,140 @@ export function createMixinClassCompilerHost(
             )
         }
     }
+}
+
+function preserveTopLevelStatementRanges(tsInstance: TypeScript, sourceFile: ts.SourceFile): void {
+    let previousEnd = 0
+
+    for (const statement of sourceFile.statements) {
+        const descendantRange = realDescendantRange(tsInstance, statement)
+
+        if (statement.pos < 0 || statement.end < 0) {
+            tsInstance.setTextRange(
+                statement,
+                descendantRange ?? generatedTextRange(sourceFile, previousEnd)
+            )
+        } else if (descendantRange !== undefined) {
+            tsInstance.setTextRange(statement, {
+                pos : Math.min(statement.pos, descendantRange.pos),
+                end : Math.max(statement.end, descendantRange.end)
+            })
+        }
+
+        if (statement.end >= 0) {
+            previousEnd = statement.end
+        }
+    }
+
+    const first = sourceFile.statements[0]
+    const last  = sourceFile.statements.at(-1)
+
+    if (first !== undefined && last !== undefined) {
+        tsInstance.setTextRange(sourceFile.statements, {
+            pos : Math.max(0, first.pos),
+            end : Math.max(first.end, last.end)
+        })
+    }
+
+    preserveSyntheticDescendantRanges(tsInstance, sourceFile, generatedTextRange(sourceFile, 0))
+}
+
+function realDescendantRange(tsInstance: TypeScript, node: ts.Node): ts.TextRange | undefined {
+    let range: ts.TextRange | undefined
+
+    const visit = (child: ts.Node): void => {
+        if (child.pos >= 0 && child.end >= 0) {
+            range = range === undefined
+                ? { pos : child.pos, end : child.end }
+                : {
+                    pos : Math.min(range.pos, child.pos),
+                    end : Math.max(range.end, child.end)
+                }
+        }
+
+        tsInstance.forEachChild(child, visit)
+    }
+
+    tsInstance.forEachChild(node, visit)
+
+    return range
+}
+
+function zeroWidthRange(position: number): ts.TextRange {
+    return {
+        pos : position,
+        end : position
+    }
+}
+
+function generatedTextRange(sourceFile: ts.SourceFile, position: number): ts.TextRange {
+    if (sourceFile.text.length === 0) {
+        return zeroWidthRange(0)
+    }
+
+    const pos = generatedTextPosition(sourceFile.text, position)
+
+    return {
+        pos,
+        end : pos + 1
+    }
+}
+
+function generatedTextPosition(text: string, position: number): number {
+    const initialPosition = Math.min(Math.max(0, position), text.length - 1)
+
+    if (!isLineBreak(text[initialPosition])) {
+        return initialPosition
+    }
+
+    for (let index = initialPosition - 1; index >= 0; index--) {
+        if (!isLineBreak(text[index])) {
+            return index
+        }
+    }
+
+    for (let index = initialPosition + 1; index < text.length; index++) {
+        if (!isLineBreak(text[index])) {
+            return index
+        }
+    }
+
+    return initialPosition
+}
+
+function isLineBreak(char: string | undefined): boolean {
+    return char === "\n" || char === "\r"
+}
+
+function preserveSyntheticDescendantRanges(
+    tsInstance: TypeScript,
+    node: ts.Node,
+    parentRange: ts.TextRange
+): void {
+    const currentRange = node.pos >= 0 && node.end >= 0
+        ? {
+            pos : node.pos,
+            end : node.end
+        }
+        : parentRange
+
+    if (node.pos < 0 || node.end < 0) {
+        tsInstance.setTextRange(node, currentRange)
+    }
+
+    tsInstance.forEachChild(node, (child) => {
+        preserveSyntheticDescendantRanges(tsInstance, child, currentRange)
+    })
+}
+
+function preserveTextRange<Range extends ts.TextRange>(
+    tsInstance: TypeScript,
+    range: Range,
+    original: ts.TextRange
+): Range {
+    tsInstance.setTextRange(range, original)
+
+    return range
 }
 
 function cloneSourceFileForTransform(
@@ -1003,42 +1138,27 @@ function expandMixinClass(
     const exportModifiers = exportModifiersOf(tsInstance, declaration)
     const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
 
-    const interfaceDeclaration = factory.createInterfaceDeclaration(
+    const interfaceDeclaration = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
         exportModifiers,
         ref.className,
         typeParameters,
         interfaceHeritageClauses(tsInstance, declaration),
         buildInterfaceMembers(tsInstance, sourceFile, declaration)
-    )
+    ), declaration)
 
-    const factoryStatement = factory.createVariableStatement(
+    const factoryStatement = preserveTextRange(tsInstance, factory.createVariableStatement(
         exportModifiers,
         factory.createVariableDeclarationList([
             factory.createVariableDeclaration(
                 ref.localFactoryName,
                 undefined,
                 undefined,
-                factory.createArrowFunction(
-                    undefined,
-                    typeParameters,
-                    [ createBaseParameter(tsInstance, declaration, context) ],
-                    undefined,
-                    undefined,
-                    factory.createClassExpression(
-                        undefined,
-                        undefined,
-                        undefined,
-                        [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-                            factory.createExpressionWithTypeArguments(factory.createIdentifier("base"), undefined)
-                        ]) ],
-                        declaration.members
-                    )
-                )
+                createMixinFactoryExpression(tsInstance, declaration, typeParameters, context)
             )
         ], tsInstance.NodeFlags.Const)
-    )
+    ), generatedTextRange(sourceFile, declaration.end))
 
-    const valueStatement = factory.createVariableStatement(
+    const valueStatement = preserveTextRange(tsInstance, factory.createVariableStatement(
         exportModifiers,
         factory.createVariableDeclarationList([
             factory.createVariableDeclaration(
@@ -1090,9 +1210,38 @@ function expandMixinClass(
                 )
             )
         ], tsInstance.NodeFlags.Const)
-    )
+    ), generatedTextRange(sourceFile, declaration.end))
 
     return [ interfaceDeclaration, factoryStatement, valueStatement ]
+}
+
+function createMixinFactoryExpression(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    typeParameters: ts.TypeParameterDeclaration[] | undefined,
+    context: FileMixinContext
+): ts.FunctionExpression {
+    const factory = tsInstance.factory
+
+    return factory.createFunctionExpression(
+        undefined,
+        undefined,
+        undefined,
+        typeParameters,
+        [ createBaseParameter(tsInstance, declaration, context) ],
+        undefined,
+        factory.createBlock([
+            factory.createReturnStatement(factory.createClassExpression(
+                undefined,
+                undefined,
+                undefined,
+                [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+                    factory.createExpressionWithTypeArguments(factory.createIdentifier("base"), undefined)
+                ]) ],
+                declaration.members
+            ))
+        ], true)
+    )
 }
 
 function asMixinFactory(tsInstance: TypeScript, expression: ts.Expression): ts.Expression {
@@ -1208,8 +1357,10 @@ function expandConsumerClass(
         directMixinRefs.map((ref) => ref.key),
         context
     )
+    const generatedRange = generatedTextRange(sourceFile, declaration.pos)
+    const generatedHeritageRange = generatedTextRange(sourceFile, declaration.heritageClauses?.pos ?? declaration.name.end)
 
-    const baseInterface = factory.createInterfaceDeclaration(
+    const baseInterface = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
         undefined,
         baseName,
         typeParameters,
@@ -1221,9 +1372,9 @@ function expandConsumerClass(
             ]
         ) ],
         []
-    )
+    ), generatedRange)
 
-    const baseClass = factory.createClassDeclaration(
+    const baseClass = preserveTextRange(tsInstance, factory.createClassDeclaration(
         undefined,
         baseName,
         typeParameters,
@@ -1248,20 +1399,24 @@ function expandConsumerClass(
             )
         ]) ],
         []
-    )
+    ), generatedRange)
 
     const updatedConsumer = factory.updateClassDeclaration(
         declaration,
         declaration.modifiers,
         declaration.name,
         declaration.typeParameters,
-        consumerHeritageClauses(tsInstance, declaration, baseName),
+        consumerHeritageClauses(tsInstance, declaration, baseName, generatedHeritageRange),
         declaration.members
     )
 
     const emptyBaseClass = emptyBaseName === undefined
         ? []
-        : [ factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []) ]
+        : [ preserveTextRange(
+            tsInstance,
+            factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
+            generatedRange
+        ) ]
 
     return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
 }
@@ -1316,8 +1471,9 @@ function createConsumerBaseHeadType(
 function consumerHeritageClauses(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
-    baseName: string
-): ts.HeritageClause[] {
+    baseName: string,
+    generatedRange: ts.TextRange
+): ts.NodeArray<ts.HeritageClause> {
     const factory = tsInstance.factory
 
     const typeArguments = declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
@@ -1326,15 +1482,19 @@ function consumerHeritageClauses(
         })
         : undefined
 
-    const extendsHeritage = factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+    const extendsHeritage = preserveTextRange(tsInstance, factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
         factory.createExpressionWithTypeArguments(factory.createIdentifier(baseName), typeArguments)
-    ])
+    ]), generatedRange)
+
+    preserveTextRange(tsInstance, extendsHeritage.types, generatedRange)
 
     const implementsHeritage = declaration.heritageClauses?.find((heritageClause) => {
         return heritageClause.token === tsInstance.SyntaxKind.ImplementsKeyword
     })
+    const clauses = implementsHeritage !== undefined ? [ extendsHeritage, implementsHeritage ] : [ extendsHeritage ]
+    const heritageRange = declaration.heritageClauses ?? generatedRange
 
-    return implementsHeritage !== undefined ? [ extendsHeritage, implementsHeritage ] : [ extendsHeritage ]
+    return preserveTextRange(tsInstance, factory.createNodeArray(clauses), heritageRange)
 }
 
 function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expression): ts.EntityName {

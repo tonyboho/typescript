@@ -66,7 +66,9 @@ it("expands an imported class-level @mixin() class into interface + factory + co
         ),
         "Helper import is added"
     )
-    t.true(printed.includes("(base: AnyConstructor) => class extends base"),
+    t.true(printed.includes("function <T>(base: AnyConstructor)"),
+        "Factory takes a typed base")
+    t.true(printed.includes("return class extends base"),
         "Factory takes a base and returns an anonymous class expression")
     t.true(printed.includes("static staticHelper"), "Static members stay in the factory body")
     t.false(printedInterface(printed).includes("staticHelper"), "Static members are not in the interface")
@@ -144,8 +146,10 @@ it("expands a dependent mixin with a typed base and a dependency chain", async (
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("(base: AnyConstructor<SourceClass1<T>>) => class extends base"),
+    t.true(printed.includes("function <T>(base: AnyConstructor<SourceClass1<T>>)"),
         "Dependent mixin base parameter is typed with the dependency")
+    t.true(printed.includes("return class extends base"),
+        "Dependent mixin factory returns an anonymous class expression")
     t.true(printed.includes("defineMixinClass(\"ChildMixin\", ChildMixin$mixin as unknown as MixinFactory, [SourceClass1])"),
         "Value const registers the direct dependency with the runtime helper")
     t.true(printed.includes("interface ChildMixin<T> extends SourceClass1<T>"),

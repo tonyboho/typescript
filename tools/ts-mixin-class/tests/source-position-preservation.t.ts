@@ -55,7 +55,7 @@ it("preserves source positions outside generated mixin declarations", async (t: 
     const transformedSourceFile = transformSourceFile(ts, originalSourceFile)
     const replacedRanges        = collectOriginalReplacedRanges(originalSourceFile, [ "SourceClass" ])
     const originalStable        = collectStableSignatures(originalSourceFile, originalSourceFile, replacedRanges)
-    const transformedStable     = collectStableSignatures(transformedSourceFile, transformedSourceFile, [])
+    const transformedStable     = collectStableSignatures(transformedSourceFile, transformedSourceFile, replacedRanges)
     const missingOriginal       = subtractSignatureCounts(originalStable.counts, transformedStable.counts)
     const unexpectedTransformed = subtractSignatureCounts(transformedStable.counts, originalStable.counts)
 
@@ -159,7 +159,8 @@ function collectStableSignatures(
             return
         }
 
-        if (node.kind !== ts.SyntaxKind.SourceFile && isInsideAnyRange(span, excludedRanges)) {
+        if (node.kind !== ts.SyntaxKind.SourceFile &&
+            (isInsideAnyRange(span, excludedRanges) || isGeneratedInsertionNode(node))) {
             return
         }
 
@@ -182,6 +183,26 @@ function collectStableSignatures(
 
 function isSynthetic(node: ts.Node): boolean {
     return node.pos < 0 || node.end < 0
+}
+
+function isGeneratedInsertionNode(node: ts.Node): boolean {
+    if (ts.isVariableStatement(node)) {
+        const declaration = node.declarationList.declarations[0]
+
+        return declaration !== undefined &&
+            ts.isIdentifier(declaration.name) &&
+            (declaration.name.text.endsWith("$mixin") || declaration.name.text === "SourceClass")
+    }
+
+    if ((ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name !== undefined) {
+        return node.name.text.endsWith("$base") || node.name.text.endsWith("$empty")
+    }
+
+    if (ts.isHeritageClause(node) && node.token === ts.SyntaxKind.ExtendsKeyword) {
+        return true
+    }
+
+    return false
 }
 
 function subtractSignatureCounts(left: Map<string, number>, right: Map<string, number>): string[] {
