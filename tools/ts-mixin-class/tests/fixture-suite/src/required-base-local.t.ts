@@ -71,6 +71,7 @@ it("uses a local required-base mixin", async (t: Test) => {
     t.equal(defaultConsumer.mixinMethod(), "default/mixin", "No-base consumer applies the mixin over the required base")
     t.true(consumer instanceof RequiredMixin, "Consumer matches the required-base mixin")
     t.true(consumer instanceof RealBase, "Consumer remains an instance of the concrete base")
+    t.true(defaultConsumer instanceof RequiredMixin, "No-base consumer matches the required-base mixin")
     t.true(defaultConsumer instanceof RequiredBase, "No-base consumer inherits from the required base")
 })
 

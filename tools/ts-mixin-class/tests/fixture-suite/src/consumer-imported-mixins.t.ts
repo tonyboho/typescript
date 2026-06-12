@@ -65,6 +65,10 @@ it("uses imported mixins with a generic consumer base", async (t: Test) => {
     t.equal(Consumer.staticMethod1(), "staticMethod1", "Class decorated with @mixin() compiles and runs")
     t.equal(Consumer.staticMethod2(), "staticMethod2", "Class decorated with @mixin() compiles and runs")
 
+    t.true(instance instanceof SourceClass1, "Imported consumer matches the first consumed mixin")
+    t.true(instance instanceof SourceClass2, "Imported consumer matches the second consumed mixin")
+    t.true(instance instanceof Base, "Imported consumer keeps its explicit base")
+
     t.equal(required.requiredMixinMethod(), "consumerBase/requiredBase/requiredMixin", "Imported required-base mixin uses the concrete base")
     t.equal(required.ownRequired(), "consumerBase/requiredBase/requiredMixin", "Imported required-base mixin is available through super")
     t.equal(RequiredConsumer.staticRequired(), "staticRequired", "Imported required-base consumer keeps base statics")

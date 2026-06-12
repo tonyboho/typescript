@@ -23,8 +23,9 @@ Implemented snapshot:
   transitive dependencies, required-base metadata, and declaration-file consumers.
 - Fixture coverage: real `tsc + ts-patch` builds in standard/legacy decorator modes,
   runtime Siesta runs, declaration-package consumers, no-base consumers, generic bases,
-  statics, self-reference, `super` chains, named default-exported mixins, required-base
-  positive/negative cases, consumer contract negative builds,
+  statics, self-reference, `super` chains, `instanceof` for direct and transitive
+  consumed mixins, named default-exported mixins, required-base positive/negative cases,
+  consumer contract negative builds,
   generated diamond/conflicting-order diagnostics, custom diagnostic-message checks,
   declaration-enabled tsserver diagnostics, and tsserver editor behavior.
 - Invalid mixin declaration constraints (abstract mixin/member, constructor,

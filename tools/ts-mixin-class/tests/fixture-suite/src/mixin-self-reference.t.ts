@@ -51,6 +51,8 @@ const e2: string = c.childMethod("x")
 it("self-reference", async (t: Test) => {
     t.equal(c.childMethod(true), "child/true/value1", "super calls in dependent mixin body work")
     t.equal(c.baseValue, 42, "Consumer gets base field")
+    t.true(c instanceof ChildMixin, "Consumer matches the direct dependent mixin")
+    t.true(c instanceof SourceClass1, "Consumer matches the transitive consumed mixin")
 
     const fresh = c.makeAnother()
 
