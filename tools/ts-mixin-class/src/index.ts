@@ -658,8 +658,18 @@ function preserveSyntheticDescendantRanges(
         tsInstance.setTextRange(node, currentRange)
     }
 
+    // NodeArray тоже должен получить диапазон: tsserver-сервисы (getChildren)
+    // читают nodes.pos напрямую и падают на отрицательных позициях
     tsInstance.forEachChild(node, (child) => {
         preserveSyntheticDescendantRanges(tsInstance, child, currentRange)
+    }, (children) => {
+        if (children.pos < 0 || children.end < 0) {
+            tsInstance.setTextRange(children, currentRange)
+        }
+
+        for (const child of children) {
+            preserveSyntheticDescendantRanges(tsInstance, child, currentRange)
+        }
     })
 }
 
@@ -1419,10 +1429,6 @@ function insertGeneratedImports(
     context: FileMixinContext,
     options: TransformOptions
 ): ts.Statement[] {
-    if (options.sourceView) {
-        return statements
-    }
-
     const factory = tsInstance.factory
 
     const generatedImports: ts.ImportDeclaration[] = [ createHelperTypeImport(tsInstance, context, options) ]
@@ -2026,20 +2032,40 @@ function expandSourceViewMixinClass(
         return tsInstance.isIdentifier(heritageType.expression) &&
             context.byLocalName.has(heritageType.expression.text)
     })
+    const generatedHeritageRange = generatedTextRange(
+        sourceFile,
+        declaration.heritageClauses?.pos ?? declaration.typeParameters?.end ?? declaration.name.end
+    )
 
-    if (dependencyHeritage.length === 0) {
-        return [ declaration ]
+    if (dependencyHeritage.length === 0 && requiredBase === undefined) {
+        const metadataExtendsClause = preserveTextRange(tsInstance, factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+            preserveTextRange(tsInstance, createSourceViewMixinMetadataBase(tsInstance, declaration, undefined, []), generatedHeritageRange)
+        ]), generatedHeritageRange)
+
+        return [ factory.updateClassDeclaration(
+            declaration,
+            declaration.modifiers,
+            declaration.name,
+            declaration.typeParameters,
+            preserveTextRange(
+                tsInstance,
+                factory.createNodeArray([ metadataExtendsClause, ...(declaration.heritageClauses ?? []) ]),
+                declaration.heritageClauses ?? generatedHeritageRange
+            ),
+            declaration.members
+        ) ]
     }
 
     const baseName       = generatedName(declaration.name.text, consumerBaseSuffix)
-    const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
-    const generatedRange = generatedTextRange(sourceFile, declaration.pos)
-    const generatedHeritageRange = generatedTextRange(sourceFile, declaration.heritageClauses?.pos ?? declaration.name.end)
+    const cloneTypeParameters = () => declaration.typeParameters?.map((typeParameter) => deepCloneNode(tsInstance, typeParameter))
+    const dependencyRefs = dependencyHeritage.map((heritageType) => {
+        return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
+    })
 
     const baseInterface = preserveSourceViewGeneratedClassLikeRange(tsInstance, factory.createInterfaceDeclaration(
         undefined,
         baseName,
-        typeParameters,
+        cloneTypeParameters(),
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
@@ -2050,17 +2076,13 @@ function expandSourceViewMixinClass(
         []
     ), declaration)
 
-    const baseClassHeritage = [
-        ...(requiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, requiredBase) ]),
-        ...dependencyHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
-    ]
     const baseClass = preserveSourceViewGeneratedClassLikeRange(tsInstance, factory.createClassDeclaration(
         undefined,
         baseName,
-        typeParameters,
-        baseClassHeritage.length === 0
-            ? undefined
-            : [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [ baseClassHeritage[0] ]) ],
+        cloneTypeParameters(),
+        [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+            createSourceViewMixinMetadataBase(tsInstance, declaration, requiredBase, dependencyRefs)
+        ]) ],
         []
     ), declaration)
 
@@ -2074,6 +2096,48 @@ function expandSourceViewMixinClass(
     )
 
     return [ baseInterface, baseClass, updatedDeclaration ]
+}
+
+// База mixin-класса в source view: каст, который добавляет к статикам класса
+// метаданные RuntimeMixinClass (символы factory/requirements/base) и статики
+// required base / зависимостей - так typeof MixinClass совпадает с runtime-значением
+function createSourceViewMixinMetadataBase(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    requiredBase: ts.ExpressionWithTypeArguments | undefined,
+    dependencyRefs: ResolvedMixinRef[]
+): ts.ExpressionWithTypeArguments {
+    const factory = tsInstance.factory
+
+    const headType = requiredBase === undefined
+        ? factory.createTypeReferenceNode(anyConstructorName, undefined)
+        : createSourceViewConsumerBaseHeadType(tsInstance, requiredBase, undefined, undefined)
+    const castType = factory.createIntersectionTypeNode([
+        headType,
+        ...dependencyRefs
+            .filter((ref) => ref.localValueName !== undefined)
+            .map((ref) => {
+                return factory.createTypeReferenceNode(classStaticsName, [
+                    factory.createTypeQueryNode(factory.createIdentifier(ref.localValueName as string))
+                ])
+            }),
+        createRuntimeMixinClassType(tsInstance, declaration)
+    ])
+
+    return factory.createExpressionWithTypeArguments(
+        factory.createParenthesizedExpression(
+            factory.createAsExpression(
+                factory.createAsExpression(
+                    requiredBase === undefined
+                        ? factory.createIdentifier("Object")
+                        : cloneNode(tsInstance, requiredBase.expression),
+                    factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
+                ),
+                castType
+            )
+        ),
+        undefined
+    )
 }
 
 function createMixinFactoryExpression(
@@ -2244,8 +2308,6 @@ function expandConsumerClass(
 
     const name           = declaration.name.text
     const baseName       = generatedName(name, consumerBaseSuffix)
-    const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
-    const generatedTypeParameters = cloneOptionalNodeArray(tsInstance, declaration.typeParameters)
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
 
     const mixinHeritage = consumedMixins(tsInstance, declaration, context)
@@ -2343,8 +2405,11 @@ function expandConsumerClass(
         ...missingRuntimeImportValidations,
         ...staticCollisionValidations
     ]
-    const checkedTypeParameters = options.sourceView
-        ? appendSourceViewValidationTypeParameters(tsInstance, undefined, consumerValidations)
+    // Каждая сгенерированная декларация получает собственные клоны параметров типов:
+    // переиспользование одного узла в двух декларациях ломает резолв имён в tsserver,
+    // потому что биндер перепривязывает parent узла к последней из деклараций
+    const checkedTypeParameters = () => options.sourceView
+        ? appendSourceViewValidationTypeParameters(tsInstance, declaration.typeParameters, consumerValidations)
         : appendRequiredBaseValidationTypeParameters(
             tsInstance,
             declaration.typeParameters,
@@ -2354,37 +2419,33 @@ function expandConsumerClass(
     const baseInterfaceNode = factory.createInterfaceDeclaration(
         undefined,
         baseName,
-        checkedTypeParameters,
+        checkedTypeParameters(),
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
-                ...(extendsType?.typeArguments !== undefined
-                    ? [ options.sourceView
-                        ? cloneExpressionWithAnyTypeArguments(tsInstance, extendsType)
-                        : cloneExpressionWithTypeArguments(tsInstance, extendsType) ]
+                // В source view база без аргументов типов тоже попадает в interface
+                // extends - так клоны heritage-типов сопоставляются с оригиналами 1:1
+                ...(extendsType !== undefined && (options.sourceView || extendsType.typeArguments !== undefined)
+                    ? [ cloneExpressionWithTypeArguments(tsInstance, extendsType) ]
                     : []),
                 ...(implicitRequiredBase === undefined
                     ? []
-                    : [ options.sourceView
-                        ? cloneExpressionWithAnyTypeArguments(tsInstance, implicitRequiredBase)
-                        : cloneExpressionWithTypeArguments(tsInstance, implicitRequiredBase) ]),
+                    : [ cloneExpressionWithTypeArguments(tsInstance, implicitRequiredBase) ]),
                 ...mixinHeritage.map((heritageType) => {
-                    return options.sourceView
-                        ? cloneExpressionWithAnyTypeArguments(tsInstance, heritageType)
-                        : cloneExpressionWithTypeArguments(tsInstance, heritageType)
+                    return cloneExpressionWithTypeArguments(tsInstance, heritageType)
                 })
             ]
         ) ],
         []
     )
     const baseInterface = options.sourceView
-        ? preserveGeneratedDeclarationRange(tsInstance, baseInterfaceNode, sourceViewGeneratedRange, declaration)
+        ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseInterfaceNode, declaration)
         : preserveGeneratedDeclarationRange(tsInstance, baseInterfaceNode, generatedRange, declaration)
 
     const baseClassNode = factory.createClassDeclaration(
         undefined,
         baseName,
-        checkedTypeParameters,
+        checkedTypeParameters(),
         [ consumerBaseClassHeritage(
             tsInstance,
             extendsType,
@@ -2397,7 +2458,7 @@ function expandConsumerClass(
         []
     )
     const baseClass = options.sourceView
-        ? preserveGeneratedDeclarationRange(tsInstance, baseClassNode, sourceViewGeneratedRange, declaration)
+        ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseClassNode, declaration)
         : preserveGeneratedDeclarationRange(tsInstance, baseClassNode, generatedRange, declaration)
 
     const constructionMembers = createConstructionMembers(
@@ -2409,7 +2470,7 @@ function expandConsumerClass(
         linearized,
         context,
         options,
-        generatedRange
+        options.sourceView ? generatedTextRange(sourceFile, declaration.members.end) : generatedRange
     )
     const updatedConsumerMembers = constructionMembers.length === 0
         ? declaration.members
@@ -2426,8 +2487,7 @@ function expandConsumerClass(
             generatedHeritageRange,
             generatedHeritageTypeRange,
             consumerValidations.map((validation) => validation.typeArgument),
-            !options.sourceView || originalExtendsClause !== undefined,
-            !options.sourceView
+            !options.sourceView || originalExtendsClause !== undefined
         ),
         updatedConsumerMembers
     )
@@ -2647,8 +2707,7 @@ function createConstructionMembers(
     options: TransformOptions,
     generatedRange: ts.TextRange
 ): ts.ClassElement[] {
-    if (options.sourceView ||
-        declaration.name === undefined ||
+    if (declaration.name === undefined ||
         hasStaticMemberNamed(tsInstance, declaration, "new") ||
         !isConstructionBaseOptIn(tsInstance, sourceFile, extendsType ?? implicitRequiredBase, options)
     ) {
@@ -2668,13 +2727,22 @@ function createConstructionMembers(
     )
     const consumerType = createConsumerInstanceType(tsInstance, declaration)
 
+    // Проверка смежности перегрузок в checker позиционная (subsequent.pos === node.end),
+    // поэтому в source view перегрузки получают последовательные диапазоны ненулевой
+    // ширины: нулевая ширина делает узел "missing" для checker
+    const overloadRange = (index: number): ts.TextRange => options.sourceView
+        ? { pos : generatedRange.pos + index, end : generatedRange.pos + index + 1 }
+        : generatedRange
+
     return [
         preserveGeneratedDeclarationRange(tsInstance, factory.createMethodDeclaration(
             staticModifier,
             undefined,
             "new",
             undefined,
-            cloneOptionalNodeArray(tsInstance, declaration.typeParameters),
+            declaration.typeParameters === undefined
+                ? undefined
+                : factory.createNodeArray(declaration.typeParameters.map((typeParameter) => deepCloneNode(tsInstance, typeParameter))),
             [ factory.createParameterDeclaration(
                 undefined,
                 undefined,
@@ -2684,7 +2752,7 @@ function createConstructionMembers(
             ) ],
             consumerType,
             undefined
-        ), generatedRange, declaration),
+        ), overloadRange(0), declaration),
         preserveGeneratedDeclarationRange(tsInstance, factory.createMethodDeclaration(
             staticModifier,
             undefined,
@@ -2718,7 +2786,7 @@ function createConstructionMembers(
                 factory.createTypeReferenceNode("T", undefined)
             ]),
             undefined
-        ), generatedRange, declaration),
+        ), overloadRange(1), declaration),
         preserveGeneratedDeclarationRange(tsInstance, factory.createMethodDeclaration(
             staticModifier,
             undefined,
@@ -2743,7 +2811,7 @@ function createConstructionMembers(
                     [ factory.createIdentifier("props") ]
                 ))
             ], true)
-        ), generatedRange, declaration)
+        ), overloadRange(2), declaration)
     ]
 }
 
@@ -3176,20 +3244,8 @@ function cloneExpressionWithTypeArguments(
     expression: ts.ExpressionWithTypeArguments
 ): ts.ExpressionWithTypeArguments {
     return tsInstance.factory.createExpressionWithTypeArguments(
-        cloneNode(tsInstance, expression.expression),
-        cloneOptionalNodeArray(tsInstance, expression.typeArguments)
-    )
-}
-
-function cloneExpressionWithAnyTypeArguments(
-    tsInstance: TypeScript,
-    expression: ts.ExpressionWithTypeArguments
-): ts.ExpressionWithTypeArguments {
-    return tsInstance.factory.createExpressionWithTypeArguments(
-        cloneNode(tsInstance, expression.expression),
-        expression.typeArguments?.map(() => {
-            return tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
-        })
+        deepCloneNode(tsInstance, expression.expression),
+        expression.typeArguments?.map((typeArgument) => deepCloneNode(tsInstance, typeArgument))
     )
 }
 
@@ -3581,8 +3637,8 @@ function appendSourceViewValidationTypeParameters(
     validations: RequiredBaseValidation[]
 ): ts.NodeArray<ts.TypeParameterDeclaration> | undefined {
     const typeParameters = [
-        ...(consumerTypeParameters?.map((typeParameter) => cloneNode(tsInstance, typeParameter)) ?? []),
-        ...validations.map((validation) => cloneNode(tsInstance, validation.typeParameter))
+        ...(consumerTypeParameters?.map((typeParameter) => deepCloneNode(tsInstance, typeParameter)) ?? []),
+        ...validations.map((validation) => deepCloneNode(tsInstance, validation.typeParameter))
     ]
 
     return typeParameters.length === 0 ? undefined : tsInstance.factory.createNodeArray(typeParameters)
@@ -3811,10 +3867,9 @@ function createSourceViewConsumerBaseCastType(
         ...mixinRefs
             .filter((ref) => ref.localValueName !== undefined)
             .map((ref) => {
-                return createInlineClassStaticsType(
-                    tsInstance,
+                return factory.createTypeReferenceNode(classStaticsName, [
                     factory.createTypeQueryNode(factory.createIdentifier(ref.localValueName as string))
-                )
+                ])
             })
     ]
 
@@ -3883,38 +3938,10 @@ function createSourceViewConsumerBaseHeadType(
     }
 
     return factory.createIntersectionTypeNode([
-        createInlineAnyConstructorType(tsInstance),
-        createInlineClassStaticsType(
-            tsInstance,
+        factory.createTypeReferenceNode(anyConstructorName, undefined),
+        factory.createTypeReferenceNode(classStaticsName, [
             factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression))
-        )
-    ])
-}
-
-function createInlineAnyConstructorType(tsInstance: TypeScript): ts.TypeNode {
-    const factory = tsInstance.factory
-
-    return factory.createConstructorTypeNode(
-        undefined,
-        undefined,
-        [ factory.createParameterDeclaration(
-            undefined,
-            factory.createToken(tsInstance.SyntaxKind.DotDotDotToken),
-            "args",
-            undefined,
-            factory.createArrayTypeNode(factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)),
-            undefined
-        ) ],
-        factory.createKeywordTypeNode(tsInstance.SyntaxKind.ObjectKeyword)
-    )
-}
-
-function createInlineClassStaticsType(tsInstance: TypeScript, classType: ts.TypeNode): ts.TypeNode {
-    const factory = tsInstance.factory
-
-    return factory.createTypeReferenceNode("Omit", [
-        classType,
-        factory.createLiteralTypeNode(factory.createStringLiteral("prototype"))
+        ])
     ])
 }
 
@@ -3935,12 +3962,11 @@ function consumerHeritageClauses(
     generatedRange: ts.TextRange,
     generatedTypeRange: ts.TextRange = generatedRange,
     extraTypeArguments: ts.TypeNode[] = [],
-    keepImplements = true,
-    includeOwnTypeArguments = true
+    keepImplements = true
 ): ts.NodeArray<ts.HeritageClause> {
     const factory = tsInstance.factory
 
-    const ownTypeArguments = includeOwnTypeArguments && declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
+    const ownTypeArguments = declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
         ? declaration.typeParameters.map((typeParameter): ts.TypeNode => {
             return factory.createTypeReferenceNode(typeParameter.name.text, undefined)
         })
@@ -4294,6 +4320,14 @@ function parameterSignatureRange(parameter: ts.ParameterDeclaration): ts.TextRan
 
 function cloneNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node): Node {
     return (tsInstance.factory as NodeFactoryWithCloneNode).cloneNode(node)
+}
+
+// Глубокий клон: factory.cloneNode копирует узел поверхностно, разделяя детей с
+// оригиналом - в source view это ломает parent-цепочки и резолв имён в tsserver
+function deepCloneNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node): Node {
+    return (tsInstance as unknown as {
+        getSynthesizedDeepClone<T extends ts.Node>(node: T, includeTrivia?: boolean): T
+    }).getSynthesizedDeepClone(node, false)
 }
 
 function cloneOptionalNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node | undefined): Node | undefined {

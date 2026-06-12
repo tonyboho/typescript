@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readFile, readdir } from "node:fs/promises"
 import path from "node:path"
 
 import { it } from "@bryntum/siesta/nodejs.js"
@@ -448,24 +448,31 @@ it("tsserver semantic diagnostics report declaration mixins without runtime valu
     }
 })
 
-it("tsserver semantic diagnostics stay clean for imported mixin fixture", async (t: Test) => {
+it("tsserver semantic diagnostics stay clean for fixture-suite runtime tests", async (t: Test) => {
     const fixtureDirectory = path.join(packageRoot, "tests", "fixture-suite")
-    const sourceFile       = path.join(fixtureDirectory, "src", "consumer-imported-mixins.t.ts")
-    const text             = await readFile(sourceFile, "utf8")
-    const diagnostics      = assertResponseBody<SemanticDiagnostic[]>(
-        t,
-        await runTypeScriptServerRequest(
-            fixtureDirectory,
-            sourceFile,
-            text,
-            "semanticDiagnosticsSync",
-            { file : sourceFile }
-        )
-    )
-    const messages         = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
+    const sourceDirectory  = path.join(fixtureDirectory, "src")
+    const sourceFiles      = (await readdir(sourceDirectory))
+        .filter((fileName) => fileName.endsWith(".t.ts"))
+        .filter((fileName) => !fileName.startsWith("construction-instance-type"))
+        .map((fileName) => path.join(sourceDirectory, fileName))
 
-    t.equal(messages, "", "consumer-imported-mixins.t.ts has no IDE semantic diagnostics")
-    t.expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual([])
+    for (const sourceFile of sourceFiles) {
+        const text        = await readFile(sourceFile, "utf8")
+        const diagnostics = assertResponseBody<SemanticDiagnostic[]>(
+            t,
+            await runTypeScriptServerRequest(
+                fixtureDirectory,
+                sourceFile,
+                text,
+                "semanticDiagnosticsSync",
+                { file : sourceFile }
+            )
+        )
+        const messages    = diagnostics.map((diagnostic) => diagnostic.text ?? diagnostic.message ?? "").join("\n")
+
+        t.equal(messages, "", `${path.basename(sourceFile)} has no IDE semantic diagnostics`)
+        t.expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual([])
+    }
 })
 
 it("tsserver semantic diagnostics report copied fixture type-errors without expect-error suppressions", async (t: Test) => {
