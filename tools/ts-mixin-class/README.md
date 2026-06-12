@@ -241,21 +241,32 @@ ordinary public API surface of the class.
 
 ## Limitations
 
-These are current architectural constraints, not accidental missing tests:
+These are current architectural constraints:
 
-- Mixin consumers must be named top-level class declarations. Anonymous consumers,
-  class expressions, and nested consumer declarations are rejected with custom
-  diagnostics.
-- Dynamic consumer base expressions such as `extends makeBase()` are not supported yet.
-  Use a named base class for now.
-- Mixin classes cannot declare constructors. Use field initializers and the `Base.new`
-  construction protocol for config-style initialization.
-- Mixin class members cannot be `private`, `protected`, `#private`, or abstract.
-- Mixin class properties, methods, accessors, and method parameters need explicit type
-  annotations.
-- Arbitrary constructor signatures from bases and mixins are not modeled.
-- Generated helper names use a double-underscore prefix, but collisions with user
-  declarations such as `__Source$mixin` are not scanned yet.
+Mixin consumers must be named top-level class declarations. The transformer inserts
+sibling declarations such as `__User$empty` and `__User$base`, then rewrites the consumer
+to extend the generated base. Anonymous classes, class expressions, and nested class
+declarations do not have a stable place where these helper declarations can be emitted
+without changing runtime scoping or evaluation order, so they are rejected with custom
+diagnostics.
+
+Mixin class members cannot be `private`, `protected`, `#private`, or abstract. A mixin is
+copied into generated inheritance positions and is also exposed structurally through
+interfaces for consumers. TypeScript private/protected identity and ECMAScript private
+fields are intentionally nominal and class-local, which makes them a poor fit for this
+kind of composition. Use ordinary members inside mixins, or keep private state in a
+non-mixin base class.
+
+Dynamic consumer base expressions such as `extends makeBase()` are not supported yet. A
+dynamic base would need to be evaluated exactly once, stored in a generated runtime
+constant, represented on both the instance and static sides, and emitted correctly in
+`.d.ts` files. Use a named base class for now.
+
+Mixin class properties, methods, accessors, and method parameters need explicit TypeScript
+type annotations. The transformer has to generate interface members and declaration
+output before relying on inferred implementation details. In ordinary classes TypeScript
+can infer public member types from initializers and method bodies, but mixins need a
+stable AST-level public surface that can be copied into generated declarations.
 
 ## Future Work
 
@@ -269,10 +280,6 @@ These are current architectural constraints, not accidental missing tests:
   type or constructor-based helper so user overrides can write something like
   `initialize(config?: ExactConfig<typeof User>)` and get exactly the same shape as
   `User.new(...)`.
-- Add explicit collision diagnostics for generated helper names and injected helper
-  imports.
-- Continue IDE dogfooding. Existing coverage includes definition, quick info, find
-  references, rename, source-position preservation, and semantic diagnostics.
 
 ## Technical Notes
 
