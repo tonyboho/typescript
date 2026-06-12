@@ -55,7 +55,7 @@ it("expands an imported class-level @mixin() class into interface + factory + co
     t.equal(interfaceDeclaration.typeParameters?.length, 1, "Interface keeps the class type parameters")
     t.true(hasExportModifier(interfaceDeclaration), "Interface keeps the export modifier")
 
-    t.true(findVariable(transformedFile, "SourceClass$mixin") !== undefined, "Mixin factory is generated")
+    t.true(findVariable(transformedFile, "__SourceClass$mixin") !== undefined, "Mixin factory is generated")
     t.true(findVariable(transformedFile, "SourceClass") !== undefined, "Value const is generated")
 
     t.false(printed.includes("@mixin"), "Marker decorator is removed")
@@ -74,9 +74,9 @@ it("expands an imported class-level @mixin() class into interface + factory + co
     t.false(printedInterface(printed).includes("staticHelper"), "Static members are not in the interface")
     t.true(
         printed.includes(
-            "defineMixinClass(\"SourceClass\", SourceClass$mixin as unknown as MixinFactory, []) as unknown as " +
+            "defineMixinClass(\"SourceClass\", __SourceClass$mixin as unknown as MixinFactory, []) as unknown as " +
             "(new <T>(...args: any[]) => SourceClass<T>) & " +
-            "ClassStatics<ReturnType<typeof SourceClass$mixin>> & RuntimeMixinClass"
+            "ClassStatics<ReturnType<typeof __SourceClass$mixin>> & RuntimeMixinClass"
         ),
         "Value const registers the factory with the runtime helper and keeps the declarative cast"
     )
@@ -98,7 +98,7 @@ it("expands a named default-exported mixin class", async (t: Test) => {
     const printed = printSourceFile(ts, transformedFile)
 
     t.true(printed.includes("interface DefaultMixin"), "Default mixin interface is generated")
-    t.true(printed.includes("export const DefaultMixin$mixin"), "Default mixin factory is exported for generated imports")
+    t.true(printed.includes("export const __DefaultMixin$mixin"), "Default mixin factory is exported for generated imports")
     t.true(printed.includes("const DefaultMixin = defineMixinClass"), "Default mixin value stays local")
     t.true(printed.includes("export default DefaultMixin"), "Default export points at the generated runtime value")
     t.false(printed.includes("export const DefaultMixin ="), "Default mixin is not accidentally exported as a named value")
@@ -173,7 +173,7 @@ it("expands a dependent mixin with a typed base and a dependency chain", async (
         "Dependent mixin base parameter is typed with the dependency")
     t.true(printed.includes("return class extends base"),
         "Dependent mixin factory returns an anonymous class expression")
-    t.true(printed.includes("defineMixinClass(\"ChildMixin\", ChildMixin$mixin as unknown as MixinFactory, [SourceClass1])"),
+    t.true(printed.includes("defineMixinClass(\"ChildMixin\", __ChildMixin$mixin as unknown as MixinFactory, [SourceClass1])"),
         "Value const registers the direct dependency with the runtime helper")
     t.true(printed.includes("interface ChildMixin<T> extends SourceClass1<T>"),
         "Generated interface extends the dependency")
@@ -205,13 +205,13 @@ it("expands a mixin required base declared with extends", async (t: Test) => {
         "Generated interface keeps the required base as an instance constraint")
     t.true(printed.includes("function (base: AnyConstructor<RequiredBase>)"),
         "Mixin factory parameter is constrained to the required base")
-    t.true(printed.includes("defineMixinClass(\"RequiredMixin\", RequiredMixin$mixin as unknown as MixinFactory, [], RequiredBase)"),
+    t.true(printed.includes("defineMixinClass(\"RequiredMixin\", __RequiredMixin$mixin as unknown as MixinFactory, [], RequiredBase)"),
         "Value const registers the required runtime base")
-    t.true(printed.includes("class Consumer$base<__mixinRequiredBase0 extends never>"),
+    t.true(printed.includes("class __Consumer$base<__mixinRequiredBase0 extends never>"),
         "Consumer base carries a required-base constraint for diagnostics")
     t.true(printed.includes("extends (mixinChain(RealBase, RequiredMixin)"),
         "Consumer still supplies its concrete descendant base to the runtime chain")
-    t.true(printed.includes("class Consumer extends Consumer$base<RealBase extends RequiredBase ? never :"),
+    t.true(printed.includes("class Consumer extends __Consumer$base<RealBase extends RequiredBase ? never :"),
         "Consumer maps required-base diagnostics to the original extends heritage")
     t.true(printed.includes("Mixin required base mismatch."),
         "Consumer required-base diagnostic carries a custom message")
@@ -396,16 +396,16 @@ it("expands a consumer class into a merged intermediate base", async (t: Test) =
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("interface Consumer$base<A> extends SourceClass1<string>, SourceClass2<A>"),
+    t.true(printed.includes("interface __Consumer$base<A> extends SourceClass1<string>, SourceClass2<A>"),
         "Merged interface repeats the implements list verbatim")
     t.true(
         printed.includes(
-            "class Consumer$base<A> extends (mixinChain(Base, SourceClass1, SourceClass2) as unknown as " +
+            "class __Consumer$base<A> extends (mixinChain(Base, SourceClass1, SourceClass2) as unknown as " +
             "typeof Base & ClassStatics<typeof SourceClass1> & ClassStatics<typeof SourceClass2>)"
         ),
         "Intermediate base delegates the runtime chain to the helper with the statics cast"
     )
-    t.true(printed.includes("class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, SourceClass2<A>"),
+    t.true(printed.includes("class Consumer<A> extends __Consumer$base<A> implements SourceClass1<string>, SourceClass2<A>"),
         "Consumer extends the intermediate base and keeps its implements clause")
 })
 
@@ -423,12 +423,12 @@ it("expands a consumer class without an explicit base", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("class Consumer$empty {\n}"),
+    t.true(printed.includes("class __Consumer$empty {\n}"),
         "An explicit empty base class is generated")
     t.true(
         printed.includes(
-            "class Consumer$base<T> extends (mixinChain(Consumer$empty, SourceClass1) as unknown as " +
-            "typeof Consumer$empty & ClassStatics<typeof SourceClass1>)"
+            "class __Consumer$base<T> extends (mixinChain(__Consumer$empty, SourceClass1) as unknown as " +
+            "typeof __Consumer$empty & ClassStatics<typeof SourceClass1>)"
         ),
         "Helper chain starts at the generated empty base and keeps mixin statics"
     )
@@ -478,7 +478,7 @@ it("supports a generic consumer base class", async (t: Test) => {
     const printed = printSourceFile(ts, transformedFile)
     const diagnostics = typecheckText(printed)
 
-    t.true(printed.includes("interface Consumer$base<A> extends Base<A>, SourceClass1<string>"),
+    t.true(printed.includes("interface __Consumer$base<A> extends Base<A>, SourceClass1<string>"),
         "Merged interface includes the instantiated generic base")
     t.expect(diagnostics).toEqual([])
 })
@@ -502,9 +502,9 @@ it("consumer transitively applies mixin dependencies", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("mixinChain(Consumer$empty, ChildMixin)"),
+    t.true(printed.includes("mixinChain(__Consumer$empty, ChildMixin)"),
         "Consumer delegates transitive dependency application to the runtime helper")
-    t.true(printed.includes("interface Consumer$base<T> extends ChildMixin<T>"),
+    t.true(printed.includes("interface __Consumer$base<T> extends ChildMixin<T>"),
         "Merged interface lists only the direct implements entries")
 })
 
@@ -527,7 +527,7 @@ it("does not treat non-mixin implements entries as mixins", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("interface Consumer$base<T> extends SourceClass1<T> {"),
+    t.true(printed.includes("interface __Consumer$base<T> extends SourceClass1<T> {"),
         "Merged interface contains only mixin entries")
     t.true(printed.includes("implements SourceClass1<T>, PlainContract"),
         "Consumer keeps the full implements list")

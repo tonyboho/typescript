@@ -64,11 +64,11 @@ it("preserves source positions outside generated mixin declarations", async (t: 
         "ImportDeclaration <import>",
         "ClassDeclaration Before",
         "InterfaceDeclaration SourceClass",
-        "VariableStatement SourceClass$mixin",
+        "VariableStatement __SourceClass$mixin",
         "VariableStatement SourceClass",
-        "ClassDeclaration Consumer$empty",
-        "InterfaceDeclaration Consumer$base",
-        "ClassDeclaration Consumer$base",
+        "ClassDeclaration __Consumer$empty",
+        "InterfaceDeclaration __Consumer$base",
+        "ClassDeclaration __Consumer$base",
         "ClassDeclaration Consumer",
         "ClassDeclaration After"
     ])

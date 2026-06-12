@@ -114,6 +114,11 @@ const runtimeMixinClassName = "RuntimeMixinClass"
 const mixinFactorySuffix = "$mixin"
 const consumerBaseSuffix = "$base"
 const consumerEmptyBaseSuffix = "$empty"
+const mixinValueSuffix = "$mixinValue"
+
+function generatedName(name: string, suffix: string): string {
+    return `__${name}${suffix}`
+}
 
 // ---------------------------------------------------------------------------
 // Runtime/типовая поверхность пакета, используемая сгенерированным кодом
@@ -1130,7 +1135,7 @@ function buildFileMixinContext(
                 key              : registryKey(sourceFile.fileName, name),
                 className        : name,
                 localValueName   : name,
-                localFactoryName : name + mixinFactorySuffix,
+                localFactoryName : generatedName(name, mixinFactorySuffix),
                 factoryImport    : undefined,
                 requiredBase     : undefined,
                 dependencies     : [],
@@ -1179,7 +1184,7 @@ function buildFileMixinContext(
                 if (registered === undefined) {
                     continue
                 }
-                const localValueName = imported.typeOnly ? localName + "$mixinValue" : localName
+                const localValueName = imported.typeOnly ? generatedName(localName, mixinValueSuffix) : localName
 
                 if (imported.typeOnly) {
                     const importedValueName = registered.defaultExport ? "default" : registered.name
@@ -1208,10 +1213,10 @@ function buildFileMixinContext(
                     key,
                     className        : registered.name,
                     localValueName,
-                    localFactoryName : localName + mixinFactorySuffix,
+                    localFactoryName : generatedName(localName, mixinFactorySuffix),
                     factoryImport    : {
                         specifier    : statement.moduleSpecifier.text,
-                        importedName : registered.name + mixinFactorySuffix
+                        importedName : generatedName(registered.name, mixinFactorySuffix)
                     },
                     requiredBase,
                     dependencies     : registered.dependencies,
@@ -1262,10 +1267,10 @@ function buildFileMixinContext(
                 key,
                 className        : registered.name,
                 localValueName   : undefined,
-                localFactoryName : registered.name + mixinFactorySuffix,
+                localFactoryName : generatedName(registered.name, mixinFactorySuffix),
                 factoryImport    : {
                     specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
-                    importedName : registered.name + mixinFactorySuffix
+                    importedName : generatedName(registered.name, mixinFactorySuffix)
                 },
                 requiredBase     : registered.requiredBaseName === undefined
                     ? undefined
@@ -1465,9 +1470,9 @@ function parameterNameForDiagnostic(
 // Mixin-класс разворачивается в три декларации (см. SPEC.md):
 //
 //     interface X<T> { ...сигнатуры инстанс-членов... }
-//     const X$mixin = <T>(base: AnyConstructor) => class extends base { ...тело... }
-//     const X = X$mixin(Object) as unknown as
-//         (new <T>(...args: any[]) => X<T>) & ClassStatics<ReturnType<typeof X$mixin>>
+//     const __X$mixin = <T>(base: AnyConstructor) => class extends base { ...тело... }
+//     const X = __X$mixin(Object) as unknown as
+//         (new <T>(...args: any[]) => X<T>) & ClassStatics<ReturnType<typeof __X$mixin>>
 
 function expandMixinClass(
     tsInstance: TypeScript,
@@ -1606,7 +1611,7 @@ function createMixinDeclarationDiagnosticAliases(
     return diagnostics.map((diagnostic, index) => {
         return preserveGeneratedDeclarationRange(tsInstance, factory.createTypeAliasDeclaration(
             undefined,
-            `${className}$mixinDeclarationError${index}`,
+            generatedName(className, `$mixinDeclarationError${index}`),
             [ factory.createTypeParameterDeclaration(
                 undefined,
                 "__mixinDeclarationError",
@@ -1640,7 +1645,7 @@ function expandSourceViewMixinClass(
         return [ declaration ]
     }
 
-    const baseName       = declaration.name.text + consumerBaseSuffix
+    const baseName       = generatedName(declaration.name.text, consumerBaseSuffix)
     const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
     const generatedHeritageRange = generatedTextRange(sourceFile, declaration.heritageClauses?.pos ?? declaration.name.end)
@@ -1816,10 +1821,10 @@ function createBaseParameter(
 //
 // Потребитель разворачивается в промежуточную базу с declaration merging (SPEC.md):
 //
-//     interface X$base<A> extends Mixin1<...>, Mixin2<...> {}
-//     class X$base<A> extends (mixinChain(Base, Mixin1, Mixin2) as unknown as
+//     interface __X$base<A> extends Mixin1<...>, Mixin2<...> {}
+//     class __X$base<A> extends (mixinChain(Base, Mixin1, Mixin2) as unknown as
 //         typeof Base & ClassStatics<typeof Mixin1> & ClassStatics<typeof Mixin2>) {}
-//     class X<A> extends X$base<A> implements Mixin1<...>, Mixin2<...> { ...тело без изменений... }
+//     class X<A> extends __X$base<A> implements Mixin1<...>, Mixin2<...> { ...тело без изменений... }
 
 function consumedMixins(
     tsInstance: TypeScript,
@@ -1846,7 +1851,7 @@ function expandConsumerClass(
     }
 
     const name           = declaration.name.text
-    const baseName       = name + consumerBaseSuffix
+    const baseName       = generatedName(name, consumerBaseSuffix)
     const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
     const generatedTypeParameters = cloneOptionalNodeArray(tsInstance, declaration.typeParameters)
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
@@ -1903,7 +1908,7 @@ function expandConsumerClass(
         ? firstRequiredBaseType(tsInstance, context, linearized)
         : undefined
     const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
-        ? name + consumerEmptyBaseSuffix
+        ? generatedName(name, consumerEmptyBaseSuffix)
         : undefined
     const requiredBaseValidations = extendsType === undefined
         ? []
@@ -2004,7 +2009,7 @@ function expandConsumerClassWithUnsupportedBaseDiagnostic(
     }
 
     const name          = declaration.name.text
-    const baseName      = name + consumerBaseSuffix
+    const baseName      = generatedName(name, consumerBaseSuffix)
     const extendsType   = extendsClause(tsInstance, declaration)?.types[0]
     const mixinHeritage = consumedMixins(tsInstance, declaration, context)
 
@@ -2088,9 +2093,9 @@ function expandConsumerClassWithLinearizationDiagnostic(
     }
 
     const name           = declaration.name.text
-    const baseName       = name + consumerBaseSuffix
+    const baseName       = generatedName(name, consumerBaseSuffix)
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
-    const emptyBaseName  = extendsType === undefined ? name + consumerEmptyBaseSuffix : undefined
+    const emptyBaseName  = extendsType === undefined ? generatedName(name, consumerEmptyBaseSuffix) : undefined
     const mixinHeritage  = consumedMixins(tsInstance, declaration, context)
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
     const originalExtendsClause = extendsClause(tsInstance, declaration)
@@ -2580,7 +2585,7 @@ function runtimeMixinClassRequiredBaseInstanceType(
     ])
 }
 
-// Каст runtime-цепочки: typeof Base (или typeof X$empty без явной базы)
+// Каст runtime-цепочки: typeof Base (или typeof __X$empty без явной базы)
 // плюс статика каждого применённого миксина, чьё значение доступно в файле
 function createConsumerBaseCastType(
     tsInstance: TypeScript,

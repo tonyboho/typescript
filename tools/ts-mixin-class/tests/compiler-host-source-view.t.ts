@@ -43,8 +43,8 @@ it("compiler host preserves source text in IDE mode while exposing transformed A
 
     t.is(sourceFile.text, sourceText, "IDE/default noEmit mode keeps original source text")
     t.true(findClass(sourceFile, "SourceClass") !== undefined, "IDE AST keeps the original mixin class for editor navigation")
-    t.true(findVariable(sourceFile, "SourceClass$mixin") === undefined, "IDE AST does not place a runtime factory over source ranges")
-    t.true(findClass(sourceFile, "Consumer$base") !== undefined, "Transformed AST has generated consumer base")
+    t.true(findVariable(sourceFile, "__SourceClass$mixin") === undefined, "IDE AST does not place a runtime factory over source ranges")
+    t.true(findClass(sourceFile, "__Consumer$base") !== undefined, "Transformed AST has generated consumer base")
 
     const consumer = findClass(sourceFile, "Consumer")
 
@@ -65,7 +65,7 @@ it('mode "ide" keeps original source text even when emit is enabled', async (t: 
     const sourceFile = getTransformedSourceFile(t, host, emitOptions, { mode : "ide" })
 
     t.is(sourceFile.text, sourceText, 'mode "ide" keeps original source text')
-    t.true(findClass(sourceFile, "Consumer$base") !== undefined, 'mode "ide" still exposes the consumer transform')
+    t.true(findClass(sourceFile, "__Consumer$base") !== undefined, 'mode "ide" still exposes the consumer transform')
 })
 
 it('mode "emit" prints transformed source even when noEmit is set', async (t: Test) => {
@@ -73,7 +73,7 @@ it('mode "emit" prints transformed source even when noEmit is set', async (t: Te
     const sourceFile = getTransformedSourceFile(t, host, preserveCompilerOptions, { mode : "emit" })
 
     t.true(sourceFile.text !== sourceText, 'mode "emit" replaces the source text')
-    t.true(sourceFile.text.includes("SourceClass$mixin"), 'mode "emit" source text contains generated declarations')
+    t.true(sourceFile.text.includes("__SourceClass$mixin"), 'mode "emit" source text contains generated declarations')
 })
 
 it("unknown mode option throws", async (t: Test) => {

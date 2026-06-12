@@ -39,11 +39,12 @@ Implemented snapshot:
 - Type-only imported mixins are supported for consumers: the source import remains usable
   for `implements`, and the transformer generates a separate runtime value import alias
   for `mixinChain(...)` and static typing.
+- Generated top-level helper names use a double-underscore prefix, for example
+  `__Source$mixin`, `__Consumer$base`, `__Consumer$empty`, and
+  `__Source$mixinValue`, to reduce accidental collisions with user declarations.
 
 Current plan:
 
-- Finish remaining diagnostics cleanup for unsupported shapes: static-name collision
-  reporting is not implemented.
 - Harden public declaration emit for package-quality output: exported helper/intermediate
   declarations, stable public names, default-exported mixin declaration shape, and
   README/API documentation.
