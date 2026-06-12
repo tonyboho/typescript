@@ -20,6 +20,8 @@ Current implementation status (SPEC.md plan):
   (runtime chain with transitive dependencies linearized/deduplicated) + the original
   class with its `extends` switched to `X$base<TypeParams>`. Non-mixin implements
   entries stay out of `X$base` so the contract check still applies.
+  Consumers without an explicit base get a generated empty base class (`X$empty`) and
+  the runtime chain starts from that class instead of `Object`.
   `tests/fixture-suite` (basic.t.ts) builds under real tsc + ts-patch.
 - [x] Step 1: runtime helper with C3 linearization, cached mixin linearizations, cached
   applications per `(mixin, base)`, and `Symbol.hasInstance` support. Generated consumer
@@ -56,8 +58,11 @@ Implementation notes:
   the transformer enforces this.
 - Tests: `tests/runtime-helper.t.ts` (C3 order, application cache, `instanceof`),
   `tests/source-transform.t.ts` (AST/printed assertions + a full in-memory
-  typecheck of transformed output via `typecheckText` in `tests/util.ts`) and
+  typecheck of transformed output via `typecheckText` in `tests/util.ts`),
+  `tests/source-position-preservation.t.ts` (stable source positions outside
+  generated top-level declarations) and
   `tests/fixture-build-and-runtime.t.ts` (real `tsc + ts-patch` standard/legacy decorator
   builds plus runtime Siesta runs of `tests/fixture-suite`).
-  Fixture coverage includes cross-file consumers (`basic.t.ts`), static inheritance
-  (`statics.t.ts`), and self-reference from inside a mixin body (`self-reference.t.ts`).
+  Fixture coverage includes cross-file consumers (`basic.t.ts`), no-base consumers and
+  consumer subclassing (`heritage.t.ts`), static inheritance (`statics.t.ts`), and
+  self-reference from inside a mixin body (`self-reference.t.ts`).

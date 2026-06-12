@@ -69,6 +69,7 @@ const mixinFactoryName = "MixinFactory"
 const runtimeMixinClassName = "RuntimeMixinClass"
 const mixinFactorySuffix = "$mixin"
 const consumerBaseSuffix = "$base"
+const consumerEmptyBaseSuffix = "$empty"
 
 // ---------------------------------------------------------------------------
 // Runtime/типовая поверхность пакета, используемая сгенерированным кодом
@@ -381,7 +382,6 @@ export function buildMixinRegistry(
 
     type Candidate = {
         sourceFile       : ts.SourceFile,
-        declaration      : ts.ClassDeclaration,
         name             : string,
         implementsNames  : string[]
     }
@@ -389,7 +389,16 @@ export function buildMixinRegistry(
     const candidates: Candidate[] = []
 
     for (const sourceFile of program.getSourceFiles()) {
-        if (shouldSkipSourceFile(sourceFile) || !sourceFile.text.includes(resolvedOptions.packageName)) {
+        if (shouldSkipRegistrySourceFile(sourceFile)) {
+            continue
+        }
+
+        if (sourceFile.isDeclarationFile) {
+            candidates.push(...collectDeclarationFileMixinCandidates(tsInstance, sourceFile))
+            continue
+        }
+
+        if (!sourceFile.text.includes(resolvedOptions.packageName)) {
             continue
         }
 
@@ -409,7 +418,6 @@ export function buildMixinRegistry(
 
             candidates.push({
                 sourceFile,
-                declaration     : statement,
                 name            : statement.name.text,
                 implementsNames : implementsTypes(tsInstance, statement)
                     .map((heritageType) => heritageType.expression)
@@ -467,6 +475,90 @@ export function buildMixinRegistry(
     }
 
     return registry
+}
+
+function shouldSkipRegistrySourceFile(sourceFile: ts.SourceFile): boolean {
+    if (sourceFile.isDeclarationFile) {
+        return !/\.[cm]?tsx?$/.test(normalizePath(sourceFile.fileName))
+    }
+
+    return shouldSkipFileName(sourceFile.fileName)
+}
+
+function collectDeclarationFileMixinCandidates(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile
+): Array<{ sourceFile: ts.SourceFile, name: string, implementsNames: string[] }> {
+    const candidates: Array<{ sourceFile: ts.SourceFile, name: string, implementsNames: string[] }> = []
+    const interfaces = new Map<string, ts.InterfaceDeclaration>()
+
+    for (const statement of sourceFile.statements) {
+        if (tsInstance.isInterfaceDeclaration(statement)) {
+            interfaces.set(statement.name.text, statement)
+        }
+    }
+
+    for (const statement of sourceFile.statements) {
+        if (!tsInstance.isVariableStatement(statement) ||
+            !hasModifier(tsInstance, statement, tsInstance.SyntaxKind.ExportKeyword)
+        ) {
+            continue
+        }
+
+        for (const declaration of statement.declarationList.declarations) {
+            if (!tsInstance.isIdentifier(declaration.name) ||
+                declaration.type === undefined ||
+                !typeReferencesRuntimeMixinClass(tsInstance, declaration.type)
+            ) {
+                continue
+            }
+
+            candidates.push({
+                sourceFile,
+                name            : declaration.name.text,
+                implementsNames : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text))
+            })
+        }
+    }
+
+    return candidates
+}
+
+function typeReferencesRuntimeMixinClass(tsInstance: TypeScript, typeNode: ts.TypeNode): boolean {
+    if (tsInstance.isTypeReferenceNode(typeNode) &&
+        tsInstance.isIdentifier(typeNode.typeName) &&
+        typeNode.typeName.text === runtimeMixinClassName
+    ) {
+        return true
+    }
+
+    if (tsInstance.isIntersectionTypeNode(typeNode) || tsInstance.isUnionTypeNode(typeNode)) {
+        return typeNode.types.some((type) => typeReferencesRuntimeMixinClass(tsInstance, type))
+    }
+
+    if (tsInstance.isParenthesizedTypeNode(typeNode)) {
+        return typeReferencesRuntimeMixinClass(tsInstance, typeNode.type)
+    }
+
+    return false
+}
+
+function interfaceExtendsNames(
+    tsInstance: TypeScript,
+    declaration: ts.InterfaceDeclaration | undefined
+): string[] {
+    const clause = declaration?.heritageClauses?.find((heritageClause) => {
+        return heritageClause.token === tsInstance.SyntaxKind.ExtendsKeyword
+    })
+
+    if (clause === undefined) {
+        return []
+    }
+
+    return clause.types
+        .map((heritageType) => heritageType.expression)
+        .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
+        .map((expression) => expression.text)
 }
 
 function registryKey(fileName: string, name: string): string {
@@ -1063,6 +1155,7 @@ function expandConsumerClass(
     const baseName       = name + consumerBaseSuffix
     const typeParameters = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
+    const emptyBaseName  = extendsType === undefined ? name + consumerEmptyBaseSuffix : undefined
 
     const mixinHeritage = consumedMixins(tsInstance, declaration, context)
     const directMixinRefs = mixinHeritage.map((heritageType) => {
@@ -1101,11 +1194,11 @@ function expandConsumerClass(
                                 directMixinRefs,
                                 extendsType !== undefined
                                     ? extendsType.expression
-                                    : factory.createIdentifier("Object")
+                                    : factory.createIdentifier(emptyBaseName as string)
                             ),
                             factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
                         ),
-                        createConsumerBaseCastType(tsInstance, extendsType, linearized)
+                        createConsumerBaseCastType(tsInstance, extendsType, emptyBaseName, linearized)
                     )
                 ),
                 undefined
@@ -1123,20 +1216,25 @@ function expandConsumerClass(
         declaration.members
     )
 
-    return [ baseInterface, baseClass, updatedConsumer ]
+    const emptyBaseClass = emptyBaseName === undefined
+        ? []
+        : [ factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []) ]
+
+    return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
 }
 
-// Каст runtime-цепочки: typeof Base (или AnyConstructor без явной базы)
+// Каст runtime-цепочки: typeof Base (или typeof X$empty без явной базы)
 // плюс статика каждого применённого миксина, чьё значение доступно в файле
 function createConsumerBaseCastType(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined,
     mixinRefs: ResolvedMixinRef[]
 ): ts.TypeNode {
     const factory = tsInstance.factory
 
     const types = [
-        createConsumerBaseHeadType(tsInstance, extendsType),
+        createConsumerBaseHeadType(tsInstance, extendsType, emptyBaseName),
         ...mixinRefs
             .filter((ref) => ref.localValueName !== undefined)
             .map((ref) => {
@@ -1151,12 +1249,13 @@ function createConsumerBaseCastType(
 
 function createConsumerBaseHeadType(
     tsInstance: TypeScript,
-    extendsType: ts.ExpressionWithTypeArguments | undefined
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined
 ): ts.TypeNode {
     const factory = tsInstance.factory
 
     if (extendsType === undefined) {
-        return factory.createTypeReferenceNode(anyConstructorName, undefined)
+        return factory.createTypeQueryNode(factory.createIdentifier(emptyBaseName as string))
     }
 
     if (extendsType.typeArguments === undefined) {

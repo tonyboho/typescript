@@ -2,6 +2,12 @@
     "name": "ts-mixin-class-fixture-suite",
     "private": true,
     "type": "module",
+    "exports": {
+        "./mixins": {
+            "types": "./dist/standard/mixins.d.ts",
+            "default": "./dist/standard/mixins.js"
+        }
+    },
     "scripts": {
         "build": "pnpm run build:standard && pnpm run build:legacy",
         "build:legacy": "tsc -p tsconfig.legacy.json",

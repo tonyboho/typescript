@@ -253,12 +253,14 @@ it("expands a consumer class without an explicit base", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
+    t.true(printed.includes("class Consumer$empty {\n}"),
+        "An explicit empty base class is generated")
     t.true(
         printed.includes(
-            "class Consumer$base<T> extends (mixinChain(Object, SourceClass1) as unknown as " +
-            "AnyConstructor & ClassStatics<typeof SourceClass1>)"
+            "class Consumer$base<T> extends (mixinChain(Consumer$empty, SourceClass1) as unknown as " +
+            "typeof Consumer$empty & ClassStatics<typeof SourceClass1>)"
         ),
-        "Helper chain starts at Object and the cast head is AnyConstructor"
+        "Helper chain starts at the generated empty base and keeps mixin statics"
     )
 })
 
@@ -330,7 +332,7 @@ it("consumer transitively applies mixin dependencies", async (t: Test) => {
     `))
     const printed = printSourceFile(ts, transformedFile)
 
-    t.true(printed.includes("mixinChain(Object, ChildMixin)"),
+    t.true(printed.includes("mixinChain(Consumer$empty, ChildMixin)"),
         "Consumer delegates transitive dependency application to the runtime helper")
     t.true(printed.includes("interface Consumer$base<T> extends ChildMixin<T>"),
         "Merged interface lists only the direct implements entries")

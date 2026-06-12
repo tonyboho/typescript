@@ -20,10 +20,10 @@
     },
     "include": [
         "src/**/*.ts",
-        "tests/**/*.ts",
-        "scratch/**/*.ts"
+        "tests/**/*.ts"
     ],
     "exclude": [
+        "tests/declaration-fixture-suite/**/*.ts",
         "tests/fixture-suite/**/*.ts"
     ]
 }
