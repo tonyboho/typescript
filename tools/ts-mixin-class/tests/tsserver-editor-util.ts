@@ -543,7 +543,7 @@ export function assertRenameAllowed(
 
     t.equal(response.command, "rename", "Response belongs to the rename command")
     t.true(body.info?.canRename, JSON.stringify(response.body))
-    t.equal(body.info?.displayName, displayName, "Rename info points at the source method")
+    t.equal(body.info?.displayName, displayName, "Rename info points at the source symbol")
     t.true(Array.isArray(body.locs) && body.locs.length > 0, "Rename response contains rename locations")
 
     return applyRenameLocations(sourceFile, body.locs ?? [], nextName)
@@ -574,11 +574,11 @@ function applyRenameLocations(
     return nextSource
 }
 
-function sourceSlice(source: string, span: TextSpan): string {
+export function sourceSlice(source: string, span: TextSpan): string {
     return source.slice(positionToIndex(source, span.start), positionToIndex(source, span.end))
 }
 
-function positionToIndex(source: string, position: TextPosition): number {
+export function positionToIndex(source: string, position: TextPosition): number {
     const lines = source.split("\n")
     const beforeLine = lines
         .slice(0, position.line - 1)

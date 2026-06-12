@@ -106,8 +106,9 @@ Implementation notes:
   emit assertions), `tests/source-position-preservation.t.ts` (stable source positions
   outside generated top-level declarations), `tests/tsserver-definition.t.ts`
   (definition/definitionAndBoundSpan through tsserver), `tests/tsserver-quickinfo.t.ts`
-  (quickinfo through tsserver), `tests/tsserver-rename.t.ts` (rename through tsserver),
-  `tests/tsserver-diagnostics.t.ts` (semantic diagnostics through tsserver),
+  (quickinfo through tsserver), `tests/tsserver-references.t.ts` (find references
+  through tsserver), `tests/tsserver-rename.t.ts` (method/property rename through
+  tsserver), `tests/tsserver-diagnostics.t.ts` (semantic diagnostics through tsserver),
   `tests/fixture-build-and-runtime.t.ts` (real `tsc + ts-patch` standard/legacy
   decorator builds plus runtime Siesta runs of `tests/fixture-suite`), and
   `tests/declaration-fixture-build-and-runtime.t.ts` (workspace package boundary using
