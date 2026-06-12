@@ -82,7 +82,7 @@ const t7: number | undefined = inferredNumberContainer.item
 // @ts-expect-error GenericContainer.new infers T = number from the item config property.
 const e3: string | undefined = inferredNumberContainer.item
 
-it("constructs generic consumers through Base.new config objects", async (t: Test) => {
+it("constructs generic consumers through Base.new public-only config objects", async (t: Test) => {
     t.true(genericConstructed instanceof GenericConsumer, "Generated static new returns a generic consumer")
     t.equal(genericConstructed.genericBaseValue, "base", "Generic base config property is assigned")
     t.equal(genericConstructed.genericMixinValue, "mixin", "Generic mixin config property is assigned")

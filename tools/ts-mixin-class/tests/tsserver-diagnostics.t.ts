@@ -497,7 +497,7 @@ it("tsserver semantic diagnostics report copied fixture type-errors without expe
     }
 })
 
-it("fixture type-errors keeps expect-error suppressions for both IDE diagnostics", async (t: Test) => {
+it("fixture type-errors keeps expect-error suppressions for expected diagnostics", async (t: Test) => {
     const typeErrorsSource = await readFile(
         path.join(packageRoot, "tests", "fixture-suite", "src", "type-errors.ts"),
         "utf8"
@@ -506,7 +506,9 @@ it("fixture type-errors keeps expect-error suppressions for both IDE diagnostics
         .split("\n")
         .filter((line) => line.includes("@ts-expect-error"))
 
-    t.equal(expectErrorLines.length, 3, "Fixture has one suppression per expected diagnostic")
+    t.equal(expectErrorLines.length, 5, "Fixture has one suppression per expected diagnostic")
+    t.true(expectErrorLines.some((line) => line.includes("ContractSourceClass1")), expectErrorLines.join("\n"))
+    t.true(expectErrorLines.some((line) => line.includes("ContractSourceClass2")), expectErrorLines.join("\n"))
     t.true(expectErrorLines.some((line) => line.includes("RequiredMixin")), expectErrorLines.join("\n"))
     t.true(expectErrorLines.some((line) => line.includes("BadLinearizationMixin")), expectErrorLines.join("\n"))
     t.true(expectErrorLines.some((line) => line.includes("StaticCollisionLeftMixin")), expectErrorLines.join("\n"))
