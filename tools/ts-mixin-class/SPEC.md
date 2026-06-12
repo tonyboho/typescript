@@ -178,7 +178,7 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
 - `implements` у потребителя сохраняется — чекер продолжает проверять совместимость переопределений.
 - Альтернатива — generic construct signature в касте (`new <A>(...args: any[]) => Base & SourceClass1<string> & SourceClass2<A>`, прецедент `class List<T> extends Array<T>`) — тоже работает (спайки v1/v2), но требует ручной сборки типа; merging-вариант проще и надёжнее. Держим как запасной для возможных edge-cases (например, abstract-члены).
 
-Потребитель без явного `extends` получает цепочку поверх `Object` и каст к `AnyConstructor`.
+Потребитель без явного `extends` получает цепочку поверх сгенерированного пустого класса. Если хотя бы один применённый миксин требует базу через `extends RequiredBase`, no-base потребитель стартует с этой required-base.
 
 Если потребитель сам является миксином (`@mixin()`-класс с `implements`), применяется трансформация миксина, а зависимость уходит в тип `base` — промежуточный класс не нужен.
 
@@ -198,8 +198,8 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
 
 - Члены не могут быть `private`/`protected` (ломают interface-extends и пересечения; правило уже зафиксировано в корневом AGENTS.md).
 - Явный `constructor` запрещён (v1; инициализаторы полей — можно). Конструирование идёт по цепочке, аргументы конструктора принадлежат базе потребителя.
-- `extends` у mixin-класса запрещён — зависимости выражаются через `implements` другого миксина.
-- Коллизии статики между миксинами одного потребителя — предупреждение (пересечение типов молча объединит, в runtime победит последний в цепочке).
+- `extends` у mixin-класса разрешён и означает required-base: миксин может быть применён только к этой базе или её наследнику. Это диагностируется в typecheck и проверяется в runtime.
+- Коллизии статики между базой и миксинами или между несколькими миксинами диагностируются конфигурируемо. По умолчанию включён дешёвый режим `staticCollisionCheck: "never"`; строгая assignability-проверка включается через `"strict"`, а `false` отключает диагностику.
 - `implements` не-миксина у `@mixin()`-класса — обычная семантика TypeScript (контракт без наследования поведения).
 
 # Архитектура
@@ -219,7 +219,7 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
    - сигнатуры членов интерфейса мапятся на имена соответствующих членов тела;
    - у потребителя меняется только узел цели `extends` (мапится на оригинальную базу), сгенерированные декларации мапятся на имя потребителя и узлы `implements`.
 
-   Известные точки внимания: дедупликация правок rename, попадающих в пересекающиеся диапазоны (образец — `tsserver-rename.t.ts` соседа); слоёный кэш SourceFile и `hasDifferentAstShape` для переиспользования распарсенных файлов tsserver-ом; фичи редактора, чувствительные к виду декларации (тип стал interface, значение — const).
+   Эти режимы покрыты тестами на сохранение текста исходника, definition/quickinfo/references/rename и semantic diagnostics.
 
 # Спайки
 
@@ -236,13 +236,22 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
 
 Негативные проверки в спайках оформлены через `@ts-expect-error` — «неизрасходованный» маркер сам становится ошибкой компиляции, поэтому спайки проверяют и то, что чекер реально ловит неверные типы.
 
-# План реализации
+# Состояние реализации и тестов
 
-1. **Runtime-хелпер** (`mixinChain`, `AnyConstructor`, `ClassStatics`, `Symbol.hasInstance`, имена классов) в runtime-входе пакета — C3-линеаризация, дедупликация и мемоизация. Юнит-тесты на цепочки, ромб, instanceof.
-2. **Трансформация mixin-класса** (режим «печать + репарс»): генерация interface + фабрики + const; перенос тела; сбор зависимостей из `implements`. Юнит-тесты уровня `transformSourceFile` разделены на `tests/source-transform-mixins.t.ts`, `tests/source-transform-consumer-emit.t.ts`, `tests/source-transform-consumer-typecheck.t.ts` и `tests/source-transform-diagnostics.t.ts`.
-3. **Реестр программы**: пре-скан `@mixin()`-классов, маппинг импортов через module resolution; сначала однофайловый случай, затем кросс-файловый сценарий вроде `tests/fixture-suite/src/consumer-imported-mixins.t.ts`.
-4. **Трансформация потребителя**: промежуточная база + merged interface + переключение `extends`; статика миксинов в касте.
-5. **Фикстуры** (`tests/fixture-suite`): покрыть дженерики (positive + negative через `@ts-expect-error`), ромб, кросс-файловый случай, `super`-цепочки, статику, self-reference, required-base и legacy-tsconfig вариант.
-6. **Диагностики**: private/protected, явный конструктор, extends у миксина, неразрешённый миксин, коллизии статики — с корректными позициями в оригинальном исходнике.
-7. **Declaration emit**: проверить читаемость и корректность сгенерированных `.d.ts` (экспортируемость кастов, импорты имён).
-8. **Editor-режим**: позиционно-сохраняющий AST-режим, портирование утилит и tsserver-тестов ts-lazy-property (`source-position-preservation`, `tsserver-*`).
+Реализованы и покрыты тестами:
+
+1. **Runtime-хелпер**: C3-линеаризация, дедупликация, мемоизация, required-base runtime checks, `Symbol.hasInstance`.
+2. **Трансформация mixin-класса**: interface + factory + runtime const, generic/self-reference/statics, named default export, invalid declaration diagnostics.
+3. **Реестр программы**: same-file, imported source, type-only imports, transitive dependencies, declaration-file package boundaries.
+4. **Трансформация потребителя**: intermediate base + declaration merging, generic bases, no-base consumers, required-base consumers, static typing.
+5. **Фикстуры**: standard/legacy decorator builds, runtime Siesta runs, declaration-package consumers, default-exported mixins, self-reference, statics, `super`, `instanceof`, canonical mixin instantiation.
+6. **Диагностики**: invalid mixin declarations, anonymous default mixins, anonymous consumers, unsupported dynamic base expressions, required-base mismatch, C3 linearization conflicts, missing runtime value for declaration-only mixins, configurable static collisions.
+7. **Editor-режим**: source-position preservation, tsserver definition/quickinfo/references/rename/semantic diagnostics.
+
+Оставшиеся сознательные ограничения:
+
+- Потребители должны быть именованными top-level class declarations. Вложенные объявления в блоках/functions/namespaces и class expressions требуют отдельной формы трансформации.
+- Dynamic consumer base expressions (`extends makeBase()`) пока не поддерживаются и получают diagnostic; будущая поддержка должна сохранить порядок вычисления и типизацию static/instance сторон.
+- Коллизии с injected helper imports/generated helper names пока не сканируются явно.
+- Конструирование через произвольные constructor signatures не моделируется. Планируемая форма — отдельный статический factory/new protocol.
+- `README.md` нужно обновить под текущую реализацию.

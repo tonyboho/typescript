@@ -64,18 +64,22 @@ Implemented snapshot:
   construction will later be modeled through an explicit static factory/new protocol
   instead of trying to merge arbitrary constructor signatures from mixins and bases.
 
-Current plan:
+Active gaps:
 
-- Continue IDE dogfooding and add regression tests for any editor operation that still
-  behaves differently from plain TypeScript. Watch overlapping rename edits, SourceFile
-  caching/reuse (`hasDifferentAstShape`), and features that distinguish interface/type/
-  value declarations.
 - Architectural consumer limitation: consumers must currently be named top-level class
   declarations. Named class declarations inside blocks/functions/namespaces could be
   supported later by transforming nested statement lists, but class expressions and
   anonymous classes need a separate transform shape because the current declaration
   merging strategy requires a stable declaration name for generated `__Name$base`
   siblings. Anonymous consumer declarations currently get a custom diagnostic.
+- Name collisions with injected helper imports and generated helper declarations are
+  not handled yet. Generated top-level names use a double-underscore prefix to reduce
+  risk, but there is no collision scan/diagnostic for user declarations such as
+  `__Source$mixin`, `__Consumer$base`, or imported helper aliases.
+- `README.md` is stale and still describes the early skeleton/no-op transformer.
+- Continue IDE dogfooding and add regression tests for any editor operation that still
+  behaves differently from plain TypeScript. Existing coverage includes definition,
+  quickinfo, references, rename, semantic diagnostics, and source-position preservation.
 
 Future Work:
 
@@ -87,6 +91,8 @@ Future Work:
   with `ClassStatics<typeof Consumer$runtimeBase>` and mixin statics. This needs careful
   declaration emit, source-range preservation, static typing, and runtime semantics tests
   before enabling.
+- Add the explicit construction protocol (planned static factory/new shape) instead of
+  trying to merge arbitrary constructor signatures from bases and mixins.
 
 Implementation notes:
 
@@ -102,9 +108,8 @@ Implementation notes:
 - Diagnostics that must work in both `tsc` and tsserver are generated via type-level
   diagnostics rather than real custom TS diagnostic codes. `extends` on a mixin is
   allowed and means "required base".
-- Known not-yet-handled: name collisions with the injected helper type import, mixin
-  classes nested in namespaces/functions.
-- `README.md` is stale and still describes the early skeleton/no-op transformer.
+- Unsupported shapes are tracked in Active gaps above: helper/generated-name collisions
+  and mixin/consumer classes nested in namespaces/functions.
 - Mixin class members must not use `private` or `protected` (root `AGENTS.md` rule);
   the transformer enforces this.
 - Tests: `tests/runtime-helper.t.ts` (C3 order, application cache, `instanceof`),
