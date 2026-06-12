@@ -184,8 +184,14 @@ it("expands a mixin required base declared with extends", async (t: Test) => {
         "Mixin factory parameter is constrained to the required base")
     t.true(printed.includes("defineMixinClass(\"RequiredMixin\", RequiredMixin$mixin as unknown as MixinFactory, [], RequiredBase)"),
         "Value const registers the required runtime base")
-    t.true(printed.includes("class Consumer$base extends (mixinChain(RealBase, RequiredMixin)"),
+    t.true(printed.includes("class Consumer$base<__mixinRequiredBase0 extends never>"),
+        "Consumer base carries a required-base constraint for diagnostics")
+    t.true(printed.includes("extends (mixinChain(RealBase, RequiredMixin)"),
         "Consumer still supplies its concrete descendant base to the runtime chain")
+    t.true(printed.includes("class Consumer extends Consumer$base<RealBase extends RequiredBase ? never :"),
+        "Consumer maps required-base diagnostics to the original extends heritage")
+    t.true(printed.includes("Mixin required base mismatch."),
+        "Consumer required-base diagnostic carries a custom message")
 })
 
 it("transformed output typechecks, including generics, statics and super calls", async (t: Test) => {
@@ -336,7 +342,8 @@ it("transformed required-base mixin rejects unrelated consumer bases at typechec
 
     t.true(
         diagnostics.some((diagnostic) => {
-            return diagnostic.includes("does not satisfy the constraint") &&
+            return diagnostic.includes("Mixin required base mismatch") &&
+                diagnostic.includes("RequiredMixin") &&
                 diagnostic.includes("RequiredBase")
         }),
         diagnostics.join("\n")

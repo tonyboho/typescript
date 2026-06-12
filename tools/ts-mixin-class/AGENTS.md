@@ -20,17 +20,18 @@ Implemented snapshot:
   transitive dependencies, required-base metadata, and declaration-file consumers.
 - Fixture coverage: real `tsc + ts-patch` builds in standard/legacy decorator modes,
   runtime Siesta runs, declaration-package consumers, no-base consumers, generic bases,
-  statics, self-reference, `super` chains, required-base positive/negative cases, and
-  tsserver editor behavior.
+  statics, self-reference, `super` chains, required-base positive/negative cases,
+  consumer contract negative builds, generated diamond/conflicting-order diagnostics,
+  and tsserver editor behavior.
 
 Current plan:
 
-- Add more negative type fixtures for wrong generic arguments/consumer contracts and an
-  explicit diamond/conflicting-order fixture on generated transformer output, not only
-  the runtime helper.
-- Convert transformer failures to proper `ts.Diagnostic` reporting with original source
-  positions. Current constraint violations still throw `MixinTransformError` or runtime
-  errors in some cases. Static-name collision reporting is not implemented.
+- Continue diagnostics cleanup. Required-base mismatches and consumer-side C3
+  linearization conflicts now surface as normal TypeScript diagnostics on the original
+  consumer class heritage, so `@ts-expect-error` works in fixture builds. Remaining
+  transformer-only failures (`MixinTransformError`: invalid mixin declarations,
+  unsupported shapes) still need source-positioned diagnostics and clearer user-facing
+  explanations. Static-name collision reporting is not implemented.
 - Harden public declaration emit for package-quality output: exported helper/intermediate
   declarations, stable public names, unsupported `export default` behavior, and
   README/API documentation.
@@ -57,10 +58,10 @@ Implementation notes:
   package marker.
 - Generated code imports `type AnyConstructor` / `type ClassStatics` from the package
   (specifier-level type imports - `createImportClause` changed its signature in TS 6).
-- Constraint violations (constructor/private/protected/abstract on a mixin class,
-  members without explicit type annotations) currently throw `MixinTransformError`;
-  proper ts.Diagnostic reporting is planned for step 6. `extends` on a mixin is allowed
-  and means "required base".
+- Invalid mixin declaration constraints (constructor/private/protected/abstract on a
+  mixin class, members without explicit type annotations) currently throw
+  `MixinTransformError`; proper source-positioned diagnostic reporting is still planned.
+  `extends` on a mixin is allowed and means "required base".
 - Known not-yet-handled: name collisions with the injected helper type import, mixin
   classes nested in namespaces/functions, `export default` mixin classes.
 - `README.md` is stale and still describes the early skeleton/no-op transformer.

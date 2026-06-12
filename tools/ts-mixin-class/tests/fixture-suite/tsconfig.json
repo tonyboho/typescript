@@ -22,6 +22,6 @@
         "experimentalDecorators": false
     },
     "include": [
-        "src/**/*.t.ts"
+        "src/**/*.ts"
     ]
 }

@@ -71,6 +71,22 @@ type FileMixinContext = {
     usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>
 }
 
+type RequiredBaseValidation = {
+    typeParameter : ts.TypeParameterDeclaration,
+    typeArgument  : ts.TypeNode
+}
+
+type RequiredBaseRequirement = {
+    typeNode : ts.TypeNode,
+    name     : string
+}
+
+class DependencyLinearizationError extends Error {
+    constructor(readonly pendingSequences: readonly string[][]) {
+        super("Cannot linearize mixin classes: inconsistent requirements")
+    }
+}
+
 const defaultTransformOptions: TransformOptions = {
     packageName   : "ts-mixin-class",
     decoratorName : "mixin",
@@ -546,6 +562,17 @@ function preserveTextRange<Range extends ts.TextRange>(
     tsInstance.setTextRange(range, original)
 
     return range
+}
+
+function preserveGeneratedDeclarationRange<Node extends ts.Node>(
+    tsInstance: TypeScript,
+    node: Node,
+    range: ts.TextRange,
+    original: ts.Node
+): Node {
+    tsInstance.setOriginalNode(node, original)
+
+    return preserveTextRange(tsInstance, node, range)
 }
 
 function cloneSourceFileForTransform(
@@ -1337,7 +1364,7 @@ function expandSourceViewMixinClass(
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
     const generatedHeritageRange = generatedTextRange(sourceFile, declaration.heritageClauses?.pos ?? declaration.name.end)
 
-    const baseInterface = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
+    const baseInterface = preserveGeneratedDeclarationRange(tsInstance, factory.createInterfaceDeclaration(
         undefined,
         baseName,
         typeParameters,
@@ -1349,15 +1376,15 @@ function expandSourceViewMixinClass(
             ]
         ) ],
         []
-    ), generatedRange)
+    ), generatedRange, declaration)
 
-    const baseClass = preserveTextRange(tsInstance, factory.createClassDeclaration(
+    const baseClass = preserveGeneratedDeclarationRange(tsInstance, factory.createClassDeclaration(
         undefined,
         baseName,
         typeParameters,
         undefined,
         []
-    ), generatedRange)
+    ), generatedRange, declaration)
 
     const updatedDeclaration = factory.updateClassDeclaration(
         declaration,
@@ -1529,10 +1556,27 @@ function expandConsumerClass(
     const directMixinRefs = mixinHeritage.map((heritageType) => {
         return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
     })
-    const linearized    = linearizeDependencies(
-        directMixinRefs.map((ref) => ref.key),
-        context
-    )
+    let linearized: ResolvedMixinRef[]
+
+    try {
+        linearized = linearizeDependencies(
+            directMixinRefs.map((ref) => ref.key),
+            context
+        )
+    } catch (error) {
+        if (error instanceof DependencyLinearizationError) {
+            return expandConsumerClassWithLinearizationDiagnostic(
+                tsInstance,
+                sourceFile,
+                declaration,
+                context,
+                directMixinRefs,
+                error
+            )
+        }
+
+        throw error
+    }
     const implicitRequiredBase = extendsType === undefined
         ? firstRequiredBaseType(tsInstance, context, linearized)
         : undefined
@@ -1546,11 +1590,27 @@ function expandConsumerClass(
         declaration.heritageClauses?.pos ?? declaration.name.end
     )
     const generatedHeritageTypeRange = extendsType ?? generatedHeritageRange
+    const requiredBaseValidations = extendsType === undefined
+        ? []
+        : createRequiredBaseValidations(
+            tsInstance,
+            context,
+            sourceFile,
+            declaration,
+            extendsType,
+            linearized,
+            generatedHeritageTypeRange
+        )
+    const checkedTypeParameters = appendRequiredBaseValidationTypeParameters(
+        tsInstance,
+        declaration.typeParameters,
+        requiredBaseValidations
+    )
 
-    const baseInterface = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
+    const baseInterface = preserveGeneratedDeclarationRange(tsInstance, factory.createInterfaceDeclaration(
         undefined,
         baseName,
-        generatedTypeParameters,
+        checkedTypeParameters,
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
@@ -1560,24 +1620,16 @@ function expandConsumerClass(
             ]
         ) ],
         []
-    ), generatedRange)
+    ), generatedRange, declaration)
 
-    const requiredBaseChecks = extendsType === undefined
-        ? []
-        : createRequiredBaseCheckAliases(
-            tsInstance,
-            sourceFile,
-            baseName,
-            declaration.typeParameters,
-            extendsType,
-            linearized,
-            generatedRange
-        )
-
-    const baseClass = preserveTextRange(tsInstance, factory.createClassDeclaration(
+    const baseClass = preserveGeneratedDeclarationRange(tsInstance, factory.createClassDeclaration(
         undefined,
         baseName,
-        cloneOptionalNodeArray(tsInstance, declaration.typeParameters),
+        appendRequiredBaseValidationTypeParameters(
+            tsInstance,
+            declaration.typeParameters,
+            requiredBaseValidations
+        ),
         [ consumerBaseClassHeritage(
             tsInstance,
             extendsType,
@@ -1588,7 +1640,7 @@ function expandConsumerClass(
             options
         ) ],
         []
-    ), generatedRange)
+    ), generatedRange, declaration)
 
     const updatedConsumer = factory.updateClassDeclaration(
         declaration,
@@ -1600,20 +1652,161 @@ function expandConsumerClass(
             declaration,
             baseName,
             generatedHeritageRange,
-            generatedHeritageTypeRange
+            generatedHeritageTypeRange,
+            requiredBaseValidations.map((validation) => validation.typeArgument)
         ),
         declaration.members
     )
 
     const emptyBaseClass = emptyBaseName === undefined
         ? []
-        : [ preserveTextRange(
+        : [ preserveGeneratedDeclarationRange(
             tsInstance,
             factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
-            generatedRange
+            generatedRange,
+            declaration
         ) ]
 
-    return [ ...emptyBaseClass, ...requiredBaseChecks, baseInterface, baseClass, updatedConsumer ]
+    return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
+}
+
+function expandConsumerClassWithLinearizationDiagnostic(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    context: FileMixinContext,
+    directMixinRefs: ResolvedMixinRef[],
+    error: DependencyLinearizationError
+): ts.Statement[] {
+    const factory = tsInstance.factory
+
+    if (declaration.name === undefined) {
+        throw new MixinTransformError(sourceFile, declaration, "A mixin consumer class must have a name")
+    }
+
+    const name           = declaration.name.text
+    const baseName       = name + consumerBaseSuffix
+    const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
+    const emptyBaseName  = extendsType === undefined ? name + consumerEmptyBaseSuffix : undefined
+    const mixinHeritage  = consumedMixins(tsInstance, declaration, context)
+    const generatedRange = generatedTextRange(sourceFile, declaration.pos)
+    const originalExtendsClause = extendsClause(tsInstance, declaration)
+    const generatedHeritageRange = originalExtendsClause ?? generatedTextRange(
+        sourceFile,
+        declaration.heritageClauses?.pos ?? declaration.name.end
+    )
+    const generatedHeritageTypeRange = extendsType ?? generatedHeritageRange
+    const diagnosticValidation = createLinearizationDiagnosticValidation(
+        tsInstance,
+        declaration,
+        linearizationDiagnosticMessage(directMixinRefs, context, error),
+        generatedHeritageTypeRange
+    )
+    const checkedTypeParameters = appendRequiredBaseValidationTypeParameters(
+        tsInstance,
+        declaration.typeParameters,
+        [ diagnosticValidation ]
+    )
+
+    const baseInterface = preserveGeneratedDeclarationRange(tsInstance, factory.createInterfaceDeclaration(
+        undefined,
+        baseName,
+        checkedTypeParameters,
+        [ factory.createHeritageClause(
+            tsInstance.SyntaxKind.ExtendsKeyword,
+            [
+                ...(extendsType?.typeArguments !== undefined ? [ cloneExpressionWithTypeArguments(tsInstance, extendsType) ] : []),
+                ...mixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+            ]
+        ) ],
+        []
+    ), generatedRange, declaration)
+
+    const baseClass = preserveGeneratedDeclarationRange(tsInstance, factory.createClassDeclaration(
+        undefined,
+        baseName,
+        appendRequiredBaseValidationTypeParameters(
+            tsInstance,
+            declaration.typeParameters,
+            [ diagnosticValidation ]
+        ),
+        [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+            cloneExpressionWithTypeArguments(
+                tsInstance,
+                consumerRuntimeBaseType(tsInstance, extendsType, undefined, emptyBaseName)
+            )
+        ]) ],
+        []
+    ), generatedRange, declaration)
+
+    const updatedConsumer = factory.updateClassDeclaration(
+        declaration,
+        declaration.modifiers,
+        declaration.name,
+        declaration.typeParameters,
+        consumerHeritageClauses(
+            tsInstance,
+            declaration,
+            baseName,
+            generatedHeritageRange,
+            generatedHeritageTypeRange,
+            [ diagnosticValidation.typeArgument ]
+        ),
+        declaration.members
+    )
+
+    const emptyBaseClass = emptyBaseName === undefined
+        ? []
+        : [ preserveGeneratedDeclarationRange(
+            tsInstance,
+            factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
+            generatedRange,
+            declaration
+        ) ]
+
+    return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
+}
+
+function createLinearizationDiagnosticValidation(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    message: string,
+    generatedRange: ts.TextRange
+): RequiredBaseValidation {
+    const factory = tsInstance.factory
+
+    return {
+        typeParameter : preserveTextRange(tsInstance, factory.createTypeParameterDeclaration(
+            undefined,
+            uniqueGeneratedTypeParameterName(declaration, "__mixinLinearizationError"),
+            factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
+            undefined
+        ), generatedRange),
+        typeArgument : preserveTextRange(
+            tsInstance,
+            factory.createLiteralTypeNode(factory.createStringLiteral(message)),
+            generatedRange
+        )
+    }
+}
+
+function linearizationDiagnosticMessage(
+    directMixinRefs: ResolvedMixinRef[],
+    context: FileMixinContext,
+    error: DependencyLinearizationError
+): string {
+    const directMixins = directMixinRefs.map((ref) => ref.className).join(", ")
+    const pending = error.pendingSequences
+        .map((sequence) => {
+            return sequence.map((key) => context.byKey.get(key)?.className ?? key).join(" -> ")
+        })
+        .join("; ")
+
+    return "Cannot linearize mixin classes with the C3 algorithm. " +
+        `Requested mixins: ${directMixins || "<none>"}. ` +
+        `Conflicting order requirements: ${pending || "<unknown>"}. ` +
+        "This means the mixins require incompatible inheritance order, for example A before B and B before A. " +
+        "Fix it by changing the implements order, removing one conflicting mixin, or splitting the incompatible mixins."
 }
 
 function consumerBaseClassHeritage(
@@ -1730,80 +1923,178 @@ function firstRequiredBaseType(
     return undefined
 }
 
-function createRequiredBaseCheckAliases(
+function createRequiredBaseValidations(
     tsInstance: TypeScript,
+    context: FileMixinContext,
     sourceFile: ts.SourceFile,
-    baseName: string,
-    consumerTypeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
+    declaration: ts.ClassDeclaration,
     extendsType: ts.ExpressionWithTypeArguments,
     mixinRefs: ResolvedMixinRef[],
     generatedRange: ts.TextRange
-): ts.TypeAliasDeclaration[] {
-    const aliases: ts.TypeAliasDeclaration[] = []
+): RequiredBaseValidation[] {
+    const validations: RequiredBaseValidation[] = []
 
     for (const ref of mixinRefs) {
-        const requiredBase = requiredBaseInstanceTypeOfMixinRef(tsInstance, ref)
+        const requiredBase = requiredBaseRequirementOfMixinRef(tsInstance, context, sourceFile, ref)
 
         if (requiredBase === undefined) {
             continue
         }
 
-        aliases.push(createRequiredBaseCheckAlias(
-            tsInstance,
-            sourceFile,
-            `${baseName}$requiredBase${aliases.length}`,
-            consumerTypeParameters,
-            extendsType,
-            requiredBase,
-            generatedRange
-        ))
+        const typeParameter = preserveTextRange(tsInstance, tsInstance.factory.createTypeParameterDeclaration(
+            undefined,
+            uniqueGeneratedTypeParameterName(declaration, `__mixinRequiredBase${validations.length}`),
+            tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
+            undefined
+        ), generatedRange)
+
+        validations.push({
+            typeParameter,
+            typeArgument : preserveTextRange(
+                tsInstance,
+                createRequiredBaseDiagnosticType(
+                    tsInstance,
+                    sourceFile,
+                    declaration,
+                    extendsType,
+                    ref,
+                    requiredBase
+                ),
+                generatedRange
+            )
+        })
     }
 
-    return aliases
+    return validations
 }
 
-function createRequiredBaseCheckAlias(
+function appendRequiredBaseValidationTypeParameters(
     tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    name: string,
     consumerTypeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
-    extendsType: ts.ExpressionWithTypeArguments,
-    requiredBase: ts.TypeNode,
-    generatedRange: ts.TextRange
-): ts.TypeAliasDeclaration {
-    const factory = tsInstance.factory
+    validations: RequiredBaseValidation[]
+): ts.NodeArray<ts.TypeParameterDeclaration> | undefined {
+    const typeParameters = [
+        ...(consumerTypeParameters?.map((typeParameter) => cloneNode(tsInstance, typeParameter)) ?? []),
+        ...validations.map((validation) => cloneNode(tsInstance, validation.typeParameter))
+    ]
 
-    return preserveTextRange(tsInstance, factory.createTypeAliasDeclaration(
-        undefined,
-        name,
-        [
-            ...(consumerTypeParameters?.map((typeParameter) => cloneNode(tsInstance, typeParameter)) ?? []),
-            factory.createTypeParameterDeclaration(
-                undefined,
-                "T",
-                requiredBase,
-                heritageTypeToTypeReference(tsInstance, extendsType)
-            )
-        ],
-        factory.createLiteralTypeNode(factory.createTrue())
-    ), generatedRange)
+    return typeParameters.length === 0 ? undefined : tsInstance.factory.createNodeArray(typeParameters)
 }
 
-function requiredBaseInstanceTypeOfMixinRef(
+function uniqueGeneratedTypeParameterName(
+    declaration: ts.ClassDeclaration,
+    baseName: string
+): string {
+    const existing = new Set(declaration.typeParameters?.map((typeParameter) => typeParameter.name.text) ?? [])
+    let name = baseName
+    let index = 0
+
+    while (existing.has(name)) {
+        index++
+        name = `${baseName}_${index}`
+    }
+
+    return name
+}
+
+function requiredBaseRequirementOfMixinRef(
     tsInstance: TypeScript,
+    context: FileMixinContext,
+    sourceFile: ts.SourceFile,
     ref: ResolvedMixinRef
-): ts.TypeNode | undefined {
+): RequiredBaseRequirement | undefined {
     if (ref.declaration !== undefined) {
         const requiredBase = requiredBaseType(tsInstance, ref.declaration)
 
-        return requiredBase === undefined ? undefined : heritageTypeToTypeReference(tsInstance, requiredBase)
+        return requiredBase === undefined ? undefined : {
+            typeNode : heritageTypeToTypeReference(tsInstance, requiredBase),
+            name     : heritageTypeText(tsInstance, sourceFile, requiredBase)
+        }
+    }
+
+    if (ref.requiredBase !== undefined) {
+        if (ref.requiredBase.import !== undefined) {
+            context.usedFactoryImports.set(
+                `${ref.requiredBase.import.specifier}:${ref.requiredBase.import.localName}`,
+                ref.requiredBase.import
+            )
+        }
+
+        return {
+            typeNode : tsInstance.factory.createTypeReferenceNode(ref.requiredBase.localName, undefined),
+            name     : ref.requiredBase.import?.importedName ?? ref.requiredBase.localName
+        }
     }
 
     if (ref.localValueName === undefined) {
         return undefined
     }
 
-    return runtimeMixinClassRequiredBaseInstanceType(tsInstance, ref.localValueName)
+    return {
+        typeNode : runtimeMixinClassRequiredBaseInstanceType(tsInstance, ref.localValueName),
+        name     : `${ref.className} required base`
+    }
+}
+
+function createRequiredBaseDiagnosticType(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    extendsType: ts.ExpressionWithTypeArguments,
+    mixinRef: ResolvedMixinRef,
+    requiredBase: RequiredBaseRequirement
+): ts.TypeNode {
+    const factory = tsInstance.factory
+    const actualBase = heritageTypeToTypeReference(tsInstance, extendsType)
+
+    return factory.createConditionalTypeNode(
+        actualBase,
+        cloneNode(tsInstance, requiredBase.typeNode),
+        factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
+        factory.createLiteralTypeNode(factory.createStringLiteral(
+            requiredBaseDiagnosticMessage(tsInstance, sourceFile, declaration, extendsType, mixinRef, requiredBase)
+        ))
+    )
+}
+
+function requiredBaseDiagnosticMessage(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    extendsType: ts.ExpressionWithTypeArguments,
+    mixinRef: ResolvedMixinRef,
+    requiredBase: RequiredBaseRequirement
+): string {
+    const consumerName = declaration.name?.text ?? "<anonymous consumer>"
+    const actualBase = heritageTypeText(tsInstance, sourceFile, extendsType)
+
+    return "Mixin required base mismatch. " +
+        `Mixin ${mixinRef.className} can only be applied to ${requiredBase.name} or a subclass of ${requiredBase.name}, ` +
+        `but ${consumerName} extends ${actualBase}. ` +
+        `This requirement comes from ${mixinRef.className} declaring extends ${requiredBase.name}; for mixin classes, ` +
+        "extends means a required consumer base, not a fixed runtime base. " +
+        `Fix: make ${consumerName} extend ${requiredBase.name} or one of its subclasses, choose a compatible base class, ` +
+        `or remove ${mixinRef.className} from the implements list.`
+}
+
+function heritageTypeText(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    heritageType: ts.ExpressionWithTypeArguments
+): string {
+    if (heritageType.pos >= 0 && heritageType.end >= 0) {
+        return heritageType.getText(sourceFile)
+    }
+
+    if (tsInstance.isIdentifier(heritageType.expression) || tsInstance.isPropertyAccessExpression(heritageType.expression)) {
+        const typeArguments = heritageType.typeArguments === undefined || heritageType.typeArguments.length === 0
+            ? ""
+            : "<...>"
+
+        return `${heritageType.expression.getText(sourceFile)}${typeArguments}`
+    }
+
+    return "<base class>"
 }
 
 function runtimeMixinClassRequiredBaseInstanceType(
@@ -1875,14 +2166,18 @@ function consumerHeritageClauses(
     declaration: ts.ClassDeclaration,
     baseName: string,
     generatedRange: ts.TextRange,
-    generatedTypeRange: ts.TextRange = generatedRange
+    generatedTypeRange: ts.TextRange = generatedRange,
+    extraTypeArguments: ts.TypeNode[] = []
 ): ts.NodeArray<ts.HeritageClause> {
     const factory = tsInstance.factory
 
-    const typeArguments = declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
-        ? declaration.typeParameters.map((typeParameter) => {
+    const ownTypeArguments = declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
+        ? declaration.typeParameters.map((typeParameter): ts.TypeNode => {
             return factory.createTypeReferenceNode(typeParameter.name, undefined)
         })
+        : []
+    const typeArguments = ownTypeArguments.length > 0 || extraTypeArguments.length > 0
+        ? [ ...ownTypeArguments, ...extraTypeArguments ]
         : undefined
 
     const extendsType = preserveTextRange(tsInstance, factory.createExpressionWithTypeArguments(
@@ -1925,26 +2220,86 @@ function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expressio
 
 function linearizeDependencies(
     dependencyKeys: string[],
-    context: FileMixinContext,
-    seen: Set<string> = new Set()
+    context: FileMixinContext
 ): ResolvedMixinRef[] {
-    const linearized: ResolvedMixinRef[] = []
+    return linearizeDependencyKeys(dependencyKeys, context).map((key) => {
+        return context.byKey.get(key)!
+    })
+}
 
-    for (const key of dependencyKeys) {
-        if (seen.has(key)) {
-            continue
+function linearizeDependencyKeys(
+    dependencyKeys: string[],
+    context: FileMixinContext,
+    cache: Map<string, string[]> = new Map()
+): string[] {
+    if (dependencyKeys.length === 0) {
+        return []
+    }
+
+    return mergeDependencyLinearizations([
+        ...dependencyKeys.map((key) => linearizeDependencyKey(key, context, cache)),
+        [ ...dependencyKeys ]
+    ])
+}
+
+function linearizeDependencyKey(
+    key: string,
+    context: FileMixinContext,
+    cache: Map<string, string[]>
+): string[] {
+    const cached = cache.get(key)
+
+    if (cached !== undefined) {
+        return cached
+    }
+
+    const ref = context.byKey.get(key)
+
+    if (ref === undefined) {
+        return [ key ]
+    }
+
+    const linearized = [
+        key,
+        ...linearizeDependencyKeys(ref.dependencies, context, cache)
+    ]
+
+    cache.set(key, linearized)
+
+    return linearized
+}
+
+function mergeDependencyLinearizations(sequences: string[][]): string[] {
+    const result: string[] = []
+    const pending = sequences
+        .map((sequence) => sequence.filter((key, index) => sequence.indexOf(key) === index))
+        .filter((sequence) => sequence.length > 0)
+
+    while (pending.length > 0) {
+        const candidate = pending
+            .map((sequence) => sequence[0])
+            .find((head) => {
+                return pending.every((sequence) => !sequence.slice(1).includes(head))
+            })
+
+        if (candidate === undefined) {
+            throw new DependencyLinearizationError(pending.map((sequence) => [ ...sequence ]))
         }
 
-        seen.add(key)
+        result.push(candidate)
 
-        const ref = context.byKey.get(key)
+        for (let index = pending.length - 1; index >= 0; index--) {
+            if (pending[index][0] === candidate) {
+                pending[index].shift()
+            }
 
-        if (ref !== undefined) {
-            linearized.push(...linearizeDependencies(ref.dependencies, context, seen), ref)
+            if (pending[index].length === 0) {
+                pending.splice(index, 1)
+            }
         }
     }
 
-    return linearized
+    return result
 }
 
 function createMixinChainExpression(
