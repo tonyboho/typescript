@@ -21,6 +21,8 @@ class Base<T> {
 
 class Consumer<A2> extends Base<A2> implements SourceClass1<string>, SourceClass2<A2> {
     method1(): string {
+
+        this.value1 = "value1"
         return super.method1()
     }
 

@@ -42,8 +42,8 @@ it("compiler host preserves source text in IDE mode while exposing transformed A
     const sourceFile = getTransformedSourceFile(t, host, preserveCompilerOptions, {})
 
     t.is(sourceFile.text, sourceText, "IDE/default noEmit mode keeps original source text")
-    t.true(findInterface(sourceFile, "SourceClass") !== undefined, "Transformed AST has generated mixin interface")
-    t.true(findVariable(sourceFile, "SourceClass$mixin") !== undefined, "Transformed AST has generated mixin factory")
+    t.true(findClass(sourceFile, "SourceClass") !== undefined, "IDE AST keeps the original mixin class for editor navigation")
+    t.true(findVariable(sourceFile, "SourceClass$mixin") === undefined, "IDE AST does not place a runtime factory over source ranges")
     t.true(findClass(sourceFile, "Consumer$base") !== undefined, "Transformed AST has generated consumer base")
 
     const consumer = findClass(sourceFile, "Consumer")
@@ -65,7 +65,7 @@ it('mode "ide" keeps original source text even when emit is enabled', async (t: 
     const sourceFile = getTransformedSourceFile(t, host, emitOptions, { mode : "ide" })
 
     t.is(sourceFile.text, sourceText, 'mode "ide" keeps original source text')
-    t.true(findInterface(sourceFile, "SourceClass") !== undefined, 'mode "ide" still exposes the transformed AST')
+    t.true(findClass(sourceFile, "Consumer$base") !== undefined, 'mode "ide" still exposes the consumer transform')
 })
 
 it('mode "emit" prints transformed source even when noEmit is set', async (t: Test) => {

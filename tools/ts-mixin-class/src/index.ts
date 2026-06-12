@@ -6,6 +6,9 @@ type TypeScript = ProgramTransformerExtras["ts"]
 type TypeScriptWithParents = TypeScript & {
     setParentRecursive<Node extends ts.Node>(node: Node, incremental: boolean): Node
 }
+type NodeFactoryWithCloneNode = ts.NodeFactory & {
+    cloneNode<Node extends ts.Node>(node: Node): Node
+}
 
 export type MixinClassTransformerConfig = PluginConfig & {
     packageName? : string,
@@ -17,7 +20,8 @@ export type MixinClassTransformerMode = "emit" | "ide"
 
 type TransformOptions = {
     packageName : string,
-    decoratorName : string
+    decoratorName : string,
+    sourceView : boolean
 }
 
 type MixinDecoratorImports = {
@@ -64,7 +68,8 @@ type FileMixinContext = {
 
 const defaultTransformOptions: TransformOptions = {
     packageName   : "ts-mixin-class",
-    decoratorName : "mixin"
+    decoratorName : "mixin",
+    sourceView    : false
 }
 
 const anyConstructorName = "AnyConstructor"
@@ -301,7 +306,8 @@ function setClassName(classConstructor: AnyConstructor<any>, name: string): void
 function resolveTransformOptions(config: MixinClassTransformerConfig): TransformOptions {
     return {
         packageName   : config.packageName ?? defaultTransformOptions.packageName,
-        decoratorName : config.decoratorName ?? defaultTransformOptions.decoratorName
+        decoratorName : config.decoratorName ?? defaultTransformOptions.decoratorName,
+        sourceView    : false
     }
 }
 
@@ -360,7 +366,10 @@ export function createMixinClassCompilerHost(
             const transformSourceFileInput = usePrintedSourceFile
                 ? sourceFile
                 : cloneSourceFileForTransform(tsInstance, sourceFile, languageVersionOrOptions)
-            const transformedSourceFile = transformSourceFile(tsInstance, transformSourceFileInput, options, crossFile)
+            const transformedSourceFile = transformSourceFile(tsInstance, transformSourceFileInput, {
+                ...options,
+                sourceView : !usePrintedSourceFile
+            }, crossFile)
 
             if (transformedSourceFile === transformSourceFileInput) {
                 return sourceFile
@@ -824,12 +833,12 @@ export function transformSourceFile(
 
             if (ref !== undefined && ref.declaration === statement) {
                 expandedAnything = true
-                return expandMixinClass(tsInstance, sourceFile, ref, context)
+                return expandMixinClass(tsInstance, sourceFile, ref, context, resolvedOptions)
             }
 
             if (consumedMixins(tsInstance, statement, context).length > 0) {
                 expandedAnything = true
-                return expandConsumerClass(tsInstance, sourceFile, statement, context)
+                return expandConsumerClass(tsInstance, sourceFile, statement, context, resolvedOptions)
             }
         }
 
@@ -1126,7 +1135,8 @@ function expandMixinClass(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     ref: ResolvedMixinRef,
-    context: FileMixinContext
+    context: FileMixinContext,
+    options: TransformOptions
 ): ts.Statement[] {
     const factory         = tsInstance.factory
     const declaration     = ref.declaration
@@ -1138,13 +1148,19 @@ function expandMixinClass(
     const exportModifiers = exportModifiersOf(tsInstance, declaration)
     const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
 
+    if (options.sourceView) {
+        return [ declaration ]
+    }
+
+    const interfaceMembers = buildInterfaceMembers(tsInstance, sourceFile, declaration)
+
     const interfaceDeclaration = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
         exportModifiers,
         ref.className,
         typeParameters,
         interfaceHeritageClauses(tsInstance, declaration),
-        buildInterfaceMembers(tsInstance, sourceFile, declaration)
-    ), declaration)
+        interfaceMembers
+    ), interfaceDeclarationRange(declaration, interfaceMembers))
 
     const factoryStatement = preserveTextRange(tsInstance, factory.createVariableStatement(
         exportModifiers,
@@ -1335,7 +1351,8 @@ function expandConsumerClass(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
-    context: FileMixinContext
+    context: FileMixinContext,
+    options: TransformOptions
 ): ts.Statement[] {
     const factory = tsInstance.factory
 
@@ -1378,26 +1395,7 @@ function expandConsumerClass(
         undefined,
         baseName,
         typeParameters,
-        [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-            factory.createExpressionWithTypeArguments(
-                factory.createParenthesizedExpression(
-                    factory.createAsExpression(
-                        factory.createAsExpression(
-                            createMixinChainExpression(
-                                tsInstance,
-                                directMixinRefs,
-                                extendsType !== undefined
-                                    ? extendsType.expression
-                                    : factory.createIdentifier(emptyBaseName as string)
-                            ),
-                            factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
-                        ),
-                        createConsumerBaseCastType(tsInstance, extendsType, emptyBaseName, linearized)
-                    )
-                ),
-                undefined
-            )
-        ]) ],
+        [ consumerBaseClassHeritage(tsInstance, extendsType, emptyBaseName, directMixinRefs, linearized, options) ],
         []
     ), generatedRange)
 
@@ -1419,6 +1417,56 @@ function expandConsumerClass(
         ) ]
 
     return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
+}
+
+function consumerBaseClassHeritage(
+    tsInstance: TypeScript,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    emptyBaseName: string | undefined,
+    directMixinRefs: ResolvedMixinRef[],
+    linearizedMixinRefs: ResolvedMixinRef[],
+    options: TransformOptions
+): ts.HeritageClause {
+    const factory = tsInstance.factory
+
+    if (options.sourceView) {
+        return factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+            extendsType === undefined
+                ? factory.createExpressionWithTypeArguments(factory.createIdentifier(emptyBaseName as string), undefined)
+                : cloneExpressionWithTypeArguments(tsInstance, extendsType)
+        ])
+    }
+
+    return factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
+        factory.createExpressionWithTypeArguments(
+            factory.createParenthesizedExpression(
+                factory.createAsExpression(
+                    factory.createAsExpression(
+                        createMixinChainExpression(
+                            tsInstance,
+                            directMixinRefs,
+                            extendsType !== undefined
+                                ? extendsType.expression
+                                : factory.createIdentifier(emptyBaseName as string)
+                        ),
+                        factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
+                    ),
+                    createConsumerBaseCastType(tsInstance, extendsType, emptyBaseName, linearizedMixinRefs)
+                )
+            ),
+            undefined
+        )
+    ])
+}
+
+function cloneExpressionWithTypeArguments(
+    tsInstance: TypeScript,
+    expression: ts.ExpressionWithTypeArguments
+): ts.ExpressionWithTypeArguments {
+    return tsInstance.factory.createExpressionWithTypeArguments(
+        cloneNode(tsInstance, expression.expression),
+        cloneOptionalNodeArray(tsInstance, expression.typeArguments)
+    )
 }
 
 // Каст runtime-цепочки: typeof Base (или typeof X$empty без явной базы)
@@ -1563,7 +1611,7 @@ function buildInterfaceMembers(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration
-): ts.TypeElement[] {
+): ts.NodeArray<ts.TypeElement> {
     const factory = tsInstance.factory
     const members: ts.TypeElement[] = []
 
@@ -1601,14 +1649,14 @@ function buildInterfaceMembers(
                 )
             }
 
-            members.push(factory.createPropertySignature(
+            members.push(preserveTextRange(tsInstance, factory.createPropertySignature(
                 hasModifier(tsInstance, member, tsInstance.SyntaxKind.ReadonlyKeyword)
                     ? [ factory.createToken(tsInstance.SyntaxKind.ReadonlyKeyword) ]
                     : undefined,
-                member.name,
-                member.questionToken,
-                member.type
-            ))
+                cloneNode(tsInstance, member.name),
+                cloneOptionalNode(tsInstance, member.questionToken),
+                cloneNode(tsInstance, member.type)
+            ), interfaceMemberRange(member)))
             continue
         }
 
@@ -1620,14 +1668,14 @@ function buildInterfaceMembers(
                 )
             }
 
-            members.push(factory.createMethodSignature(
+            members.push(preserveTextRange(tsInstance, factory.createMethodSignature(
                 undefined,
-                member.name,
-                member.questionToken,
-                member.typeParameters,
+                cloneNode(tsInstance, member.name),
+                cloneOptionalNode(tsInstance, member.questionToken),
+                cloneOptionalNodeArray(tsInstance, member.typeParameters),
                 member.parameters.map((parameter) => signatureParameter(tsInstance, sourceFile, parameter)),
-                member.type
-            ))
+                cloneNode(tsInstance, member.type)
+            ), interfaceMemberRange(member)))
             continue
         }
 
@@ -1640,22 +1688,37 @@ function buildInterfaceMembers(
 
             emittedAccessors.add(name)
 
-            members.push(accessorSignature(
-                tsInstance, sourceFile, member.name, getters.get(name), setters.get(name)
-            ))
+            members.push(accessorSignature(tsInstance, sourceFile, member, getters.get(name), setters.get(name)))
             continue
         }
 
         throw new MixinTransformError(sourceFile, member, "Unsupported mixin class member")
     }
 
-    return members
+    const membersRange = members.length === 0
+        ? zeroWidthRange(declaration.name?.end ?? declaration.end)
+        : {
+            pos : members[0].pos,
+            end : members.at(-1)!.end
+        }
+
+    return preserveTextRange(tsInstance, factory.createNodeArray(members), membersRange)
+}
+
+function interfaceDeclarationRange(
+    declaration: ts.ClassDeclaration,
+    members: ts.NodeArray<ts.TypeElement>
+): ts.TextRange {
+    return {
+        pos : declaration.pos,
+        end : Math.max(declaration.name?.end ?? declaration.end, members.end)
+    }
 }
 
 function accessorSignature(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
-    name: ts.PropertyName,
+    member: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
     getter: ts.GetAccessorDeclaration | undefined,
     setter: ts.SetAccessorDeclaration | undefined
 ): ts.PropertySignature {
@@ -1667,17 +1730,17 @@ function accessorSignature(
 
     if (type === undefined) {
         throw new MixinTransformError(
-            sourceFile, getter ?? setter ?? name,
+            sourceFile, getter ?? setter ?? member,
             "A mixin class accessor must have an explicit type annotation"
         )
     }
 
-    return factory.createPropertySignature(
+    return preserveTextRange(tsInstance, factory.createPropertySignature(
         setter === undefined ? [ factory.createToken(tsInstance.SyntaxKind.ReadonlyKeyword) ] : undefined,
-        name,
+        cloneNode(tsInstance, member.name),
         undefined,
-        type
-    )
+        cloneNode(tsInstance, type)
+    ), interfaceMemberRange(member))
 }
 
 function signatureParameter(
@@ -1692,19 +1755,61 @@ function signatureParameter(
         )
     }
 
-    if (parameter.initializer === undefined) {
-        return parameter
+    // у параметра с инициализатором в сигнатуре инициализатор заменяется опциональностью
+    return preserveTextRange(tsInstance, tsInstance.factory.createParameterDeclaration(
+        undefined,
+        cloneOptionalNode(tsInstance, parameter.dotDotDotToken),
+        cloneNode(tsInstance, parameter.name),
+        parameter.initializer === undefined
+            ? cloneOptionalNode(tsInstance, parameter.questionToken)
+            : tsInstance.factory.createToken(tsInstance.SyntaxKind.QuestionToken),
+        cloneNode(tsInstance, parameter.type),
+        undefined
+    ), parameterSignatureRange(parameter))
+}
+
+function interfaceMemberRange(member: ts.ClassElement): ts.TextRange {
+    if (isTypedClassElement(member)) {
+        return {
+            pos : member.pos,
+            end : member.type.end
+        }
     }
 
-    // у параметра с инициализатором в сигнатуре инициализатор заменяется опциональностью
-    return tsInstance.factory.createParameterDeclaration(
-        undefined,
-        parameter.dotDotDotToken,
-        parameter.name,
-        tsInstance.factory.createToken(tsInstance.SyntaxKind.QuestionToken),
-        parameter.type,
-        undefined
-    )
+    return {
+        pos : member.pos,
+        end : member.end
+    }
+}
+
+function isTypedClassElement(member: ts.ClassElement): member is ts.ClassElement & { type: ts.TypeNode } {
+    return "type" in member && member.type !== undefined
+}
+
+function parameterSignatureRange(parameter: ts.ParameterDeclaration): ts.TextRange {
+    return {
+        pos : parameter.pos,
+        end : parameter.type?.end ?? parameter.name.end
+    }
+}
+
+function cloneNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node): Node {
+    return (tsInstance.factory as NodeFactoryWithCloneNode).cloneNode(node)
+}
+
+function cloneOptionalNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node | undefined): Node | undefined {
+    return node === undefined ? undefined : cloneNode(tsInstance, node)
+}
+
+function cloneOptionalNodeArray<Node extends ts.Node>(
+    tsInstance: TypeScript,
+    nodes: ts.NodeArray<Node> | undefined
+): ts.NodeArray<Node> | undefined {
+    if (nodes === undefined) {
+        return undefined
+    }
+
+    return tsInstance.factory.createNodeArray(nodes.map((node) => cloneNode(tsInstance, node)))
 }
 
 // ---------------------------------------------------------------------------

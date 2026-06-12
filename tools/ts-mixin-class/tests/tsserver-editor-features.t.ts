@@ -66,6 +66,14 @@ it("tsserver definition resolves plain and mixin members", async (t: Test) => {
         await assertDefinition(t, sourceFile, "baseMethod", "baseMethod(): number", "Plain base method")
         await assertDefinition(t, sourceFile, "mixinProperty", "mixinProperty: string", "Mixin property")
         await assertDefinition(t, sourceFile, "mixinMethod", "mixinMethod(): string", "Mixin method")
+        await assertDefinition(
+            t,
+            sourceFile,
+            "mixinProperty",
+            "mixinProperty: string",
+            "Mixin self property",
+            selfMixinPropertyArgs(sourceFile)
+        )
     } finally {
         await dispose()
     }
@@ -79,6 +87,13 @@ it("tsserver quickinfo reports plain and mixin members", async (t: Test) => {
         await assertQuickInfo(t, sourceFile, "baseMethod", [ "baseMethod(): number", "PlainBase.baseMethod" ])
         await assertQuickInfo(t, sourceFile, "mixinProperty", [ "(property)", "mixinProperty: string" ])
         await assertQuickInfo(t, sourceFile, "mixinMethod", [ "(method)", "mixinMethod(): string" ])
+        await assertQuickInfo(
+            t,
+            sourceFile,
+            "mixinProperty",
+            [ "(property)", "mixinProperty: string" ],
+            selfMixinPropertyArgs(sourceFile)
+        )
     } finally {
         await dispose()
     }
@@ -114,11 +129,12 @@ async function assertDefinition(
     sourceFile: string,
     memberName: string,
     declarationText: string,
-    description: string
+    description: string,
+    args = usageArgs(sourceFile, memberName)
 ): Promise<void> {
     const definitions = assertResponseBody<DefinitionInfo[]>(
         t,
-        await request(sourceFile, "definition", usageArgs(sourceFile, memberName))
+        await request(sourceFile, "definition", args)
     )
 
     t.true(definitions.some((definition) => {
@@ -132,11 +148,12 @@ async function assertQuickInfo(
     t: Test,
     sourceFile: string,
     memberName: string,
-    expectedParts: string[]
+    expectedParts: string[],
+    args = usageArgs(sourceFile, memberName)
 ): Promise<void> {
     const quickInfo = assertResponseBody<QuickInfoBody>(
         t,
-        await request(sourceFile, "quickinfo", usageArgs(sourceFile, memberName))
+        await request(sourceFile, "quickinfo", args)
     )
 
     t.true(
@@ -161,6 +178,20 @@ function usageArgs(sourceFile: string, memberName: string): { file: string, line
     return {
         file : sourceFile,
         ...positionToLineOffset(sourceText, memberUsagePosition(memberName))
+    }
+}
+
+function selfMixinPropertyArgs(sourceFile: string): { file: string, line: number, offset: number } {
+    const accessText = "this.mixinProperty"
+    const position   = sourceText.indexOf(accessText)
+
+    if (position < 0) {
+        throw new Error("Cannot find mixin self property usage.")
+    }
+
+    return {
+        file : sourceFile,
+        ...positionToLineOffset(sourceText, position + "this.".length + 1)
     }
 }
 
