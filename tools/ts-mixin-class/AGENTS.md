@@ -53,13 +53,16 @@ Implemented snapshot:
 
 Current plan:
 
-- Harden public declaration emit for package-quality output: README/API documentation.
 - Continue IDE dogfooding and add regression tests for any editor operation that still
   behaves differently from plain TypeScript. Watch overlapping rename edits, SourceFile
   caching/reuse (`hasDifferentAstShape`), and features that distinguish interface/type/
   value declarations.
-- Consumer limitation to remove later: consumers must be top-level named class
-  declarations; anonymous consumer declarations currently get a custom diagnostic.
+- Architectural consumer limitation: consumers must currently be named top-level class
+  declarations. Named class declarations inside blocks/functions/namespaces could be
+  supported later by transforming nested statement lists, but class expressions and
+  anonymous classes need a separate transform shape because the current declaration
+  merging strategy requires a stable declaration name for generated `__Name$base`
+  siblings. Anonymous consumer declarations currently get a custom diagnostic.
 
 Future Work:
 
