@@ -194,6 +194,29 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
 
 В сгенерированном коде вместо прямой вложенности вызовов (`SourceClass2$mixin(SourceClass1$mixin(Base))`) используется вызов хелпера с эквивалентной семантикой, например `mixinChain(Base, SourceClass1, SourceClass2)` — хелпер сам разворачивает зависимости и дедуплицирует.
 
+## Конструирование
+
+Конструкторы миксинов не композиционируются: у базы и каждого миксина могут быть разные аргументы, и автоматическое слияние constructor signatures даёт неочевидную семантику. Поэтому пакет экспортирует базовый класс `Base` со статическим construction API:
+
+```ts
+class Model extends Base {
+    id: string = ""
+}
+
+const model = Model.new({ id : "42" })
+```
+
+`Base.new(config)` создаёт экземпляр через пустой `new this()`, затем вызывает `initialize(config)`. Базовая реализация `initialize` делает `Object.assign(this, config)`.
+
+Потребители получают typed construction API только при явном opt-in: их базовая цепочка должна синтаксически наследоваться от `Base`. В таком случае трансформер добавляет static `new(...)` adapter, который вызывает `super.new(config)`, а runtime-инициализация по-прежнему живет в `Base`.
+
+Тип config управляется опцией трансформера `constructionConfig`:
+
+- `public-only` — режим по умолчанию. Трансформер собирает из AST только поля, явно помеченные модификатором `public`, на базе, потребителе и примененных миксинах, и генерирует точный тип вида `Partial<Pick<Consumer<T>, "...">>`.
+- `fast` — более дешевый режим. Генерируется широкий тип `Partial<Consumer<T>>`: он сохраняет generic inference для `new(...)`, но не фильтрует методы и другие публичные instance-члены так точно, как `public-only`.
+
+Если класс не наследуется от `Base`, трансформер не добавляет construction adapter и не вмешивается в пользовательскую модель создания экземпляров.
+
 ## Ограничения на mixin-классы (диагностики трансформера)
 
 - Члены не могут быть `private`/`protected` (ломают interface-extends и пересечения; правило уже зафиксировано в корневом AGENTS.md).
@@ -253,5 +276,4 @@ class Consumer<A> extends Consumer$base<A> implements SourceClass1<string>, Sour
 - Потребители должны быть именованными top-level class declarations. Вложенные объявления в блоках/functions/namespaces и class expressions требуют отдельной формы трансформации.
 - Dynamic consumer base expressions (`extends makeBase()`) пока не поддерживаются и получают diagnostic; будущая поддержка должна сохранить порядок вычисления и типизацию static/instance сторон.
 - Коллизии с injected helper imports/generated helper names пока не сканируются явно.
-- Конструирование через произвольные constructor signatures не моделируется. Планируемая форма — отдельный статический factory/new protocol.
-- `README.md` нужно обновить под текущую реализацию.
+- Конструирование через произвольные constructor signatures не моделируется. Поддержан opt-in протокол `Base.new(config)` с режимами `constructionConfig: "public-only"` и `"fast"`.

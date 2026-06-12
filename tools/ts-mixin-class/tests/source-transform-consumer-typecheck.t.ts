@@ -186,6 +186,55 @@ it("transformed generic consumer base output typechecks", async (t: Test) => {
     t.expect(diagnostics).toEqual([])
 })
 
+it("fast construction config mode preserves generic new inference without public-only filtering", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base, mixin } from "ts-mixin-class"
+
+        class GenericBase<T> extends Base {
+            genericBaseValue: T | undefined
+        }
+
+        @mixin()
+        class GenericMixin<T> {
+            genericMixinValue: T | undefined
+
+            genericMixinMethod (): T | undefined {
+                return this.genericMixinValue
+            }
+        }
+
+        class GenericConsumer<T> extends GenericBase<T> implements GenericMixin<T> {
+            genericOwnValue: T | undefined
+        }
+
+        const genericConstructed = GenericConsumer.new({
+            genericBaseValue  : "base",
+            genericMixinValue : "mixin",
+            genericOwnValue   : "own"
+        })
+
+        const v1: string | undefined = genericConstructed.genericBaseValue
+        const v2: string | undefined = genericConstructed.genericMixinValue
+        const v3: string | undefined = genericConstructed.genericOwnValue
+
+        GenericConsumer.new({ genericMixinMethod : () => "x" })
+
+        // @ts-expect-error fast config still rejects properties that are not on the consumer instance.
+        GenericConsumer.new({ missingValue : "x" })
+
+        // @ts-expect-error fast config infers T = string.
+        const e1: number | undefined = genericConstructed.genericMixinValue
+
+        void [ v1, v2, v3, e1 ]
+    `), {
+        constructionConfig : "fast"
+    })
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.expect(diagnostics).toEqual([])
+})
+
 it("transformed consumer output typechecks end to end", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { mixin } from "ts-mixin-class"

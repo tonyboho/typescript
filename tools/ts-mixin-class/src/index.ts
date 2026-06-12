@@ -14,17 +14,20 @@ export type MixinClassTransformerConfig = PluginConfig & {
     packageName? : string,
     decoratorName? : string,
     mode? : MixinClassTransformerMode,
-    staticCollisionCheck? : StaticCollisionCheckMode | boolean
+    staticCollisionCheck? : StaticCollisionCheckMode | boolean,
+    constructionConfig? : ConstructionConfigMode
 }
 
 export type MixinClassTransformerMode = "emit" | "ide"
 export type StaticCollisionCheckMode = false | "never" | "strict"
+export type ConstructionConfigMode = "public-only" | "fast"
 
 type TransformOptions = {
     packageName : string,
     decoratorName : string,
     sourceView : boolean,
-    staticCollisionCheck : StaticCollisionCheckMode
+    staticCollisionCheck : StaticCollisionCheckMode,
+    constructionConfig : ConstructionConfigMode
 }
 
 type MixinDecoratorImports = {
@@ -41,7 +44,8 @@ export type RegisteredMixin = {
     defaultExport : boolean,
     // ключи реестра зависимостей (mixin-записи из implements)
     dependencies : string[],
-    requiredBaseName : string | undefined
+    requiredBaseName : string | undefined,
+    configPropertyNames : string[]
 }
 
 export type MixinRegistry = Map<string, RegisteredMixin>
@@ -73,6 +77,7 @@ type ResolvedMixinRef = {
     } | undefined,
     dependencies     : string[],
     declaration      : ts.ClassDeclaration | undefined
+    configPropertyNames : string[]
     missingRuntimeImport : {
         specifier : string,
         importedName : string
@@ -117,7 +122,8 @@ const defaultTransformOptions: TransformOptions = {
     packageName          : "ts-mixin-class",
     decoratorName        : "mixin",
     sourceView           : false,
-    staticCollisionCheck : "never"
+    staticCollisionCheck : "never",
+    constructionConfig   : "public-only"
 }
 
 const anyConstructorName = "AnyConstructor"
@@ -146,6 +152,12 @@ export type AnyConstructor<T extends object = object> = new (...args: any[]) => 
 
 export type ClassStatics<C> = Omit<C, "prototype">
 
+export type NonFunctionPropertyNames<T> = {
+    [Key in keyof T]: T[Key] extends (...args: any[]) => any ? never : Key
+}[keyof T]
+
+export type Config<T> = Partial<Pick<T, NonFunctionPropertyNames<T>>>
+
 export type StaticNeverConflictKeys<Left, Right> = {
     [Key in Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]:
         [ ClassStatics<Left>[Key] & ClassStatics<Right>[Key] ] extends [ never ]
@@ -163,6 +175,23 @@ export type StaticStrictConflictKeys<Left, Right> = {
 }[Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]
 
 export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
+
+export class Base {
+    initialize(props?: Config<this>): void {
+        if (props !== undefined) {
+            Object.assign(this, props)
+        }
+    }
+
+    static new<T extends typeof Base>(this: T, props?: Config<InstanceType<T>>): InstanceType<T> {
+        const instance = new this() as InstanceType<T>
+
+        instance.initialize(props)
+
+        return instance
+    }
+
+}
 
 export const factory: unique symbol = Symbol.for("ts-mixin-class.factory") as any
 export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements") as any
@@ -403,7 +432,8 @@ function resolveTransformOptions(config: MixinClassTransformerConfig): Transform
         packageName          : config.packageName ?? defaultTransformOptions.packageName,
         decoratorName        : config.decoratorName ?? defaultTransformOptions.decoratorName,
         sourceView           : false,
-        staticCollisionCheck : normalizeStaticCollisionCheck(config.staticCollisionCheck)
+        staticCollisionCheck : normalizeStaticCollisionCheck(config.staticCollisionCheck),
+        constructionConfig   : config.constructionConfig ?? defaultTransformOptions.constructionConfig
     }
 }
 
@@ -650,6 +680,156 @@ function preserveGeneratedDeclarationRange<Node extends ts.Node>(
     return preserveTextRange(tsInstance, node, range)
 }
 
+function preserveSourceViewGeneratedClassLikeRange<
+    Node extends ts.ClassDeclaration | ts.InterfaceDeclaration
+>(
+    tsInstance: TypeScript,
+    node: Node,
+    original: ts.ClassDeclaration
+): Node {
+    tsInstance.setOriginalNode(node, original)
+    preserveGeneratedOriginalNodes(tsInstance, node, original)
+    preserveTextRange(tsInstance, node, original)
+    preserveTextRange(tsInstance, node, {
+        pos : original.pos,
+        end : original.members.pos
+    })
+
+    if (node.name !== undefined && original.name !== undefined) {
+        preserveTextRange(tsInstance, node.name, {
+            pos : original.pos,
+            end : original.name.end
+        })
+    }
+
+    if (node.typeParameters !== undefined) {
+        const generatedTypeParameterRange = zeroWidthRange(original.typeParameters?.end ?? original.name?.end ?? original.end)
+
+        preserveTextRange(tsInstance, node.typeParameters, original.typeParameters ?? generatedTypeParameterRange)
+
+        node.typeParameters.forEach((typeParameter, index) => {
+            const originalTypeParameter = original.typeParameters?.[index]
+
+            if (originalTypeParameter !== undefined) {
+                preserveTextRange(tsInstance, typeParameter, originalTypeParameter)
+                preserveTextRange(tsInstance, typeParameter.name, originalTypeParameter.name)
+            } else {
+                preserveSubtreeTextRange(
+                    tsInstance,
+                    typeParameter,
+                    generatedTypeParameterRange
+                )
+            }
+        })
+    }
+
+    if (node.heritageClauses !== undefined) {
+        const originalHeritage = original.heritageClauses
+        const originalHeritageTypes = originalHeritage?.flatMap((heritageClause) => [ ...heritageClause.types ]) ?? []
+        const originalHeritageRange = originalHeritage === undefined
+            ? zeroWidthRange(original.name?.end ?? original.end)
+            : { pos : originalHeritage.pos, end : originalHeritage.end }
+        let generatedHeritageRange: ts.TextRange | undefined
+
+        preserveTextRange(tsInstance, node.heritageClauses, originalHeritageRange)
+
+        node.heritageClauses.forEach((heritageClause, index) => {
+            const originalClause = originalHeritage?.[Math.min(index, originalHeritage.length - 1)]
+            const clauseRange = originalClause ?? originalHeritageRange
+            const mappedOriginalTypes = heritageClause.types.map((_heritageType, typeIndex) => {
+                return originalHeritageTypes[typeIndex] ??
+                    originalClause?.types[Math.min(typeIndex, originalClause.types.length - 1)]
+            })
+            const mappedOriginalTypesWithRanges = mappedOriginalTypes.filter((type): type is ts.ExpressionWithTypeArguments => {
+                return type !== undefined
+            })
+
+            const heritageTypesRange = mappedOriginalTypesWithRanges.length === 0
+                ? clauseRange
+                : {
+                    pos : mappedOriginalTypesWithRanges[0].pos,
+                    end : mappedOriginalTypesWithRanges.at(-1)!.end
+                }
+
+            const nextHeritageRange = {
+                pos : clauseRange.pos,
+                end : heritageTypesRange.end
+            }
+
+            generatedHeritageRange = generatedHeritageRange === undefined
+                ? nextHeritageRange
+                : {
+                    pos : Math.min(generatedHeritageRange.pos, nextHeritageRange.pos),
+                    end : Math.max(generatedHeritageRange.end, nextHeritageRange.end)
+                }
+
+            preserveTextRange(tsInstance, heritageClause, nextHeritageRange)
+            preserveTextRange(tsInstance, heritageClause.types, heritageTypesRange)
+
+            heritageClause.types.forEach((heritageType, typeIndex) => {
+                const originalType = mappedOriginalTypes[typeIndex]
+                const typeRange = originalType ?? clauseRange
+
+                preserveTextRange(tsInstance, heritageType, typeRange)
+                preserveTextRange(tsInstance, heritageType.expression, originalType?.expression ?? typeRange)
+
+                if (heritageType.typeArguments !== undefined) {
+                    const originalTypeArguments = originalType?.typeArguments
+                    const generatedTypeArgumentRange = zeroWidthRange(heritageType.expression.end)
+
+                    preserveTextRange(
+                        tsInstance,
+                        heritageType.typeArguments,
+                        originalTypeArguments ?? generatedTypeArgumentRange
+                    )
+
+                    heritageType.typeArguments.forEach((typeArgument, argumentIndex) => {
+                        preserveSubtreeTextRange(
+                            tsInstance,
+                            typeArgument,
+                            originalTypeArguments?.[argumentIndex] ?? generatedTypeArgumentRange
+                        )
+                    })
+                }
+            })
+        })
+
+        if (generatedHeritageRange !== undefined) {
+            preserveTextRange(tsInstance, node.heritageClauses, generatedHeritageRange)
+        }
+    }
+
+    if ("members" in node) {
+        const generatedHeaderEnd = node.heritageClauses?.end ?? node.typeParameters?.end ?? node.name?.end ?? original.members.pos
+
+        preserveTextRange(tsInstance, node.members, node.members.length === 0
+            ? zeroWidthRange(generatedHeaderEnd)
+            : original.members
+        )
+
+        if (node.members.length === 0) {
+            preserveTextRange(tsInstance, node, {
+                pos : node.pos,
+                end : generatedHeaderEnd
+            })
+        }
+    }
+
+    return node
+}
+
+function preserveSubtreeTextRange(
+    tsInstance: TypeScript,
+    node: ts.Node,
+    range: ts.TextRange
+): void {
+    preserveTextRange(tsInstance, node, range)
+
+    tsInstance.forEachChild(node, (child) => {
+        preserveSubtreeTextRange(tsInstance, child, range)
+    })
+}
+
 function preserveGeneratedOriginalNodes(
     tsInstance: TypeScript,
     node: ts.Node,
@@ -744,6 +924,7 @@ export function buildMixinRegistry(
                     .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
                     .map((expression) => expression.text),
                 requiredBaseName     : requiredBaseIdentifierName(tsInstance, statement),
+                configPropertyNames  : instanceConfigPropertyNames(tsInstance, statement, true),
                 declarationHeritage  : false,
                 defaultExport        : hasModifier(tsInstance, statement, tsInstance.SyntaxKind.DefaultKeyword)
             })
@@ -758,7 +939,8 @@ export function buildMixinRegistry(
             name              : candidate.name,
             defaultExport     : candidate.defaultExport,
             dependencies      : [],
-            requiredBaseName  : candidate.requiredBaseName
+            requiredBaseName  : candidate.requiredBaseName,
+            configPropertyNames : candidate.configPropertyNames
         })
 
         if (candidate.defaultExport) {
@@ -818,6 +1000,7 @@ type Candidate = {
     name                 : string,
     dependencyNames      : string[],
     requiredBaseName     : string | undefined,
+    configPropertyNames  : string[],
     declarationHeritage  : boolean,
     defaultExport        : boolean
 }
@@ -875,6 +1058,7 @@ function collectDeclarationFileMixinCandidates(
                 name                 : declaration.name.text,
                 dependencyNames      : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text)),
                 requiredBaseName     : undefined,
+                configPropertyNames  : interfaceConfigPropertyNames(tsInstance, interfaces.get(declaration.name.text)),
                 declarationHeritage  : true,
                 defaultExport
             })
@@ -919,6 +1103,53 @@ function interfaceExtendsNames(
         .map((heritageType) => heritageType.expression)
         .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
         .map((expression) => expression.text)
+}
+
+function interfaceConfigPropertyNames(
+    tsInstance: TypeScript,
+    declaration: ts.InterfaceDeclaration | undefined
+): string[] {
+    if (declaration === undefined) {
+        return []
+    }
+
+    return uniqueStrings(declaration.members
+        .filter((member): member is ts.PropertySignature => {
+            return tsInstance.isPropertySignature(member) && member.name !== undefined
+        })
+        .map((member) => propertyNameText(tsInstance, member.name))
+        .filter((name): name is string => name !== undefined)
+    )
+}
+
+function instanceConfigPropertyNames(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    requirePublicModifier = false
+): string[] {
+    return uniqueStrings(declaration.members
+        .filter((member): member is ts.PropertyDeclaration => {
+            return tsInstance.isPropertyDeclaration(member) &&
+                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) &&
+                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) &&
+                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) &&
+                (!requirePublicModifier || hasModifier(tsInstance, member, tsInstance.SyntaxKind.PublicKeyword))
+        })
+        .map((member) => propertyNameText(tsInstance, member.name))
+        .filter((name): name is string => name !== undefined)
+    )
+}
+
+function propertyNameText(tsInstance: TypeScript, name: ts.PropertyName): string | undefined {
+    if (tsInstance.isIdentifier(name) || tsInstance.isStringLiteral(name) || tsInstance.isNumericLiteral(name)) {
+        return name.text
+    }
+
+    return undefined
+}
+
+function uniqueStrings(values: string[]): string[] {
+    return [ ...new Set(values) ]
 }
 
 function registryKey(fileName: string, name: string): string {
@@ -1159,9 +1390,13 @@ function insertGeneratedImports(
     context: FileMixinContext,
     options: TransformOptions
 ): ts.Statement[] {
+    if (options.sourceView) {
+        return statements
+    }
+
     const factory = tsInstance.factory
 
-    const generatedImports: ts.ImportDeclaration[] = [ createHelperTypeImport(tsInstance, options) ]
+    const generatedImports: ts.ImportDeclaration[] = [ createHelperTypeImport(tsInstance, context, options) ]
 
     const bySpecifier = new Map<string, Array<{ importedName: string, localName: string }>>()
 
@@ -1246,6 +1481,7 @@ function buildFileMixinContext(
                 requiredBase     : undefined,
                 dependencies     : [],
                 declaration      : statement,
+                configPropertyNames : instanceConfigPropertyNames(tsInstance, statement, true),
                 missingRuntimeImport : undefined
             }
 
@@ -1328,6 +1564,7 @@ function buildFileMixinContext(
                     requiredBase,
                     dependencies     : registered.dependencies,
                     declaration      : undefined,
+                    configPropertyNames : registered.configPropertyNames,
                     missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
                         ? {
                             specifier    : statement.moduleSpecifier.text,
@@ -1397,6 +1634,7 @@ function buildFileMixinContext(
                 },
                 dependencies     : registered.dependencies,
                 declaration      : undefined,
+                configPropertyNames : registered.configPropertyNames,
                 missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
                     ? {
                         specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
@@ -1769,7 +2007,7 @@ function expandSourceViewMixinClass(
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
     const generatedHeritageRange = generatedTextRange(sourceFile, declaration.heritageClauses?.pos ?? declaration.name.end)
 
-    const baseInterface = preserveGeneratedDeclarationRange(tsInstance, factory.createInterfaceDeclaration(
+    const baseInterface = preserveSourceViewGeneratedClassLikeRange(tsInstance, factory.createInterfaceDeclaration(
         undefined,
         baseName,
         typeParameters,
@@ -1781,15 +2019,21 @@ function expandSourceViewMixinClass(
             ]
         ) ],
         []
-    ), generatedRange, declaration)
+    ), declaration)
 
-    const baseClass = preserveGeneratedDeclarationRange(tsInstance, factory.createClassDeclaration(
+    const baseClassHeritage = [
+        ...(requiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, requiredBase) ]),
+        ...dependencyHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+    ]
+    const baseClass = preserveSourceViewGeneratedClassLikeRange(tsInstance, factory.createClassDeclaration(
         undefined,
         baseName,
         typeParameters,
-        undefined,
+        baseClassHeritage.length === 0
+            ? undefined
+            : [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [ baseClassHeritage[0] ]) ],
         []
-    ), generatedRange, declaration)
+    ), declaration)
 
     const updatedDeclaration = factory.updateClassDeclaration(
         declaration,
@@ -2000,13 +2244,18 @@ function expandConsumerClass(
 
         throw error
     }
-    const generatedRange = generatedTextRange(sourceFile, declaration.pos)
+    const generatedRange = options.sourceView ? declaration : generatedTextRange(sourceFile, declaration.pos)
     const originalExtendsClause = extendsClause(tsInstance, declaration)
-    const generatedHeritageRange = originalExtendsClause ?? generatedTextRange(
-        sourceFile,
-        declaration.heritageClauses?.pos ?? declaration.name.end
-    )
-    const generatedHeritageTypeRange = extendsType ?? generatedHeritageRange
+    const firstHeritageType = declaration.heritageClauses?.[0]?.types[0]
+    const generatedHeritageRange = originalExtendsClause ??
+        (options.sourceView && declaration.heritageClauses !== undefined
+            ? { pos : declaration.heritageClauses.pos, end : declaration.heritageClauses.end }
+            : generatedTextRange(
+                sourceFile,
+                declaration.heritageClauses?.pos ?? declaration.name.end
+            ))
+    const generatedHeritageTypeRange = extendsType ??
+        (options.sourceView && firstHeritageType !== undefined ? firstHeritageType : generatedHeritageRange)
 
     if (extendsType !== undefined && !isSupportedBaseExpression(tsInstance, extendsType.expression)) {
         return expandConsumerClassWithUnsupportedBaseDiagnostic(
@@ -2026,7 +2275,7 @@ function expandConsumerClass(
     const implicitRequiredBase = extendsType === undefined
         ? firstRequiredBaseType(tsInstance, context, linearized)
         : undefined
-    const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
+    const emptyBaseName = !options.sourceView && extendsType === undefined && implicitRequiredBase === undefined
         ? generatedName(name, consumerEmptyBaseSuffix)
         : undefined
     const requiredBaseValidations = extendsType === undefined
@@ -2038,7 +2287,8 @@ function expandConsumerClass(
             declaration,
             extendsType,
             linearized,
-            generatedHeritageTypeRange
+            generatedHeritageTypeRange,
+            options
         )
     const missingRuntimeImportValidations = createMissingRuntimeImportValidations(
         tsInstance,
@@ -2055,20 +2305,23 @@ function expandConsumerClass(
         emptyBaseName,
         linearized,
         generatedHeritageTypeRange,
-        options.staticCollisionCheck
+        options.staticCollisionCheck,
+        options.sourceView
     )
     const consumerValidations = [
         ...requiredBaseValidations,
         ...missingRuntimeImportValidations,
         ...staticCollisionValidations
     ]
-    const checkedTypeParameters = appendRequiredBaseValidationTypeParameters(
-        tsInstance,
-        declaration.typeParameters,
-        consumerValidations
-    )
+    const checkedTypeParameters = options.sourceView
+        ? appendSourceViewValidationTypeParameters(tsInstance, declaration.typeParameters, consumerValidations)
+        : appendRequiredBaseValidationTypeParameters(
+            tsInstance,
+            declaration.typeParameters,
+            consumerValidations
+        )
 
-    const baseInterface = preserveGeneratedDeclarationRange(tsInstance, factory.createInterfaceDeclaration(
+    const baseInterfaceNode = factory.createInterfaceDeclaration(
         undefined,
         baseName,
         checkedTypeParameters,
@@ -2081,16 +2334,15 @@ function expandConsumerClass(
             ]
         ) ],
         []
-    ), generatedRange, declaration)
+    )
+    const baseInterface = options.sourceView
+        ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseInterfaceNode, declaration)
+        : preserveGeneratedDeclarationRange(tsInstance, baseInterfaceNode, generatedRange, declaration)
 
-    const baseClass = preserveGeneratedDeclarationRange(tsInstance, factory.createClassDeclaration(
+    const baseClassNode = factory.createClassDeclaration(
         undefined,
         baseName,
-        appendRequiredBaseValidationTypeParameters(
-            tsInstance,
-            declaration.typeParameters,
-            consumerValidations
-        ),
+        checkedTypeParameters,
         [ consumerBaseClassHeritage(
             tsInstance,
             extendsType,
@@ -2101,8 +2353,25 @@ function expandConsumerClass(
             options
         ) ],
         []
-    ), generatedRange, declaration)
+    )
+    const baseClass = options.sourceView
+        ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseClassNode, declaration)
+        : preserveGeneratedDeclarationRange(tsInstance, baseClassNode, generatedRange, declaration)
 
+    const constructionMembers = createConstructionMembers(
+        tsInstance,
+        sourceFile,
+        declaration,
+        extendsType,
+        implicitRequiredBase,
+        linearized,
+        context,
+        options,
+        generatedRange
+    )
+    const updatedConsumerMembers = constructionMembers.length === 0
+        ? declaration.members
+        : factory.createNodeArray([ ...declaration.members, ...constructionMembers ])
     const updatedConsumer = factory.updateClassDeclaration(
         declaration,
         declaration.modifiers,
@@ -2114,19 +2383,26 @@ function expandConsumerClass(
             baseName,
             generatedHeritageRange,
             generatedHeritageTypeRange,
-            consumerValidations.map((validation) => validation.typeArgument)
+            consumerValidations.map((validation) => validation.typeArgument),
+            !options.sourceView || originalExtendsClause !== undefined
         ),
-        declaration.members
+        updatedConsumerMembers
     )
 
     const emptyBaseClass = emptyBaseName === undefined
         ? []
-        : [ preserveGeneratedDeclarationRange(
-            tsInstance,
-            factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
-            generatedRange,
-            declaration
-        ) ]
+        : [ options.sourceView
+            ? preserveSourceViewGeneratedClassLikeRange(
+                tsInstance,
+                factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
+                declaration
+            )
+            : preserveGeneratedDeclarationRange(
+                tsInstance,
+                factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
+                generatedRange,
+                declaration
+            ) ]
 
     return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
 }
@@ -2316,6 +2592,294 @@ function expandConsumerClassWithLinearizationDiagnostic(
     return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
 }
 
+function createConstructionMembers(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    mixinRefs: ResolvedMixinRef[],
+    context: FileMixinContext,
+    options: TransformOptions,
+    generatedRange: ts.TextRange
+): ts.ClassElement[] {
+    if (options.sourceView ||
+        declaration.name === undefined ||
+        hasStaticMemberNamed(tsInstance, declaration, "new") ||
+        !isConstructionBaseOptIn(tsInstance, sourceFile, extendsType ?? implicitRequiredBase, options)
+    ) {
+        return []
+    }
+
+    const factory = tsInstance.factory
+    const staticModifier = [ factory.createToken(tsInstance.SyntaxKind.StaticKeyword) ]
+    const configType = createConstructionConfigType(
+        tsInstance,
+        sourceFile,
+        declaration,
+        extendsType,
+        implicitRequiredBase,
+        mixinRefs,
+        options.constructionConfig
+    )
+    const consumerType = createConsumerInstanceType(tsInstance, declaration)
+
+    return [
+        preserveGeneratedDeclarationRange(tsInstance, factory.createMethodDeclaration(
+            staticModifier,
+            undefined,
+            "new",
+            undefined,
+            cloneOptionalNodeArray(tsInstance, declaration.typeParameters),
+            [ factory.createParameterDeclaration(
+                undefined,
+                undefined,
+                "props",
+                factory.createToken(tsInstance.SyntaxKind.QuestionToken),
+                configType
+            ) ],
+            consumerType,
+            undefined
+        ), generatedRange, declaration),
+        preserveGeneratedDeclarationRange(tsInstance, factory.createMethodDeclaration(
+            staticModifier,
+            undefined,
+            "new",
+            undefined,
+            [ factory.createTypeParameterDeclaration(
+                undefined,
+                "T",
+                factory.createTypeReferenceNode(anyConstructorName, [
+                    factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+                ]),
+                undefined
+            ) ],
+            [
+                factory.createParameterDeclaration(
+                    undefined,
+                    undefined,
+                    "this",
+                    undefined,
+                    factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword)
+                ),
+                factory.createParameterDeclaration(
+                    undefined,
+                    undefined,
+                    "props",
+                    factory.createToken(tsInstance.SyntaxKind.QuestionToken),
+                    factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+                )
+            ],
+            factory.createTypeReferenceNode("InstanceType", [
+                factory.createTypeReferenceNode("T", undefined)
+            ]),
+            undefined
+        ), generatedRange, declaration),
+        preserveGeneratedDeclarationRange(tsInstance, factory.createMethodDeclaration(
+            staticModifier,
+            undefined,
+            "new",
+            undefined,
+            undefined,
+            [ factory.createParameterDeclaration(
+                undefined,
+                undefined,
+                "props",
+                factory.createToken(tsInstance.SyntaxKind.QuestionToken),
+                factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+            ) ],
+            factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword),
+            factory.createBlock([
+                factory.createReturnStatement(factory.createCallExpression(
+                    factory.createPropertyAccessExpression(
+                        factory.createSuper(),
+                        "new"
+                    ),
+                    undefined,
+                    [ factory.createIdentifier("props") ]
+                ))
+            ], true)
+        ), generatedRange, declaration)
+    ]
+}
+
+function isConstructionBaseOptIn(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    baseType: ts.ExpressionWithTypeArguments | undefined,
+    options: TransformOptions,
+    seen = new Set<string>()
+): boolean {
+    if (baseType === undefined) {
+        return false
+    }
+
+    if (isPackageBaseExpression(tsInstance, sourceFile, baseType.expression, options)) {
+        return true
+    }
+
+    if (!tsInstance.isIdentifier(baseType.expression)) {
+        return false
+    }
+
+    const baseName = baseType.expression.text
+
+    if (seen.has(baseName)) {
+        return false
+    }
+
+    seen.add(baseName)
+
+    const baseDeclaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
+        return tsInstance.isClassDeclaration(statement) && statement.name?.text === baseName
+    })
+    const nextBase = baseDeclaration === undefined ? undefined : extendsClause(tsInstance, baseDeclaration)?.types[0]
+
+    return isConstructionBaseOptIn(tsInstance, sourceFile, nextBase, options, seen)
+}
+
+function isPackageBaseExpression(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    expression: ts.Expression,
+    options: TransformOptions
+): boolean {
+    for (const statement of sourceFile.statements) {
+        if (!isPackageImport(tsInstance, statement, options)) {
+            continue
+        }
+
+        const importClause = (statement as ts.ImportDeclaration).importClause
+        const namedBindings = importClause?.namedBindings
+
+        if (namedBindings === undefined) {
+            continue
+        }
+
+        if (tsInstance.isNamespaceImport(namedBindings) &&
+            tsInstance.isPropertyAccessExpression(expression) &&
+            tsInstance.isIdentifier(expression.expression) &&
+            expression.expression.text === namedBindings.name.text &&
+            expression.name.text === "Base"
+        ) {
+            return true
+        }
+
+        if (!tsInstance.isNamedImports(namedBindings) || !tsInstance.isIdentifier(expression)) {
+            continue
+        }
+
+        if (namedBindings.elements.some((element) => {
+            return (element.propertyName?.text ?? element.name.text) === "Base" &&
+                element.name.text === expression.text
+        })) {
+            return true
+        }
+    }
+
+    return false
+}
+
+function hasStaticMemberNamed(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    name: string
+): boolean {
+    return declaration.members.some((member) => {
+        return hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) &&
+            isNamedClassElement(member) &&
+            propertyNameText(tsInstance, member.name) === name
+    })
+}
+
+function createConstructionConfigType(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    mixinRefs: ResolvedMixinRef[],
+    mode: ConstructionConfigMode
+): ts.TypeNode {
+    const factory = tsInstance.factory
+
+    if (mode === "fast") {
+        return factory.createTypeReferenceNode("Partial", [
+            createConsumerInstanceType(tsInstance, declaration)
+        ])
+    }
+
+    const propertyNames = staticConstructionConfigPropertyNames(
+        tsInstance,
+        sourceFile,
+        declaration,
+        extendsType,
+        implicitRequiredBase,
+        mixinRefs
+    )
+
+    return factory.createTypeReferenceNode("Partial", [
+        factory.createTypeReferenceNode("Pick", [
+            createConsumerInstanceType(tsInstance, declaration),
+            propertyNames.length === 0
+                ? factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword)
+                : propertyNames.length === 1
+                    ? factory.createLiteralTypeNode(factory.createStringLiteral(propertyNames[0]))
+                    : factory.createUnionTypeNode(propertyNames.map((propertyName) => {
+                        return factory.createLiteralTypeNode(factory.createStringLiteral(propertyName))
+                    }))
+        ])
+    ])
+}
+
+function staticConstructionConfigPropertyNames(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    extendsType: ts.ExpressionWithTypeArguments | undefined,
+    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
+    mixinRefs: ResolvedMixinRef[]
+): string[] {
+    return uniqueStrings([
+        ...baseConfigPropertyNames(tsInstance, sourceFile, extendsType ?? implicitRequiredBase),
+        ...mixinRefs.flatMap((ref) => ref.configPropertyNames),
+        ...instanceConfigPropertyNames(tsInstance, declaration, true)
+    ])
+}
+
+function baseConfigPropertyNames(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    baseType: ts.ExpressionWithTypeArguments | undefined
+): string[] {
+    if (baseType === undefined || !tsInstance.isIdentifier(baseType.expression)) {
+        return []
+    }
+
+    const baseName = baseType.expression.text
+    const baseDeclaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
+        return tsInstance.isClassDeclaration(statement) && statement.name?.text === baseName
+    })
+
+    return baseDeclaration === undefined ? [] : instanceConfigPropertyNames(tsInstance, baseDeclaration, true)
+}
+
+function createConsumerInstanceType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.TypeReferenceNode {
+    if (declaration.name === undefined) {
+        throw new MixinTransformError(declaration.getSourceFile(), declaration, "A mixin consumer class must have a name")
+    }
+
+    return tsInstance.factory.createTypeReferenceNode(
+        declaration.name.text,
+        declaration.typeParameters?.map((typeParameter) => {
+            return tsInstance.factory.createTypeReferenceNode(typeParameter.name.text, undefined)
+        })
+    )
+}
+
 function createLinearizationDiagnosticValidation(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
@@ -2488,6 +3052,13 @@ function consumerRuntimeBaseType(
         return implicitRequiredBase
     }
 
+    if (emptyBaseName === undefined) {
+        return tsInstance.factory.createExpressionWithTypeArguments(
+            tsInstance.factory.createIdentifier("Object"),
+            undefined
+        )
+    }
+
     return tsInstance.factory.createExpressionWithTypeArguments(
         tsInstance.factory.createIdentifier(emptyBaseName as string),
         undefined
@@ -2545,14 +3116,28 @@ function createRequiredBaseValidations(
     declaration: ts.ClassDeclaration,
     extendsType: ts.ExpressionWithTypeArguments,
     mixinRefs: ResolvedMixinRef[],
-    generatedRange: ts.TextRange
+    generatedRange: ts.TextRange,
+    options: TransformOptions
 ): RequiredBaseValidation[] {
     const validations: RequiredBaseValidation[] = []
 
     for (const ref of mixinRefs) {
+        if (options.sourceView && ref.declaration === undefined && ref.requiredBase === undefined) {
+            continue
+        }
+
         const requiredBase = requiredBaseRequirementOfMixinRef(tsInstance, context, sourceFile, ref)
 
         if (requiredBase === undefined) {
+            continue
+        }
+
+        if (options.sourceView && baseSatisfiesRequiredBaseSyntactically(
+            tsInstance,
+            sourceFile,
+            extendsType,
+            requiredBase.typeNode
+        )) {
             continue
         }
 
@@ -2567,14 +3152,23 @@ function createRequiredBaseValidations(
             typeParameter,
             typeArgument : preserveTextRange(
                 tsInstance,
-                createRequiredBaseDiagnosticType(
-                    tsInstance,
-                    sourceFile,
-                    declaration,
-                    extendsType,
-                    ref,
-                    requiredBase
-                ),
+                options.sourceView
+                    ? createDiagnosticLiteralType(tsInstance, requiredBaseDiagnosticMessage(
+                        tsInstance,
+                        sourceFile,
+                        declaration,
+                        extendsType,
+                        ref,
+                        requiredBase
+                    ))
+                    : createRequiredBaseDiagnosticType(
+                        tsInstance,
+                        sourceFile,
+                        declaration,
+                        extendsType,
+                        ref,
+                        requiredBase
+                    ),
                 generatedRange
             )
         })
@@ -2641,7 +3235,8 @@ function createStaticCollisionValidations(
     emptyBaseName: string | undefined,
     mixinRefs: ResolvedMixinRef[],
     generatedRange: ts.TextRange,
-    mode: StaticCollisionCheckMode
+    mode: StaticCollisionCheckMode,
+    sourceView = false
 ): RequiredBaseValidation[] {
     if (mode === false) {
         return []
@@ -2661,6 +3256,10 @@ function createStaticCollisionValidations(
             const right = sources[rightIndex]
             const knownOverlap = knownStaticNameOverlap(left, right)
 
+            if (sourceView && knownOverlap === undefined) {
+                continue
+            }
+
             if (knownOverlap !== undefined && knownOverlap.length === 0) {
                 continue
             }
@@ -2674,14 +3273,21 @@ function createStaticCollisionValidations(
                 ), generatedRange),
                 typeArgument : preserveTextRange(
                     tsInstance,
-                    createStaticCollisionDiagnosticType(
-                        tsInstance,
-                        declaration,
-                        left,
-                        right,
-                        knownOverlap,
-                        mode
-                    ),
+                    sourceView && knownOverlap !== undefined
+                        ? createDiagnosticLiteralType(tsInstance, staticCollisionDiagnosticMessage(
+                            declaration,
+                            left,
+                            right,
+                            knownOverlap
+                        ))
+                        : createStaticCollisionDiagnosticType(
+                            tsInstance,
+                            declaration,
+                            left,
+                            right,
+                            knownOverlap,
+                            mode
+                        ),
                     generatedRange
                 )
             })
@@ -2810,6 +3416,13 @@ function createStaticCollisionDiagnosticType(
     )
 }
 
+function createDiagnosticLiteralType(
+    tsInstance: TypeScript,
+    message: string
+): ts.LiteralTypeNode {
+    return tsInstance.factory.createLiteralTypeNode(tsInstance.factory.createStringLiteral(message))
+}
+
 function staticConflictKeysName(mode: Exclude<StaticCollisionCheckMode, false>): string {
     return mode === "strict" ? staticStrictConflictKeysName : staticNeverConflictKeysName
 }
@@ -2838,6 +3451,19 @@ function appendRequiredBaseValidationTypeParameters(
 ): ts.NodeArray<ts.TypeParameterDeclaration> | undefined {
     const typeParameters = [
         ...(consumerTypeParameters?.map((typeParameter) => cloneNode(tsInstance, typeParameter)) ?? []),
+        ...validations.map((validation) => cloneNode(tsInstance, validation.typeParameter))
+    ]
+
+    return typeParameters.length === 0 ? undefined : tsInstance.factory.createNodeArray(typeParameters)
+}
+
+function appendSourceViewValidationTypeParameters(
+    tsInstance: TypeScript,
+    consumerTypeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
+    validations: RequiredBaseValidation[]
+): ts.NodeArray<ts.TypeParameterDeclaration> | undefined {
+    const typeParameters = [
+        ...(consumerTypeParameters ?? []),
         ...validations.map((validation) => cloneNode(tsInstance, validation.typeParameter))
     ]
 
@@ -2897,6 +3523,59 @@ function requiredBaseRequirementOfMixinRef(
         typeNode : runtimeMixinClassRequiredBaseInstanceType(tsInstance, ref.localValueName),
         name     : `${ref.className} required base`
     }
+}
+
+function baseSatisfiesRequiredBaseSyntactically(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    actualBase: ts.ExpressionWithTypeArguments,
+    requiredBase: ts.TypeNode,
+    seen = new Set<string>()
+): boolean {
+    const requiredBaseName = typeReferenceNameText(tsInstance, requiredBase)
+
+    if (requiredBaseName === undefined || !tsInstance.isIdentifier(actualBase.expression)) {
+        return false
+    }
+
+    const actualBaseName = actualBase.expression.text
+
+    if (actualBaseName === requiredBaseName) {
+        return true
+    }
+
+    if (seen.has(actualBaseName)) {
+        return false
+    }
+
+    seen.add(actualBaseName)
+
+    const actualBaseDeclaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
+        return tsInstance.isClassDeclaration(statement) && statement.name?.text === actualBaseName
+    })
+    const nextBase = actualBaseDeclaration === undefined
+        ? undefined
+        : extendsClause(tsInstance, actualBaseDeclaration)?.types[0]
+
+    return nextBase === undefined
+        ? false
+        : baseSatisfiesRequiredBaseSyntactically(tsInstance, sourceFile, nextBase, requiredBase, seen)
+}
+
+function typeReferenceNameText(tsInstance: TypeScript, typeNode: ts.TypeNode): string | undefined {
+    if (!tsInstance.isTypeReferenceNode(typeNode)) {
+        return undefined
+    }
+
+    return entityNameText(tsInstance, typeNode.typeName)
+}
+
+function entityNameText(tsInstance: TypeScript, name: ts.EntityName): string {
+    if (tsInstance.isIdentifier(name)) {
+        return name.text
+    }
+
+    return `${entityNameText(tsInstance, name.left)}.${name.right.text}`
 }
 
 function createRequiredBaseDiagnosticType(
@@ -3059,13 +3738,14 @@ function consumerHeritageClauses(
     baseName: string,
     generatedRange: ts.TextRange,
     generatedTypeRange: ts.TextRange = generatedRange,
-    extraTypeArguments: ts.TypeNode[] = []
+    extraTypeArguments: ts.TypeNode[] = [],
+    keepImplements = true
 ): ts.NodeArray<ts.HeritageClause> {
     const factory = tsInstance.factory
 
     const ownTypeArguments = declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
         ? declaration.typeParameters.map((typeParameter): ts.TypeNode => {
-            return factory.createTypeReferenceNode(typeParameter.name, undefined)
+            return factory.createTypeReferenceNode(typeParameter.name.text, undefined)
         })
         : []
     const typeArguments = ownTypeArguments.length > 0 || extraTypeArguments.length > 0
@@ -3077,6 +3757,34 @@ function consumerHeritageClauses(
         typeArguments
     ), generatedTypeRange)
 
+    if (tsInstance.isExpressionWithTypeArguments(generatedTypeRange as ts.Node)) {
+        const originalGeneratedTypeRange = generatedTypeRange as ts.ExpressionWithTypeArguments
+
+        preserveTextRange(tsInstance, extendsType.expression, originalGeneratedTypeRange.expression)
+
+        if (extendsType.typeArguments !== undefined) {
+            const generatedTypeArgumentRange = zeroWidthRange(originalGeneratedTypeRange.expression.end)
+
+            preserveTextRange(
+                tsInstance,
+                extendsType.typeArguments,
+                originalGeneratedTypeRange.typeArguments ?? generatedTypeArgumentRange
+            )
+
+            extendsType.typeArguments.forEach((typeArgument, index) => {
+                const originalTypeArgument = originalGeneratedTypeRange.typeArguments?.[index]
+
+                if (originalTypeArgument !== undefined) {
+                    preserveSubtreeTextRange(
+                        tsInstance,
+                        typeArgument,
+                        originalTypeArgument
+                    )
+                }
+            })
+        }
+    }
+
     const extendsHeritage = preserveTextRange(tsInstance, factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
         extendsType
     ]), generatedRange)
@@ -3086,21 +3794,23 @@ function consumerHeritageClauses(
     const implementsHeritage = declaration.heritageClauses?.find((heritageClause) => {
         return heritageClause.token === tsInstance.SyntaxKind.ImplementsKeyword
     })
-    const clauses = implementsHeritage !== undefined ? [ extendsHeritage, implementsHeritage ] : [ extendsHeritage ]
-    const heritageRange = declaration.heritageClauses ?? generatedRange
+    const clauses = keepImplements && implementsHeritage !== undefined
+        ? [ extendsHeritage, implementsHeritage ]
+        : [ extendsHeritage ]
+    const heritageRange = keepImplements ? declaration.heritageClauses ?? generatedRange : generatedRange
 
     return preserveTextRange(tsInstance, factory.createNodeArray(clauses), heritageRange)
 }
 
 function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expression): ts.EntityName {
     if (tsInstance.isIdentifier(expression)) {
-        return expression
+        return tsInstance.factory.createIdentifier(expression.text)
     }
 
     if (tsInstance.isPropertyAccessExpression(expression) && tsInstance.isIdentifier(expression.name)) {
         return tsInstance.factory.createQualifiedName(
             expressionToEntityName(tsInstance, expression.expression),
-            expression.name
+            expression.name.text
         )
     }
 
@@ -3407,7 +4117,11 @@ function cloneOptionalNodeArray<Node extends ts.Node>(
 // ---------------------------------------------------------------------------
 // Вспомогательные построители
 
-function createHelperTypeImport(tsInstance: TypeScript, options: TransformOptions): ts.ImportDeclaration {
+function createHelperTypeImport(
+    tsInstance: TypeScript,
+    context: FileMixinContext,
+    options: TransformOptions
+): ts.ImportDeclaration {
     const factory = tsInstance.factory
     const staticConflictImport = options.staticCollisionCheck === false
         ? []

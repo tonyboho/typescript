@@ -148,3 +148,65 @@ it("does not treat non-mixin implements entries as mixins", async (t: Test) => {
     t.true(printed.includes("implements SourceClass1<T>, PlainContract"),
         "Consumer keeps the full implements list")
 })
+
+it("generates public-only static construction config overloads by default", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base, mixin } from "ts-mixin-class"
+
+        class GenericBase<T> extends Base {
+            public baseValue: T | undefined
+            skippedBaseValue: T | undefined
+        }
+
+        @mixin()
+        class SourceClass<T> {
+            public mixinValue: T | undefined
+            skippedMixinValue: T | undefined
+            mixinMethod (): T | undefined { return this.mixinValue }
+        }
+
+        class Consumer<T> extends GenericBase<T> implements SourceClass<T> {
+            public ownValue: T | undefined
+            skippedOwnValue: T | undefined
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("static new<T>(props?: Partial<Pick<Consumer<T>, \"baseValue\" | \"mixinValue\" | \"ownValue\">>): Consumer<T>;"),
+        "Default public-only construction config uses explicitly public property names")
+    t.false(printed.includes("\"mixinMethod\""),
+        "Generated construction config does not include methods")
+    t.false(printed.includes("\"skippedBaseValue\""),
+        "Public-only construction config ignores base fields without an explicit public modifier")
+    t.false(printed.includes("\"skippedMixinValue\""),
+        "Public-only construction config ignores mixin fields without an explicit public modifier")
+    t.false(printed.includes("\"skippedOwnValue\""),
+        "Public-only construction config ignores consumer fields without an explicit public modifier")
+})
+
+it("can use fast construction config mode", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base, mixin } from "ts-mixin-class"
+
+        class GenericBase<T> extends Base {
+            baseValue: T | undefined
+        }
+
+        @mixin()
+        class SourceClass<T> {
+            mixinValue: T | undefined
+        }
+
+        class Consumer<T> extends GenericBase<T> implements SourceClass<T> {
+            ownValue: T | undefined
+        }
+    `), {
+        constructionConfig : "fast"
+    })
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.true(printed.includes("static new<T>(props?: Partial<Consumer<T>>): Consumer<T>;"),
+        "Fast construction config mode uses the whole consumer instance shape")
+    t.false(printed.includes("Pick<Consumer<T>"),
+        "Fast construction config mode skips static public-property collection")
+})

@@ -3,6 +3,7 @@ import type { Test } from "@bryntum/siesta/nodejs.js"
 
 import {
     base,
+    Base as MixinBase,
     defineMixinClass,
     factory,
     mixinChain,
@@ -20,6 +21,27 @@ class Base {
         return "Base"
     }
 }
+
+it("Base.new creates an instance and initializes non-method properties", async (t: Test) => {
+    class Configured extends MixinBase {
+        value: string = "default"
+        count: number = 0
+
+        method(): string {
+            return this.value
+        }
+    }
+
+    const instance = Configured.new({
+        value : "configured",
+        count : 10
+    })
+
+    t.true(instance instanceof Configured, "Static constructor returns a class instance")
+    t.equal(instance.value, "configured", "Static constructor assigns string property")
+    t.equal(instance.count, 10, "Static constructor assigns numeric property")
+    t.equal(instance.method(), "configured", "Methods stay available on the constructed instance")
+})
 
 it("linearizes mixin requirements with C3 order", async (t: Test) => {
     const A = createNamedMixin("A")

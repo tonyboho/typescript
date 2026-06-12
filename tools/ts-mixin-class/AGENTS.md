@@ -61,8 +61,12 @@ Implemented snapshot:
   mixins through package exports.
 - Consumer constructor arguments are intentionally permissive (`AnyConstructor`) even for
   generic bases. Instance members, `super`, runtime inheritance, and statics are typed;
-  construction will later be modeled through an explicit static factory/new protocol
-  instead of trying to merge arbitrary constructor signatures from mixins and bases.
+  construction is opt-in through exported `Base.new(...)`, which creates an empty
+  instance and calls `initialize(config)`. The transformer adds a
+  static `new(...)` adapter only for consumers whose base chain syntactically extends
+  `Base`. `constructionConfig: "public-only"` is the default and generates a precise
+  config type from explicitly `public` instance fields on the consumer/base/mixins.
+  `constructionConfig: "fast"` uses the cheaper broad `Partial<Consumer<T>>` shape.
 
 Active gaps:
 
@@ -76,7 +80,6 @@ Active gaps:
   not handled yet. Generated top-level names use a double-underscore prefix to reduce
   risk, but there is no collision scan/diagnostic for user declarations such as
   `__Source$mixin`, `__Consumer$base`, or imported helper aliases.
-- `README.md` is stale and still describes the early skeleton/no-op transformer.
 - Continue IDE dogfooding and add regression tests for any editor operation that still
   behaves differently from plain TypeScript. Existing coverage includes definition,
   quickinfo, references, rename, semantic diagnostics, and source-position preservation.
@@ -91,9 +94,6 @@ Future Work:
   with `ClassStatics<typeof Consumer$runtimeBase>` and mixin statics. This needs careful
   declaration emit, source-range preservation, static typing, and runtime semantics tests
   before enabling.
-- Add the explicit construction protocol (planned static factory/new shape) instead of
-  trying to merge arbitrary constructor signatures from bases and mixins.
-
 Implementation notes:
 
 - Entry point: `src/index.ts`. Default export: `transformProgram`.
