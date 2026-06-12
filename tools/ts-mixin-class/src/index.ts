@@ -2311,7 +2311,7 @@ function expandConsumerClass(
     const implicitRequiredBase = extendsType === undefined
         ? firstRequiredBaseType(tsInstance, context, linearized)
         : undefined
-    const emptyBaseName = !options.sourceView && extendsType === undefined && implicitRequiredBase === undefined
+    const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
         ? generatedName(name, consumerEmptyBaseSuffix)
         : undefined
     const requiredBaseValidations = extendsType === undefined

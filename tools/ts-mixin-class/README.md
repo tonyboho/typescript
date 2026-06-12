@@ -360,9 +360,12 @@ becomes conceptually:
 interface __User$base extends Named, Timestamped {
 }
 
+class __User$empty {
+}
+
 class __User$base extends (
-    mixinChain(Object, Named, Timestamped) as unknown as
-        AnyConstructor &
+    mixinChain(__User$empty, Named, Timestamped) as unknown as
+        typeof __User$empty &
         ClassStatics<typeof Named> &
         ClassStatics<typeof Timestamped>
 ) {

@@ -64,6 +64,8 @@ it("expands a consumer class without an explicit base", async (t: Test) => {
         ),
         "Helper chain starts at the generated empty base and keeps mixin statics"
     )
+    t.false(printed.includes("mixinChain(Object, SourceClass1)"),
+        "Helper chain does not use Object as the implicit consumer base")
 })
 
 it("emits a generic consumer base class", async (t: Test) => {
