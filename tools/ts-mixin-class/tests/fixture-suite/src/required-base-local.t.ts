@@ -49,6 +49,7 @@ class DefaultConsumer implements RequiredMixin {
 
 const consumer = new Consumer("base")
 const defaultConsumer = new DefaultConsumer("default")
+const canonicalRequired = new RequiredMixin("canonical")
 
 const v1: string = consumer.requiredMethod()
 const v2: string = consumer.mixinMethod()
@@ -57,6 +58,7 @@ const v4: string = Consumer.staticRequired()
 const v5: string = Consumer.staticMixin()
 const v6: string = defaultConsumer.requiredMethod()
 const v7: string = defaultConsumer.mixinMethod()
+const v8: string = canonicalRequired.mixinMethod()
 
 // @ts-expect-error required base generic is fixed as string.
 const e1: number = consumer.requiredValue
@@ -69,10 +71,14 @@ it("uses a local required-base mixin", async (t: Test) => {
     t.equal(Consumer.staticMixin(), "staticMixin", "Consumer keeps mixin statics")
     t.equal(defaultConsumer.requiredMethod(), "default", "No-base consumer starts from the required base")
     t.equal(defaultConsumer.mixinMethod(), "default/mixin", "No-base consumer applies the mixin over the required base")
+    t.equal(canonicalRequired.requiredMethod(), "canonical", "Canonical required-base mixin receives required base constructor args")
+    t.equal(canonicalRequired.mixinMethod(), "canonical/mixin", "Canonical required-base mixin methods work")
+    t.true(canonicalRequired instanceof RequiredMixin, "Canonical required-base mixin matches itself")
+    t.true(canonicalRequired instanceof RequiredBase, "Canonical required-base mixin inherits from the required base")
     t.true(consumer instanceof RequiredMixin, "Consumer matches the required-base mixin")
     t.true(consumer instanceof RealBase, "Consumer remains an instance of the concrete base")
     t.true(defaultConsumer instanceof RequiredMixin, "No-base consumer matches the required-base mixin")
     t.true(defaultConsumer instanceof RequiredBase, "No-base consumer inherits from the required base")
 })
 
-void [ v1, v2, v3, v4, v5, v6, v7, e1 ]
+void [ v1, v2, v3, v4, v5, v6, v7, v8, e1 ]

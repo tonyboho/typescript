@@ -10,11 +10,13 @@ class DefaultConsumer implements DefaultMixin {
 }
 
 const consumer = new DefaultConsumer()
+const canonical = new DefaultMixin()
 
 const v1: string = consumer.defaultValue
 const v2: string = consumer.defaultMethod()
 const v3: string = consumer.own()
 const v4: string = DefaultConsumer.staticDefault()
+const v5: string = canonical.defaultMethod()
 
 it("uses a default-exported mixin", async (t: Test) => {
     t.equal(consumer.defaultValue, "default", "Default mixin field is applied")
@@ -22,6 +24,8 @@ it("uses a default-exported mixin", async (t: Test) => {
     t.equal(consumer.own(), "default", "Consumer super reaches the default mixin")
     t.equal(DefaultConsumer.staticDefault(), "staticDefault", "Default mixin statics are copied")
     t.true(consumer instanceof DefaultMixin, "Default-imported mixin instanceof works")
+    t.equal(canonical.defaultMethod(), "default", "Default canonical mixin class can be instantiated")
+    t.true(canonical instanceof DefaultMixin, "Default canonical mixin instance matches its mixin class")
 })
 
-void [ v1, v2, v3, v4 ]
+void [ v1, v2, v3, v4, v5 ]

@@ -50,6 +50,9 @@ class RequiredConsumer extends RequiredConsumerBase implements RequiredMixin {
 it("uses imported mixins with a generic consumer base", async (t: Test) => {
     const instance = new Consumer(42)
     const required = new RequiredConsumer()
+    const canonical1 = new SourceClass1<number>()
+    const canonical2 = new SourceClass2<boolean>()
+    const canonicalRequired = new RequiredMixin()
 
     t.equal(instance.value1, "value1", "Class decorated with @mixin() compiles and runs")
     t.equal(instance.value2, "value2", "Class decorated with @mixin() compiles and runs")
@@ -75,4 +78,13 @@ it("uses imported mixins with a generic consumer base", async (t: Test) => {
     t.equal(RequiredConsumer.staticRequiredMixin(), "staticRequiredMixin", "Imported required-base consumer keeps mixin statics")
     t.true(required instanceof RequiredMixin, "Imported required-base consumer matches the mixin")
     t.true(required instanceof RequiredBase, "Imported required-base consumer keeps the required base")
+
+    t.equal(canonical1.passThrough1(42), 42, "Imported canonical mixin class can be instantiated")
+    t.equal(canonical1.method1(), "value1", "Imported canonical mixin class methods work")
+    t.true(canonical1 instanceof SourceClass1, "Imported canonical mixin instance matches its mixin class")
+    t.equal(canonical2.passThrough2(true), true, "Second imported canonical mixin class can be instantiated")
+    t.true(canonical2 instanceof SourceClass2, "Second imported canonical mixin instance matches its mixin class")
+    t.equal(canonicalRequired.requiredMixinMethod(), "requiredBase/requiredMixin", "Imported canonical required-base mixin can be instantiated")
+    t.true(canonicalRequired instanceof RequiredMixin, "Imported canonical required-base mixin matches itself")
+    t.true(canonicalRequired instanceof RequiredBase, "Imported canonical required-base mixin inherits from the required base")
 })

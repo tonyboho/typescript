@@ -35,12 +35,14 @@ class Consumer<A> extends Base implements ChildMixin<A> {
 }
 
 const c = new Consumer<boolean>()
+const canonicalChild = new ChildMixin<number>()
 
 const t1: string = c.childMethod(true)
 const t2: boolean = c.passThrough1(false)
+const t3: string = canonicalChild.childMethod(5)
 
 const another = c.makeAnother()
-const t3: number = another.passThrough1(5)
+const t4: number = another.passThrough1(5)
 
 // @ts-expect-error makeAnother returns SourceClass1<number>.
 const e1: string = another.passThrough1(5)
@@ -53,6 +55,9 @@ it("self-reference", async (t: Test) => {
     t.equal(c.baseValue, 42, "Consumer gets base field")
     t.true(c instanceof ChildMixin, "Consumer matches the direct dependent mixin")
     t.true(c instanceof SourceClass1, "Consumer matches the transitive consumed mixin")
+    t.equal(canonicalChild.childMethod(5), "child/5/value1", "Canonical dependent mixin class can be instantiated")
+    t.true(canonicalChild instanceof ChildMixin, "Canonical dependent mixin instance matches the direct mixin")
+    t.true(canonicalChild instanceof SourceClass1, "Canonical dependent mixin instance matches the transitive mixin")
 
     const fresh = c.makeAnother()
 
@@ -61,4 +66,4 @@ it("self-reference", async (t: Test) => {
     t.true(fresh instanceof SourceClass1, "Self-created instance is an instance of the outer mixin const")
 })
 
-void [ t1, t2, t3, e1, e2, another, ChildMixin ]
+void [ t1, t2, t3, t4, e1, e2, another, ChildMixin ]
