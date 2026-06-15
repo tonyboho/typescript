@@ -78,10 +78,7 @@ export function expandMixinClass(
     const factoryExportModifiers = hasModifier(tsInstance, declaration, tsInstance.SyntaxKind.ExportKeyword)
         ? [ factory.createToken(tsInstance.SyntaxKind.ExportKeyword) ]
         : undefined
-    const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
-    const requiredBase    = requiredBaseType(tsInstance, declaration)
     const diagnostics     = collectMixinClassDiagnostics(tsInstance, sourceFile, declaration)
-    const dependencyRefs  = localMixinRefs(context, localMixinHeritageTypes(tsInstance, declaration, context))
     const diagnosticAliases = createMixinDeclarationDiagnosticAliases(
         tsInstance,
         ref.className,
@@ -96,6 +93,11 @@ export function expandMixinClass(
         ]
     }
 
+    // Emit-only: the source-view path above recomputes its own heritage/required
+    // base, so these stay below the early return to avoid wasted work per edit.
+    const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
+    const requiredBase    = requiredBaseType(tsInstance, declaration)
+    const dependencyRefs  = localMixinRefs(context, localMixinHeritageTypes(tsInstance, declaration, context))
     const interfaceMembers = buildInterfaceMembers(tsInstance, sourceFile, declaration)
 
     const interfaceDeclaration = preserveTextRange(tsInstance, factory.createInterfaceDeclaration(
@@ -470,11 +472,12 @@ function createBaseParameter(
     context: FileMixinContext
 ): ts.ParameterDeclaration {
     const factory = tsInstance.factory
+    const requiredBase = requiredBaseType(tsInstance, declaration)
 
     const dependencyTypes = [
-        ...(requiredBaseType(tsInstance, declaration) === undefined
+        ...(requiredBase === undefined
             ? []
-            : [ heritageTypeToTypeReference(tsInstance, requiredBaseType(tsInstance, declaration)!) ]),
+            : [ heritageTypeToTypeReference(tsInstance, requiredBase) ]),
         ...implementsTypes(tsInstance, declaration)
             .filter((heritageType) => {
                 return tsInstance.isIdentifier(heritageType.expression) &&
