@@ -199,11 +199,8 @@ export function transformSourceFile(
             consumedMixins(tsInstance, statement, context).length > 0
     })
 
-    if (context.byLocalName.size === 0 && !hasAnonymousMixinDiagnostics && !hasAnonymousConsumerDiagnostics) {
-        return sourceFile
-    }
-
     let expandedAnything = false
+    let needsGeneratedImports = false
 
     const expandedStatements = sourceFile.statements.flatMap((statement): ts.Statement[] => {
         if (tsInstance.isClassDeclaration(statement) && statement.name === undefined &&
@@ -250,11 +247,13 @@ export function transformSourceFile(
 
             if (ref !== undefined && ref.declaration === statement) {
                 expandedAnything = true
+                needsGeneratedImports = true
                 return expandMixinClass(tsInstance, sourceFile, ref, context, resolvedOptions)
             }
 
             if (consumedMixins(tsInstance, statement, context).length > 0) {
                 expandedAnything = true
+                needsGeneratedImports = true
                 return expandConsumerClass(tsInstance, sourceFile, statement, context, resolvedOptions)
             }
 
@@ -286,7 +285,9 @@ export function transformSourceFile(
 
     return tsInstance.factory.updateSourceFile(
         sourceFile,
-        insertGeneratedImports(tsInstance, expandedStatements, context, resolvedOptions)
+        needsGeneratedImports
+            ? insertGeneratedImports(tsInstance, expandedStatements, context, resolvedOptions)
+            : expandedStatements
     )
 }
 

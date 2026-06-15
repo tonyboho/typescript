@@ -231,8 +231,10 @@ const id: string = user.id
 The property type is still `string`; it is not widened to `string | undefined`. Internally
 the initializer is treated like `undefined!`, so the runtime value is `undefined` while
 the declared property type remains strict. This option only applies to required
-`public-only` construction properties. Optional fields, non-public fields, static fields,
-and `constructionConfig: "instance-type"` keep normal TypeScript checking.
+`public-only` construction properties, including ordinary classes that directly or
+indirectly extend `Base` without consuming any mixins. Optional fields, non-public
+fields, static fields, and `constructionConfig: "instance-type"` keep normal TypeScript
+checking.
 
 ### Initializing with generics
 

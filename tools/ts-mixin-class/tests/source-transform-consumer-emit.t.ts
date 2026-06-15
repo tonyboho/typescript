@@ -274,3 +274,23 @@ it("can emit undefined non-null initializers for public-only construction config
     t.notMatch(printed, "number | undefined",
         "Declared property types are not widened")
 })
+
+it("can emit undefined non-null initializers for plain Base descendants without helper imports", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base } from "ts-mixin-class/base"
+
+        class PlainShape extends Base {
+            public value: number = undefined
+        }
+    `), {
+        allowUndefinedForRequiredProperties : true
+    })
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.match(printed, "public value: number = undefined!",
+        "Plain Base descendant required property gets a local undefined non-null initializer")
+    t.notMatch(printed, "defineMixinClass",
+        "Plain Base descendant rewrite does not add mixin helper imports")
+    t.notMatch(printed, "mixinChain",
+        "Plain Base descendant rewrite does not add consumer helper imports")
+})

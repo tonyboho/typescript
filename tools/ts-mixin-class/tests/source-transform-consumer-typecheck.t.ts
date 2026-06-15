@@ -311,6 +311,30 @@ it("can allow undefined initializers for public-only construction config fields"
         "The remaining diagnostic comes from the intentionally skipped field")
 })
 
+it("can allow undefined initializers for plain Base descendants", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base } from "ts-mixin-class/base"
+
+        class PlainShape extends Base {
+            public value: number = undefined
+        }
+
+        const constructed = PlainShape.new({ value : 1 })
+        const value: number = constructed.value
+
+        // @ts-expect-error allowUndefinedForRequiredProperties does not widen the property type.
+        const stillStrict: undefined = constructed.value
+
+        void [ value, stillStrict ]
+    `), {
+        allowUndefinedForRequiredProperties : true
+    })
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.expect(diagnostics).toEqual([])
+})
+
 it("does not allow undefined initializers in instance-type construction config mode", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { Base, mixin } from "ts-mixin-class"
