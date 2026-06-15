@@ -182,7 +182,16 @@ function collectClassMemberFacts(
     const configProperties: ConfigProperty[] = []
 
     for (const member of declaration.members) {
-        if (hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword)) {
+        // Fetch modifiers once per member: getModifiers allocates, and the
+        // checks below would otherwise call it up to four times each.
+        const modifiers = tsInstance.canHaveModifiers(member)
+            ? tsInstance.getModifiers(member)
+            : undefined
+        const hasModifierKind = (kind: ts.SyntaxKind): boolean => {
+            return modifiers?.some((modifier) => modifier.kind === kind) ?? false
+        }
+
+        if (hasModifierKind(tsInstance.SyntaxKind.StaticKeyword)) {
             if (member.name !== undefined) {
                 const name = propertyNameText(tsInstance, member.name)
 
@@ -195,9 +204,9 @@ function collectClassMemberFacts(
         }
 
         if (!tsInstance.isPropertyDeclaration(member) ||
-            hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) ||
-            hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) ||
-            !hasModifier(tsInstance, member, tsInstance.SyntaxKind.PublicKeyword)
+            hasModifierKind(tsInstance.SyntaxKind.PrivateKeyword) ||
+            hasModifierKind(tsInstance.SyntaxKind.ProtectedKeyword) ||
+            !hasModifierKind(tsInstance.SyntaxKind.PublicKeyword)
         ) {
             continue
         }
