@@ -31,6 +31,7 @@ type StepTimings = {
 const mixinCount   = integerEnv("TS_MIXIN_PASS_MIXINS", 80)
 const propertyCount = integerEnv("TS_MIXIN_PASS_PROPS", 3)
 const dependencyWindow = integerEnv("TS_MIXIN_PASS_WINDOW", 4)
+const consumerCount = integerEnv("TS_MIXIN_PASS_CONSUMERS", 1)
 const iterations   = integerEnv("TS_MIXIN_PASS_ITERATIONS", 400)
 const warmups      = integerEnv("TS_MIXIN_PASS_WARMUPS", 80)
 
@@ -38,7 +39,7 @@ const fileName = "/virtual/transform-pass.ts"
 const target   = tsModule.ScriptTarget.ES2022
 const original = tsModule.createSourceFile(
     fileName,
-    generateSource(mixinCount, propertyCount, dependencyWindow),
+    generateSource(mixinCount, propertyCount, dependencyWindow, consumerCount),
     target,
     true,
     tsModule.ScriptKind.TS
@@ -85,7 +86,7 @@ function runOnce(into: StepTimings): void {
     into.setParent += performance.now() - mark
 }
 
-function generateSource(mixins: number, properties: number, window: number): string {
+function generateSource(mixins: number, properties: number, window: number, consumers: number): string {
     const lines = [ `import { mixin } from "ts-mixin-class"`, "" ]
 
     for (let index = 0; index < mixins; index++) {
@@ -109,13 +110,18 @@ function generateSource(mixins: number, properties: number, window: number): str
         lines.push(`}`, "")
     }
 
-    const leaves: string[] = []
+    // Each consumer implements a window of leaf mixins shifted by its index, so
+    // their dependency closures overlap heavily -- the realistic case where a
+    // shared per-mixin linearization index would pay off across consumers.
+    for (let consumer = 0; consumer < consumers; consumer++) {
+        const leaves: string[] = []
 
-    for (let index = mixins - 1; index >= 0 && leaves.length < 8; index -= 2) {
-        leaves.push(`Mixin${index}`)
+        for (let index = mixins - 1 - consumer; index >= 0 && leaves.length < 8; index -= 2) {
+            leaves.push(`Mixin${index}`)
+        }
+
+        lines.push(`export class Consumer${consumer} implements ${leaves.join(", ")} {`, `}`, "")
     }
-
-    lines.push(`export class Consumer implements ${leaves.join(", ")} {`, `}`, "")
 
     return lines.join("\n")
 }
@@ -128,6 +134,7 @@ function printResults(): void {
         `mixins=${mixinCount}`,
         `props=${propertyCount}`,
         `window=${dependencyWindow}`,
+        `consumers=${consumerCount}`,
         `statements=${original.statements.length}`,
         `nodes=${countNodes(original)}`
     ].join(" "))
