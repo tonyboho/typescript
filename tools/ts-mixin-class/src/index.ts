@@ -205,6 +205,14 @@ export function createMixinClassCompilerHost(
                 return cachePreserveSourceFile(skipCandidate)
             }
 
+            // A file the transform would leave unchanged never needs the
+            // layered/host shape comparison or the source-view clone. Decide that
+            // up front from a text guard plus cached facts, and hand the file back
+            // as-is, instead of walking both ASTs (and cloning) per cold build / edit.
+            if (!transformAppliesToSourceFile(tsInstance, skipCandidate, options, crossFile)) {
+                return cachePreserveSourceFile(skipCandidate)
+            }
+
             const useLayeredSourceFile = layeredSourceFile !== undefined &&
                 (
                     hostSourceFile === undefined ||
@@ -277,16 +285,11 @@ export function transformSourceFile(
         ...options
     }
 
-    if (crossFile === undefined && !sourceFile.text.includes(resolvedOptions.packageName)) {
+    if (!transformAppliesToSourceFile(tsInstance, sourceFile, resolvedOptions, crossFile)) {
         return sourceFile
     }
 
     const facts                 = getSourceFileFacts(tsInstance, sourceFile, resolvedOptions)
-
-    if (!shouldTransformSourceFile(facts, resolvedOptions, crossFile)) {
-        return sourceFile
-    }
-
     const mixinDecoratorImports = facts.mixinDecoratorImports
     const context               = buildFileMixinContext(
         tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions, crossFile, facts
@@ -493,6 +496,26 @@ function createHelperTypeImport(
             ])
         ),
         factory.createStringLiteral(options.packageName)
+    )
+}
+
+// Whether the transform would produce a changed file. Cheap (a text guard, then
+// cached source-file facts), so the compiler host can decide before the layered/host
+// AST shape comparison and the source-view clone whether a file is worth touching.
+function transformAppliesToSourceFile(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    options: TransformOptions,
+    crossFile: CrossFileContext | undefined
+): boolean {
+    if (crossFile === undefined && !sourceFile.text.includes(options.packageName)) {
+        return false
+    }
+
+    return shouldTransformSourceFile(
+        getSourceFileFacts(tsInstance, sourceFile, options),
+        options,
+        crossFile
     )
 }
 
