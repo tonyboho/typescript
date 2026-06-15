@@ -16,7 +16,7 @@ type Candidate<T> =
 export function mergeC3Linearizations<T>(sequences: readonly (readonly T[])[]): T[] {
     const result: T[] = []
     const pending = sequences
-        .map((sequence) => uniqueSequence(sequence))
+        .map((sequence) => [ ...new Set(sequence) ])
         .filter((sequence) => sequence.length > 0)
         .map((sequence): PendingSequence<T> => {
             return {
@@ -34,20 +34,6 @@ export function mergeC3Linearizations<T>(sequences: readonly (readonly T[])[]): 
 
         result.push(candidate.value)
         consumeC3Candidate(pending, candidate.value)
-    }
-
-    return result
-}
-
-function uniqueSequence<T>(sequence: readonly T[]): T[] {
-    const seen = new Set<T>()
-    const result: T[] = []
-
-    for (const item of sequence) {
-        if (!seen.has(item)) {
-            seen.add(item)
-            result.push(item)
-        }
     }
 
     return result
