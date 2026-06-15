@@ -142,7 +142,7 @@ application base class, or as the required base for mixins that depend on this p
 Construction then goes through `Base.new(config)`:
 
 ```ts
-import { Base } from "ts-mixin-class"
+import { Base } from "ts-mixin-class/base"
 
 class Model extends Base {
     public id: string = ""
@@ -159,7 +159,7 @@ Override `initialize` when a class needs derived state or validation after confi
 assignment. Use the exported `Config<T>` helper for the argument type:
 
 ```ts
-import { Base, type Config } from "ts-mixin-class"
+import { Base, type Config } from "ts-mixin-class/base"
 
 class User extends Base {
     public firstName: string = ""

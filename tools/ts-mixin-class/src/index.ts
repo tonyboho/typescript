@@ -35,6 +35,7 @@ import {
 } from "./util.js"
 import type { TypeScript } from "./util.js"
 
+export * from "./base.js"
 export * from "./runtime.js"
 export type {
     ConstructionConfigMode,

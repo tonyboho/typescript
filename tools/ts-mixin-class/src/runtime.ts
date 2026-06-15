@@ -2,12 +2,6 @@ export type AnyConstructor<T extends object = object> = new (...args: any[]) => 
 
 export type ClassStatics<C> = Omit<C, "prototype">
 
-export type NonFunctionPropertyNames<T> = {
-    [Key in keyof T]: T[Key] extends (...args: any[]) => any ? never : Key
-}[keyof T]
-
-export type Config<T> = Partial<Pick<T, NonFunctionPropertyNames<T>>>
-
 export type StaticNeverConflictKeys<Left, Right> = {
     [Key in Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]:
         [ ClassStatics<Left>[Key] & ClassStatics<Right>[Key] ] extends [ never ]
@@ -25,23 +19,6 @@ export type StaticStrictConflictKeys<Left, Right> = {
 }[Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]
 
 export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
-
-export class Base {
-    initialize(props?: Config<this>): void {
-        if (props !== undefined) {
-            Object.assign(this, props)
-        }
-    }
-
-    static new<T extends typeof Base>(this: T, props?: Config<InstanceType<T>>): InstanceType<T> {
-        const instance = new this() as InstanceType<T>
-
-        instance.initialize(props)
-
-        return instance
-    }
-
-}
 
 export const factory: unique symbol = Symbol.for("ts-mixin-class.factory") as any
 export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements") as any

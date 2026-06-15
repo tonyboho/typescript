@@ -1,6 +1,7 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
-import { Base, mixin, type Config } from "ts-mixin-class"
+import { mixin } from "ts-mixin-class"
+import { Base, type Config } from "ts-mixin-class/base"
 
 
 class ConstructableBase extends Base {

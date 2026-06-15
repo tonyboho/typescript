@@ -705,7 +705,7 @@ function isPackageBaseExpression(
     options: TransformOptions
 ): boolean {
     for (const statement of sourceFile.statements) {
-        if (!isPackageImport(tsInstance, statement, options)) {
+        if (!isPackageBaseImport(tsInstance, statement, options)) {
             continue
         }
 
@@ -738,6 +738,17 @@ function isPackageBaseExpression(
     }
 
     return false
+}
+
+function isPackageBaseImport(
+    tsInstance: TypeScript,
+    statement: ts.Statement,
+    options: TransformOptions
+): boolean {
+    return isPackageImport(tsInstance, statement, options) ||
+        tsInstance.isImportDeclaration(statement) &&
+        tsInstance.isStringLiteral(statement.moduleSpecifier) &&
+        statement.moduleSpecifier.text === `${options.packageName}/base`
 }
 
 function hasStaticMemberNamed(
