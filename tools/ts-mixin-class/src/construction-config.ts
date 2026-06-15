@@ -165,9 +165,7 @@ export function isConstructionBaseOptIn(
 
     seen.add(baseName)
 
-    const baseDeclaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
-        return tsInstance.isClassDeclaration(statement) && statement.name?.text === baseName
-    })
+    const baseDeclaration = localClassDeclaration(tsInstance, sourceFile, baseName)
     const nextBase = baseDeclaration === undefined ? undefined : extendsClause(tsInstance, baseDeclaration)?.types[0]
 
     return isConstructionBaseOptIn(tsInstance, sourceFile, nextBase, options, seen)
@@ -263,12 +261,17 @@ function createConstructionConfigType(
         implicitRequiredBase,
         mixinRefs
     )
-    const requiredNames = properties
-        .filter((property) => !property.optional)
-        .map((property) => property.name)
-    const optionalNames = properties
-        .filter((property) => property.optional)
-        .map((property) => property.name)
+    const requiredNames: string[] = []
+    const optionalNames: string[] = []
+
+    for (const property of properties) {
+        if (property.optional) {
+            optionalNames.push(property.name)
+        } else {
+            requiredNames.push(property.name)
+        }
+    }
+
     const consumerType = createConsumerInstanceType(tsInstance, declaration)
     const requiredType = requiredNames.length === 0
         ? undefined
@@ -280,7 +283,7 @@ function createConstructionConfigType(
         ? undefined
         : factory.createTypeReferenceNode("Partial", [
             factory.createTypeReferenceNode("Pick", [
-                createConsumerInstanceType(tsInstance, declaration),
+                consumerType,
                 literalKeyUnionType(tsInstance, optionalNames)
             ])
         ])
@@ -346,11 +349,19 @@ function baseConfigProperties(
     }
 
     const baseName = baseType.expression.text
-    const baseDeclaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
-        return tsInstance.isClassDeclaration(statement) && statement.name?.text === baseName
-    })
+    const baseDeclaration = localClassDeclaration(tsInstance, sourceFile, baseName)
 
     return baseDeclaration === undefined ? [] : instanceConfigProperties(tsInstance, baseDeclaration, true)
+}
+
+function localClassDeclaration(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    name: string
+): ts.ClassDeclaration | undefined {
+    return sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
+        return tsInstance.isClassDeclaration(statement) && statement.name?.text === name
+    })
 }
 
 function createConsumerInstanceType(
