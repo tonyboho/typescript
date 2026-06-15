@@ -135,7 +135,8 @@ export default function transformProgram(
             cacheKey : registryCacheKey(registry),
             resolveModuleFileName,
             canImportRuntimeValue,
-            linearizationCache : new Map<string, string[]>()
+            linearizationCache : new Map<string, string[]>(),
+            reachabilityCache : new Map<string, Set<string>>()
         }
     const nextHost  = createMixinClassCompilerHost(tsInstance, compilerHost, compilerOptions, config, crossFile, program)
 

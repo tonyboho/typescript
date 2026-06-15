@@ -154,7 +154,8 @@ export function buildFileMixinContext(
         // Share the program-wide linearization index when cross-file context is
         // available; otherwise fall back to a file-local cache (still reused
         // across multiple consumers in the same file).
-        linearizationCache : crossFile?.linearizationCache ?? new Map()
+        linearizationCache : crossFile?.linearizationCache ?? new Map(),
+        reachabilityCache  : crossFile?.reachabilityCache ?? new Map()
     }
 
     addLocalMixinRefs(sourceFile, imports, facts, context)
