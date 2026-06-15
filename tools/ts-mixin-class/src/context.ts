@@ -108,7 +108,28 @@ export function buildFileMixinContext(
         usedFactoryImports : new Map()
     }
 
-    // 1. Mixin classes from this file.
+    addLocalMixinRefs(tsInstance, sourceFile, imports, options, context)
+
+    if (crossFile !== undefined) {
+        addImportedMixinRefs(tsInstance, sourceFile, crossFile, context)
+    }
+
+    addSameFileDependencies(tsInstance, context)
+
+    if (crossFile !== undefined) {
+        addTransitiveRegistryClosure(sourceFile, crossFile, context)
+    }
+
+    return context
+}
+
+function addLocalMixinRefs(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    imports: MixinDecoratorImports,
+    options: TransformOptions,
+    context: FileMixinContext
+): void {
     if (imports.identifiers.size > 0 || imports.namespaces.size > 0) {
         for (const statement of sourceFile.statements) {
             if (!tsInstance.isClassDeclaration(statement) ||
@@ -139,97 +160,106 @@ export function buildFileMixinContext(
             context.byKey.set(ref.key, ref)
         }
     }
+}
 
-    // 2. Imported mixin classes (from the registry).
-    if (crossFile !== undefined) {
-        const importMap = buildImportedNameMap(tsInstance, sourceFile, crossFile.resolveModuleFileName)
+function addImportedMixinRefs(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    crossFile: CrossFileContext,
+    context: FileMixinContext
+): void {
+    const importMap = buildImportedNameMap(tsInstance, sourceFile, crossFile.resolveModuleFileName)
 
-        for (const statement of sourceFile.statements) {
-            if (!tsInstance.isImportDeclaration(statement) ||
-                !tsInstance.isStringLiteral(statement.moduleSpecifier)
-            ) {
+    for (const statement of sourceFile.statements) {
+        if (!tsInstance.isImportDeclaration(statement) ||
+            !tsInstance.isStringLiteral(statement.moduleSpecifier)
+        ) {
+            continue
+        }
+
+        const importClause = statement.importClause
+        const namedBindings = importClause?.namedBindings
+        const localNames = [
+            ...(importClause?.name === undefined ? [] : [ importClause.name.text ]),
+            ...(namedBindings !== undefined && tsInstance.isNamedImports(namedBindings)
+                ? namedBindings.elements.map((element) => element.name.text)
+                : [])
+        ]
+
+        if (localNames.length === 0) {
+            continue
+        }
+
+        for (const localName of localNames) {
+            const imported  = importMap.get(localName)
+
+            if (imported === undefined || context.byLocalName.has(localName)) {
                 continue
             }
 
-            const importClause = statement.importClause
-            const namedBindings = importClause?.namedBindings
-            const localNames = [
-                ...(importClause?.name === undefined ? [] : [ importClause.name.text ]),
-                ...(namedBindings !== undefined && tsInstance.isNamedImports(namedBindings)
-                    ? namedBindings.elements.map((element) => element.name.text)
-                    : [])
-            ]
+            const key        = registryKey(imported.resolvedFileName, imported.importedName)
+            const registered = crossFile.registry.get(key)
 
-            if (localNames.length === 0) {
+            if (registered === undefined) {
                 continue
             }
 
-            for (const localName of localNames) {
-                const imported  = importMap.get(localName)
+            const localValueName = imported.typeOnly ? generatedName(localName, mixinValueSuffix) : localName
 
-                if (imported === undefined || context.byLocalName.has(localName)) {
-                    continue
-                }
+            if (imported.typeOnly) {
+                const importedValueName = registered.defaultExport ? "default" : registered.name
 
-                const key        = registryKey(imported.resolvedFileName, imported.importedName)
-                const registered = crossFile.registry.get(key)
-
-                if (registered === undefined) {
-                    continue
-                }
-                const localValueName = imported.typeOnly ? generatedName(localName, mixinValueSuffix) : localName
-
-                if (imported.typeOnly) {
-                    const importedValueName = registered.defaultExport ? "default" : registered.name
-
-                    context.usedFactoryImports.set(
-                        `${statement.moduleSpecifier.text}:${importedValueName}:${localValueName}`,
-                        {
-                            specifier    : statement.moduleSpecifier.text,
-                            importedName : importedValueName,
-                            localName    : localValueName
-                        }
-                    )
-                }
-
-                const requiredBase = registered.requiredBaseName === undefined
-                    ? undefined
-                    : importedRequiredBaseRef(
-                        importMap,
-                        imported.resolvedFileName,
-                        statement.moduleSpecifier.text,
-                        registered.requiredBaseName,
-                        localName + "$requiredBase"
-                    )
-
-                const ref: ResolvedMixinRef = {
-                    key,
-                    className        : registered.name,
-                    localValueName,
-                    localFactoryName : generatedName(localName, mixinFactorySuffix),
-                    factoryImport    : {
+                context.usedFactoryImports.set(
+                    `${statement.moduleSpecifier.text}:${importedValueName}:${localValueName}`,
+                    {
                         specifier    : statement.moduleSpecifier.text,
-                        importedName : generatedName(registered.name, mixinFactorySuffix)
-                    },
-                    requiredBase,
-                    dependencies     : registered.dependencies,
-                    declaration      : undefined,
-                    configProperties : registered.configProperties,
-                    missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
-                        ? {
-                            specifier    : statement.moduleSpecifier.text,
-                            importedName : registered.defaultExport ? "default" : registered.name
-                        }
-                        : undefined
-                }
-
-                context.byLocalName.set(localName, ref)
-                context.byKey.set(key, ref)
+                        importedName : importedValueName,
+                        localName    : localValueName
+                    }
+                )
             }
+
+            const requiredBase = registered.requiredBaseName === undefined
+                ? undefined
+                : importedRequiredBaseRef(
+                    importMap,
+                    imported.resolvedFileName,
+                    statement.moduleSpecifier.text,
+                    registered.requiredBaseName,
+                    localName + "$requiredBase"
+                )
+
+            const ref: ResolvedMixinRef = {
+                key,
+                className        : registered.name,
+                localValueName,
+                localFactoryName : generatedName(localName, mixinFactorySuffix),
+                factoryImport    : {
+                    specifier    : statement.moduleSpecifier.text,
+                    importedName : generatedName(registered.name, mixinFactorySuffix)
+                },
+                requiredBase,
+                dependencies     : registered.dependencies,
+                declaration      : undefined,
+                configProperties : registered.configProperties,
+                missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
+                    ? {
+                        specifier    : statement.moduleSpecifier.text,
+                        importedName : registered.defaultExport ? "default" : registered.name
+                    }
+                    : undefined
+            }
+
+            context.byLocalName.set(localName, ref)
+            context.byKey.set(key, ref)
         }
     }
+}
 
-    // 3. Same-file mixin dependencies (by local names from implements).
+function addSameFileDependencies(
+    tsInstance: TypeScript,
+    context: FileMixinContext
+): void {
     for (const ref of context.byLocalName.values()) {
         if (ref.declaration === undefined) {
             continue
@@ -245,59 +275,60 @@ export function buildFileMixinContext(
             }
         }
     }
+}
 
-    // 4. Transitive registry closure: dependencies the file does not import.
-    if (crossFile !== undefined) {
-        const queue = [ ...context.byKey.values() ].flatMap((ref) => ref.dependencies)
+function addTransitiveRegistryClosure(
+    sourceFile: ts.SourceFile,
+    crossFile: CrossFileContext,
+    context: FileMixinContext
+): void {
+    const queue = [ ...context.byKey.values() ].flatMap((ref) => ref.dependencies)
 
-        while (queue.length > 0) {
-            const key = queue.pop()
+    while (queue.length > 0) {
+        const key = queue.pop()
 
-            if (key === undefined || context.byKey.has(key)) {
-                continue
-            }
-
-            const registered = crossFile.registry.get(key)
-
-            if (registered === undefined) {
-                continue
-            }
-
-            context.byKey.set(key, {
-                key,
-                className        : registered.name,
-                localValueName   : undefined,
-                localFactoryName : generatedName(registered.name, mixinFactorySuffix),
-                factoryImport    : {
-                    specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
-                    importedName : generatedName(registered.name, mixinFactorySuffix)
-                },
-                requiredBase     : registered.requiredBaseName === undefined
-                    ? undefined
-                    : {
-                        localName : registered.name + "$requiredBase",
-                        import    : {
-                            specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
-                            importedName : registered.requiredBaseName,
-                            localName    : registered.name + "$requiredBase"
-                        }
-                },
-                dependencies     : registered.dependencies,
-                declaration      : undefined,
-                configProperties : registered.configProperties,
-                missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
-                    ? {
-                        specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
-                        importedName : registered.defaultExport ? "default" : registered.name
-                    }
-                    : undefined
-            })
-
-            queue.push(...registered.dependencies)
+        if (key === undefined || context.byKey.has(key)) {
+            continue
         }
-    }
 
-    return context
+        const registered = crossFile.registry.get(key)
+
+        if (registered === undefined) {
+            continue
+        }
+
+        context.byKey.set(key, {
+            key,
+            className        : registered.name,
+            localValueName   : undefined,
+            localFactoryName : generatedName(registered.name, mixinFactorySuffix),
+            factoryImport    : {
+                specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                importedName : generatedName(registered.name, mixinFactorySuffix)
+            },
+            requiredBase     : registered.requiredBaseName === undefined
+                ? undefined
+                : {
+                    localName : registered.name + "$requiredBase",
+                    import    : {
+                        specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                        importedName : registered.requiredBaseName,
+                        localName    : registered.name + "$requiredBase"
+                    }
+            },
+            dependencies     : registered.dependencies,
+            declaration      : undefined,
+            configProperties : registered.configProperties,
+            missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
+                ? {
+                    specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                    importedName : registered.defaultExport ? "default" : registered.name
+                }
+                : undefined
+        })
+
+        queue.push(...registered.dependencies)
+    }
 }
 
 export function relativeImportSpecifier(fromFileName: string, toFileName: string): string {
