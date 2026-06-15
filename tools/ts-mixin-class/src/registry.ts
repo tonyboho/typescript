@@ -16,6 +16,8 @@ import { getSourceFileFacts } from "./source-file-facts.js"
 import { hasModifier } from "./util.js"
 import type { TypeScript } from "./util.js"
 
+const registryCandidateCache = new WeakMap<ts.SourceFile, Map<string, Candidate[]>>()
+
 export function buildMixinRegistry(
     tsInstance: TypeScript,
     program: ts.Program,
@@ -34,36 +36,7 @@ export function buildMixinRegistry(
             continue
         }
 
-        if (sourceFile.isDeclarationFile) {
-            candidates.push(...collectDeclarationFileMixinCandidates(tsInstance, sourceFile))
-            continue
-        }
-
-        if (!sourceFile.text.includes(resolvedOptions.packageName)) {
-            continue
-        }
-
-        const facts = getSourceFileFacts(tsInstance, sourceFile, resolvedOptions)
-
-        if (facts.mixinDecoratorImports.identifiers.size === 0 && facts.mixinDecoratorImports.namespaces.size === 0) {
-            continue
-        }
-
-        for (const classFacts of facts.classes) {
-            if (classFacts.name === undefined || !classFacts.hasMixinDecorator) {
-                continue
-            }
-
-            candidates.push({
-                sourceFile,
-                name                 : classFacts.name,
-                dependencyNames      : classFacts.implementsIdentifierNames,
-                requiredBaseName     : classFacts.requiredBaseName,
-                configProperties     : classFacts.configProperties,
-                declarationHeritage  : false,
-                defaultExport        : classFacts.defaultExport
-            })
-        }
+        candidates.push(...cachedSourceFileMixinCandidates(tsInstance, sourceFile, resolvedOptions))
     }
 
     const registry: MixinRegistry = new Map()
@@ -138,6 +111,73 @@ type Candidate = {
     configProperties     : ConfigProperty[],
     declarationHeritage  : boolean,
     defaultExport        : boolean
+}
+
+function cachedSourceFileMixinCandidates(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    options: TransformOptions
+): Candidate[] {
+    const cacheKey = registryCandidateCacheKey(sourceFile, options)
+    const cached = registryCandidateCache.get(sourceFile)?.get(cacheKey)
+
+    if (cached !== undefined) {
+        return cached
+    }
+
+    const candidates = collectSourceFileMixinCandidates(tsInstance, sourceFile, options)
+    const cachedByOptions = registryCandidateCache.get(sourceFile) ?? new Map<string, Candidate[]>()
+
+    cachedByOptions.set(cacheKey, candidates)
+    registryCandidateCache.set(sourceFile, cachedByOptions)
+
+    return candidates
+}
+
+function collectSourceFileMixinCandidates(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    options: TransformOptions
+): Candidate[] {
+    if (sourceFile.isDeclarationFile) {
+        return collectDeclarationFileMixinCandidates(tsInstance, sourceFile)
+    }
+
+    if (!sourceFile.text.includes(options.packageName)) {
+        return []
+    }
+
+    const facts = getSourceFileFacts(tsInstance, sourceFile, options)
+
+    if (facts.mixinDecoratorImports.identifiers.size === 0 && facts.mixinDecoratorImports.namespaces.size === 0) {
+        return []
+    }
+
+    const candidates: Candidate[] = []
+
+    for (const classFacts of facts.classes) {
+        if (classFacts.name === undefined || !classFacts.hasMixinDecorator) {
+            continue
+        }
+
+        candidates.push({
+            sourceFile,
+            name                 : classFacts.name,
+            dependencyNames      : classFacts.implementsIdentifierNames,
+            requiredBaseName     : classFacts.requiredBaseName,
+            configProperties     : classFacts.configProperties,
+            declarationHeritage  : false,
+            defaultExport        : classFacts.defaultExport
+        })
+    }
+
+    return candidates
+}
+
+function registryCandidateCacheKey(sourceFile: ts.SourceFile, options: TransformOptions): string {
+    return sourceFile.isDeclarationFile
+        ? "declaration"
+        : [ options.packageName, options.decoratorName ].join("|")
 }
 
 function shouldSkipRegistrySourceFile(sourceFile: ts.SourceFile): boolean {
