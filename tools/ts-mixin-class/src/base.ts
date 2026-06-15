@@ -13,9 +13,9 @@ export type MixinApplication<
     ClassStatics<Base> &
     ClassStatics<MixinStatics>
 
-export const factory: unique symbol = Symbol.for("ts-mixin-class.factory") as any
-export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements") as any
-export const base: unique symbol = Symbol.for("ts-mixin-class.base") as any
+export const factory: unique symbol = Symbol.for("ts-mixin-class.factory")
+export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements")
+export const base: unique symbol = Symbol.for("ts-mixin-class.base")
 
 export type NonFunctionPropertyNames<T> = {
     [Key in keyof T]: T[Key] extends (...args: any[]) => any ? never : Key
