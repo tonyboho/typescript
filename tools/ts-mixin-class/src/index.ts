@@ -1,12 +1,13 @@
 import type * as ts from "typescript"
 import type { ProgramTransformerExtras } from "ts-patch"
-import { consumedMixins, expandConsumerClass } from "./consumer-expand.js"
+import { expandConsumerClass } from "./consumer-expand.js"
 import { rewritePublicOnlyUndefinedInitializerClass } from "./construction-initializers.js"
 import { isConstructionBaseOptIn } from "./construction-config.js"
 import { buildFileMixinContext } from "./context.js"
 import { collectMixinDecoratorImports, hasMixinDecorator } from "./decorators.js"
 import { createMixinDeclarationDiagnosticAliases } from "./expand-util.js"
 import { expandMixinClass } from "./mixin-expand.js"
+import { localMixinHeritageTypes } from "./mixin-refs.js"
 import {
     anyConstructorName,
     classStaticsName,
@@ -197,7 +198,7 @@ export function transformSourceFile(
     const hasAnonymousConsumerDiagnostics = sourceFile.statements.some((statement) => {
         return tsInstance.isClassDeclaration(statement) &&
             statement.name === undefined &&
-            consumedMixins(tsInstance, statement, context).length > 0
+            localMixinHeritageTypes(tsInstance, statement, context).length > 0
     })
 
     let expandedAnything = false
@@ -224,7 +225,7 @@ export function transformSourceFile(
         }
 
         if (tsInstance.isClassDeclaration(statement) && statement.name === undefined &&
-            consumedMixins(tsInstance, statement, context).length > 0
+            localMixinHeritageTypes(tsInstance, statement, context).length > 0
         ) {
             expandedAnything = true
             return [
@@ -252,7 +253,7 @@ export function transformSourceFile(
                 return expandMixinClass(tsInstance, sourceFile, ref, context, resolvedOptions)
             }
 
-            const mixinHeritage = consumedMixins(tsInstance, statement, context)
+            const mixinHeritage = localMixinHeritageTypes(tsInstance, statement, context)
 
             if (mixinHeritage.length > 0) {
                 expandedAnything = true

@@ -35,6 +35,10 @@ import {
     isSupportedMixinClassMember
 } from "./mixin-diagnostics.js"
 import {
+    localMixinHeritageTypes,
+    localMixinRefs
+} from "./mixin-refs.js"
+import {
     cloneNode,
     deepCloneNode,
     generatedTextRange,
@@ -77,6 +81,7 @@ export function expandMixinClass(
     const typeParameters  = declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined
     const requiredBase    = requiredBaseType(tsInstance, declaration)
     const diagnostics     = collectMixinClassDiagnostics(tsInstance, sourceFile, declaration)
+    const dependencyRefs  = localMixinRefs(context, localMixinHeritageTypes(tsInstance, declaration, context))
     const diagnosticAliases = createMixinDeclarationDiagnosticAliases(
         tsInstance,
         ref.className,
@@ -129,7 +134,7 @@ export function expandMixinClass(
                                 factory.createStringLiteral(ref.className),
                                 asMixinFactory(tsInstance, factory.createIdentifier(ref.localFactoryName)),
                                 factory.createArrayLiteralExpression(
-                                    directDependencyRefs(tsInstance, declaration, context).map((dependencyRef) => {
+                                    dependencyRefs.map((dependencyRef) => {
                                         return mixinValueIdentifier(tsInstance, dependencyRef)
                                     })
                                 ),
@@ -232,10 +237,7 @@ function expandSourceViewMixinClass(
     }
 
     const requiredBase = requiredBaseType(tsInstance, declaration)
-    const dependencyHeritage = implementsTypes(tsInstance, declaration).filter((heritageType) => {
-        return tsInstance.isIdentifier(heritageType.expression) &&
-            context.byLocalName.has(heritageType.expression.text)
-    })
+    const dependencyHeritage = localMixinHeritageTypes(tsInstance, declaration, context)
     const generatedHeritageRange = generatedTextRange(
         sourceFile,
         declaration.heritageClauses?.pos ?? declaration.typeParameters?.end ?? declaration.name.end
@@ -266,9 +268,7 @@ function expandSourceViewMixinClass(
 
     const baseName       = generatedName(declaration.name.text, consumerBaseSuffix)
     const cloneTypeParameters = () => declaration.typeParameters?.map((typeParameter) => deepCloneNode(tsInstance, typeParameter))
-    const dependencyRefs = dependencyHeritage.map((heritageType) => {
-        return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
-    })
+    const dependencyRefs = localMixinRefs(context, dependencyHeritage)
 
     const baseInterface = preserveSourceViewGeneratedClassLikeRange(tsInstance, factory.createInterfaceDeclaration(
         undefined,
@@ -416,21 +416,6 @@ function asMixinFactory(tsInstance: TypeScript, expression: ts.Expression): ts.E
         ),
         tsInstance.factory.createTypeReferenceNode(mixinFactoryName, undefined)
     )
-}
-
-function directDependencyRefs(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    context: FileMixinContext
-): ResolvedMixinRef[] {
-    return implementsTypes(tsInstance, declaration)
-        .filter((heritageType) => {
-            return tsInstance.isIdentifier(heritageType.expression) &&
-                context.byLocalName.has(heritageType.expression.text)
-        })
-        .map((heritageType) => {
-            return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
-        })
 }
 
 function createRuntimeMixinClassType(

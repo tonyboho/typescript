@@ -16,6 +16,10 @@ import {
     mixinValueIdentifier
 } from "./expand-util.js"
 import { linearizeDependencies } from "./linearization.js"
+import {
+    localMixinHeritageTypes,
+    localMixinRefs
+} from "./mixin-refs.js"
 import { createStaticCollisionValidations } from "./static-collisions.js"
 import {
     anyConstructorName,
@@ -25,7 +29,6 @@ import {
     DependencyLinearizationError,
     extendsClause,
     generatedName,
-    implementsTypes,
     metadataBaseLocalName,
     mixinChainName,
     requiredBaseType,
@@ -45,24 +48,13 @@ import {
 } from "./util.js"
 import type { TypeScript } from "./util.js"
 
-export function consumedMixins(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    context: FileMixinContext
-): ts.ExpressionWithTypeArguments[] {
-    return implementsTypes(tsInstance, declaration).filter((heritageType) => {
-        return tsInstance.isIdentifier(heritageType.expression) &&
-            context.byLocalName.has(heritageType.expression.text)
-    })
-}
-
 export function expandConsumerClass(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
     context: FileMixinContext,
     options: TransformOptions,
-    mixinHeritage = consumedMixins(tsInstance, declaration, context)
+    mixinHeritage = localMixinHeritageTypes(tsInstance, declaration, context)
 ): ts.Statement[] {
     const factory = tsInstance.factory
 
@@ -74,9 +66,7 @@ export function expandConsumerClass(
     const baseName       = generatedName(name, consumerBaseSuffix)
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
 
-    const directMixinRefs = mixinHeritage.map((heritageType) => {
-        return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
-    })
+    const directMixinRefs = localMixinRefs(context, mixinHeritage)
     let linearized: ResolvedMixinRef[]
 
     try {
@@ -308,7 +298,7 @@ function expandConsumerClassWithUnsupportedBaseDiagnostic(
     const name          = declaration.name.text
     const baseName      = generatedName(name, consumerBaseSuffix)
     const extendsType   = extendsClause(tsInstance, declaration)?.types[0]
-    const mixinHeritage = consumedMixins(tsInstance, declaration, context)
+    const mixinHeritage = localMixinHeritageTypes(tsInstance, declaration, context)
 
     if (extendsType === undefined) {
         throw new MixinTransformError(sourceFile, declaration, "Unsupported base diagnostic requires an extends clause")
@@ -398,7 +388,7 @@ function expandConsumerClassWithLinearizationDiagnostic(
     const baseName       = generatedName(name, consumerBaseSuffix)
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
     const emptyBaseName  = extendsType === undefined ? generatedName(name, consumerEmptyBaseSuffix) : undefined
-    const mixinHeritage  = consumedMixins(tsInstance, declaration, context)
+    const mixinHeritage  = localMixinHeritageTypes(tsInstance, declaration, context)
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
     const originalExtendsClause = extendsClause(tsInstance, declaration)
     const generatedHeritageRange = originalExtendsClause ?? generatedTextRange(
