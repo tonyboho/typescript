@@ -1,8 +1,15 @@
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 
-export type BenchmarkGraphKind = "binary-tree"
+export type BenchmarkGraphKind = "binary-tree" | "previous-window"
 export type BenchmarkMemberKind = "public-properties"
+
+export type PreviousWindowGraphOptions = {
+    dependencyWindow     : number,
+    maxDependencyCount   : number,
+    minDependencyCount   : number,
+    seed                 : number
+}
 
 export type BenchmarkScenario = {
     name              : string,
@@ -10,6 +17,7 @@ export type BenchmarkScenario = {
     graph             : BenchmarkGraphKind,
     members           : BenchmarkMemberKind,
     propertyCount     : number,
+    previousWindow?    : PreviousWindowGraphOptions,
     consumerLeafCount : number
 }
 
@@ -65,22 +73,63 @@ export async function createBenchmarkFixture(options: CreateBenchmarkFixtureOpti
     }
 }
 
-export function defaultCompileScenarios(propertyCount = 1): BenchmarkScenario[] {
+export function defaultPreviousWindowGraphOptions(): PreviousWindowGraphOptions {
+    return {
+        dependencyWindow   : 24,
+        maxDependencyCount : 5,
+        minDependencyCount : 2,
+        seed               : 19_871
+    }
+}
+
+export function defaultCompileScenarios(
+    propertyCount = 1,
+    graphOptions = defaultPreviousWindowGraphOptions()
+): BenchmarkScenario[] {
     return [ 25, 100, 250 ].map((size) => {
-        return binaryTreePublicPropertiesScenario(size, propertyCount)
+        return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
     })
 }
 
-export function defaultTsServerScenarios(propertyCount = 1): BenchmarkScenario[] {
+export function defaultTsServerScenarios(
+    propertyCount = 1,
+    graphOptions = defaultPreviousWindowGraphOptions()
+): BenchmarkScenario[] {
     return [ 25, 100 ].map((size) => {
-        return binaryTreePublicPropertiesScenario(size, propertyCount)
+        return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
     })
 }
 
-export function defaultEditScenarios(propertyCount = 1): BenchmarkScenario[] {
+export function defaultEditScenarios(
+    propertyCount = 1,
+    graphOptions = defaultPreviousWindowGraphOptions()
+): BenchmarkScenario[] {
     return [ 25, 100 ].map((size) => {
-        return binaryTreePublicPropertiesScenario(size, propertyCount)
+        return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
     })
+}
+
+export function previousWindowPublicPropertiesScenario(
+    size: number,
+    propertyCount: number,
+    graphOptions = defaultPreviousWindowGraphOptions()
+): BenchmarkScenario {
+    return {
+        name : [
+            "previous-window",
+            size,
+            "public-properties",
+            `${propertyCount}-props`,
+            `${graphOptions.minDependencyCount}-${graphOptions.maxDependencyCount}-deps`,
+            `${graphOptions.dependencyWindow}-window`
+        ].join("-"),
+        size,
+        graph          : "previous-window",
+        members        : "public-properties",
+        propertyCount,
+        previousWindow : graphOptions,
+        consumerLeafCount : Math.min(8, Math.max(1, Math.ceil(size / 32)))
+    }
 }
 
 export function binaryTreePublicPropertiesScenario(
@@ -106,7 +155,7 @@ function generateSourceFiles(scenario: BenchmarkScenario): SourceFile[] {
         throw new Error(`Benchmark scenario ${scenario.name} must contain at least one mixin`)
     }
 
-    if (scenario.graph !== "binary-tree") {
+    if (scenario.graph !== "binary-tree" && scenario.graph !== "previous-window") {
         throw new Error(`Unsupported benchmark graph: ${scenario.graph}`)
     }
 
@@ -133,16 +182,16 @@ function generateSourceFiles(scenario: BenchmarkScenario): SourceFile[] {
 }
 
 function mixinSource(scenario: BenchmarkScenario, index: number): string {
-    const parentIndex = index === 0 ? undefined : Math.floor((index - 1) / 2)
+    const dependencyIndexes = mixinDependencyIndexes(scenario, index)
     const imports = [
         `import { mixin } from "ts-mixin-class"`,
-        ...(parentIndex === undefined
-            ? []
-            : [ `import { ${mixinClassName(parentIndex)} } from "./${mixinModuleName(parentIndex)}.js"` ])
+        ...dependencyIndexes.map((dependencyIndex) => {
+            return `import { ${mixinClassName(dependencyIndex)} } from "./${mixinModuleName(dependencyIndex)}.js"`
+        })
     ]
-    const implementsClause = parentIndex === undefined
+    const implementsClause = dependencyIndexes.length === 0
         ? ""
-        : ` implements ${mixinClassName(parentIndex)}`
+        : ` implements ${dependencyIndexes.map((dependencyIndex) => mixinClassName(dependencyIndex)).join(", ")}`
     const properties = Array.from({ length : scenario.propertyCount }, (_, propertyIndex) => {
         return `    value${index}_${propertyIndex}: number = ${index * 1000 + propertyIndex}`
     })
@@ -154,6 +203,49 @@ export class ${mixinClassName(index)}${implementsClause} {
 ${properties.join("\n")}
 }
 `
+}
+
+function mixinDependencyIndexes(scenario: BenchmarkScenario, index: number): number[] {
+    if (index === 0) {
+        return []
+    }
+
+    if (scenario.graph === "binary-tree") {
+        return [ Math.floor((index - 1) / 2) ]
+    }
+
+    const options = scenario.previousWindow ?? defaultPreviousWindowGraphOptions()
+    const firstCandidate = Math.max(0, index - options.dependencyWindow)
+    const candidates = Array.from({ length : index - firstCandidate }, (_, offset) => firstCandidate + offset)
+    const random = createSeededRandom(options.seed + index * 9973)
+    const minCount = Math.min(options.minDependencyCount, candidates.length)
+    const maxCount = Math.min(Math.max(options.maxDependencyCount, minCount), candidates.length)
+    const dependencyCount = minCount + Math.floor(random() * (maxCount - minCount + 1))
+
+    for (let candidateIndex = candidates.length - 1; candidateIndex > 0; candidateIndex--) {
+        const swapIndex = Math.floor(random() * (candidateIndex + 1))
+        const item = candidates[candidateIndex]!
+
+        candidates[candidateIndex] = candidates[swapIndex]!
+        candidates[swapIndex] = item
+    }
+
+    return candidates.slice(0, dependencyCount).sort((a, b) => a - b)
+}
+
+function createSeededRandom(seed: number): () => number {
+    let state = seed >>> 0
+
+    return () => {
+        state += 0x6D2B79F5
+
+        let value = state
+
+        value = Math.imul(value ^ value >>> 15, value | 1)
+        value ^= value + Math.imul(value ^ value >>> 7, value | 61)
+
+        return ((value ^ value >>> 14) >>> 0) / 4294967296
+    }
 }
 
 function consumerSource(scenario: BenchmarkScenario): string {

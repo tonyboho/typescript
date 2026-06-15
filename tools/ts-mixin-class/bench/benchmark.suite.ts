@@ -5,14 +5,16 @@ import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import {
-    binaryTreePublicPropertiesScenario,
     createBenchmarkFixture,
     defaultEditScenarios,
     defaultCompileScenarios,
+    defaultPreviousWindowGraphOptions,
     defaultTsServerScenarios,
+    previousWindowPublicPropertiesScenario,
     scenarioDirectoryName,
     type BenchmarkFixture,
-    type BenchmarkScenario
+    type BenchmarkScenario,
+    type PreviousWindowGraphOptions
 } from "./fixture-generator.js"
 
 const execFileAsync = promisify(execFile)
@@ -47,10 +49,18 @@ const iterations = integerEnv("TS_MIXIN_BENCH_ITERATIONS", 3)
 const warmups = integerEnv("TS_MIXIN_BENCH_WARMUPS", 1)
 const propertyCount = integerEnv("TS_MIXIN_BENCH_PROPERTY_COUNT", 1)
 const editCount = integerEnv("TS_MIXIN_BENCH_EDIT_COUNT", 8)
+const graphOptions = previousWindowGraphOptions()
 
 console.log(`ts-mixin-class benchmark suite`)
 console.log(`mode=${mode}`)
-console.log(`iterations=${iterations} warmups=${warmups} propertyCount=${propertyCount}`)
+console.log([
+    `iterations=${iterations}`,
+    `warmups=${warmups}`,
+    `propertyCount=${propertyCount}`,
+    `deps=${graphOptions.minDependencyCount}-${graphOptions.maxDependencyCount}`,
+    `window=${graphOptions.dependencyWindow}`,
+    `seed=${graphOptions.seed}`
+].join(" "))
 console.log("")
 
 if (mode === "all" || mode === "compile") {
@@ -335,14 +345,14 @@ function compileScenarios(): BenchmarkScenario[] {
     const sizes = process.env.TS_MIXIN_BENCH_SIZES
 
     if (sizes === undefined) {
-        return defaultCompileScenarios(propertyCount)
+        return defaultCompileScenarios(propertyCount, graphOptions)
     }
 
     return sizes.split(",")
         .map((size) => Number.parseInt(size.trim(), 10))
         .filter((size) => Number.isFinite(size) && size > 0)
         .map((size) => {
-            return binaryTreePublicPropertiesScenario(size, propertyCount)
+            return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
         })
 }
 
@@ -350,14 +360,14 @@ function tsServerScenarios(): BenchmarkScenario[] {
     const sizes = process.env.TS_MIXIN_BENCH_TSSERVER_SIZES
 
     if (sizes === undefined) {
-        return defaultTsServerScenarios(propertyCount)
+        return defaultTsServerScenarios(propertyCount, graphOptions)
     }
 
     return sizes.split(",")
         .map((size) => Number.parseInt(size.trim(), 10))
         .filter((size) => Number.isFinite(size) && size > 0)
         .map((size) => {
-            return binaryTreePublicPropertiesScenario(size, propertyCount)
+            return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
         })
 }
 
@@ -365,15 +375,26 @@ function editScenarios(): BenchmarkScenario[] {
     const sizes = process.env.TS_MIXIN_BENCH_EDIT_SIZES
 
     if (sizes === undefined) {
-        return defaultEditScenarios(propertyCount)
+        return defaultEditScenarios(propertyCount, graphOptions)
     }
 
     return sizes.split(",")
         .map((size) => Number.parseInt(size.trim(), 10))
         .filter((size) => Number.isFinite(size) && size > 0)
         .map((size) => {
-            return binaryTreePublicPropertiesScenario(size, propertyCount)
+            return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
         })
+}
+
+function previousWindowGraphOptions(): PreviousWindowGraphOptions {
+    const defaults = defaultPreviousWindowGraphOptions()
+
+    return {
+        dependencyWindow   : integerEnv("TS_MIXIN_BENCH_DEP_WINDOW", defaults.dependencyWindow),
+        maxDependencyCount : integerEnv("TS_MIXIN_BENCH_DEP_MAX", defaults.maxDependencyCount),
+        minDependencyCount : integerEnv("TS_MIXIN_BENCH_DEP_MIN", defaults.minDependencyCount),
+        seed               : integerEnv("TS_MIXIN_BENCH_SEED", defaults.seed)
+    }
 }
 
 function benchmarkMode(): BenchmarkMode {
