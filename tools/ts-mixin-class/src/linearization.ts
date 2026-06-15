@@ -1,3 +1,4 @@
+import { C3LinearizationError, mergeC3Linearizations } from "./c3-linearization.js"
 import {
     DependencyLinearizationError,
     type FileMixinContext,
@@ -56,34 +57,14 @@ function linearizeDependencyKey(
 }
 
 function mergeDependencyLinearizations(sequences: string[][]): string[] {
-    const result: string[] = []
-    const pending = sequences
-        .map((sequence) => sequence.filter((key, index) => sequence.indexOf(key) === index))
-        .filter((sequence) => sequence.length > 0)
-
-    while (pending.length > 0) {
-        const candidate = pending
-            .map((sequence) => sequence[0])
-            .find((head) => {
-                return pending.every((sequence) => !sequence.slice(1).includes(head))
-            })
-
-        if (candidate === undefined) {
-            throw new DependencyLinearizationError(pending.map((sequence) => [ ...sequence ]))
-        }
-
-        result.push(candidate)
-
-        for (let index = pending.length - 1; index >= 0; index--) {
-            if (pending[index][0] === candidate) {
-                pending[index].shift()
-            }
-
-            if (pending[index].length === 0) {
-                pending.splice(index, 1)
-            }
-        }
+    try {
+        return mergeC3Linearizations(sequences)
     }
+    catch (error) {
+        if (error instanceof C3LinearizationError) {
+            throw new DependencyLinearizationError(error.pendingSequences)
+        }
 
-    return result
+        throw error
+    }
 }

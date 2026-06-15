@@ -1,3 +1,5 @@
+import { C3LinearizationError, mergeC3Linearizations } from "./c3-linearization.js"
+
 export type AnyConstructor<T extends object = object> = new (...args: any[]) => T
 
 export type ClassStatics<C> = Omit<C, "prototype">
@@ -160,36 +162,16 @@ function linearizeRuntimeRequirements(
 }
 
 function mergeRuntimeLinearizations(sequences: RuntimeMixinClassValue[][]): RuntimeMixinClassValue[] {
-    const result: RuntimeMixinClassValue[] = []
-    const pending = sequences
-        .map((sequence) => sequence.filter((mixinClass, index) => sequence.indexOf(mixinClass) === index))
-        .filter((sequence) => sequence.length > 0)
-
-    while (pending.length > 0) {
-        const candidate = pending
-            .map((sequence) => sequence[0])
-            .find((head) => {
-                return pending.every((sequence) => !sequence.slice(1).includes(head))
-            })
-
-        if (candidate === undefined) {
+    try {
+        return mergeC3Linearizations(sequences)
+    }
+    catch (error) {
+        if (error instanceof C3LinearizationError) {
             throw new Error("Cannot linearize mixin classes: inconsistent requirements")
         }
 
-        result.push(candidate)
-
-        for (let index = pending.length - 1; index >= 0; index--) {
-            if (pending[index][0] === candidate) {
-                pending[index].shift()
-            }
-
-            if (pending[index].length === 0) {
-                pending.splice(index, 1)
-            }
-        }
+        throw error
     }
-
-    return result
 }
 
 function runtimeMetadataOf(mixinClass: RuntimeMixinClassValue): RuntimeMixinMetadata {
