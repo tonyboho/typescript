@@ -32,12 +32,17 @@ export function createStaticCollisionValidations(
         return []
     }
 
-    const sources = [
+    const allSources = [
         ...consumerBaseStaticSources(tsInstance, sourceFile, extendsType, implicitRequiredBase, emptyBaseName, facts),
         ...mixinRefs.flatMap((ref) => {
             return mixinStaticSource(tsInstance, ref, facts)
         })
     ]
+    const sources = sourceView
+        ? allSources.filter((source) => {
+            return source.staticNames !== undefined && source.staticNames.size > 0
+        })
+        : allSources
     const validations: RequiredBaseValidation[] = []
 
     for (let leftIndex = 0; leftIndex < sources.length; leftIndex++) {
