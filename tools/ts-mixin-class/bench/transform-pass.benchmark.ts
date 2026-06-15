@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks"
 import tsModule from "typescript"
 import type * as ts from "typescript"
-import { transformSourceFile } from "../src/index.js"
+import { printSourceFile, transformSourceFile } from "../src/index.js"
 import {
     cloneSourceFileForTransform,
     preserveTopLevelStatementRanges,
@@ -9,31 +9,34 @@ import {
 } from "../src/util.js"
 import type { TypeScript } from "../src/util.js"
 
-// In-process microbenchmark for the source-view transform pipeline.
+// In-process microbenchmark for the per-file transform pipeline.
 //
 // The end-to-end suite (benchmark.suite.ts) drives real tsc / tsserver, where
 // the transformer's own work is diluted by TypeScript bind + check and process
 // startup -- a good regression guard, but a poor detector for a single pass
-// inside the transformer. This benchmark isolates the four steps the compiler
-// host runs per source-view file and reports how the time splits between them,
-// so a candidate optimization (e.g. folding range preservation into expansion)
-// can be judged before it is written.
+// inside the transformer. This benchmark isolates the steps the compiler host
+// runs per file and reports how the time splits between them, so a candidate
+// optimization can be judged (and CPU-profiled) before it is written.
+//
+// TS_MIXIN_PASS_MODE selects the pipeline:
+//   source-view (default): clone -> transform -> preserve ranges -> setParent
+//   emit:                  transform -> print -> reparse
 
 const tsInstance = tsModule as unknown as TypeScript
 
-type StepTimings = {
-    clone     : number,
-    transform : number,
-    preserve  : number,
-    setParent : number
-}
+type StepTimings = Map<string, number>
 
+const mode         = stringEnv("TS_MIXIN_PASS_MODE", "source-view")
 const mixinCount   = integerEnv("TS_MIXIN_PASS_MIXINS", 80)
 const propertyCount = integerEnv("TS_MIXIN_PASS_PROPS", 3)
 const dependencyWindow = integerEnv("TS_MIXIN_PASS_WINDOW", 4)
 const consumerCount = integerEnv("TS_MIXIN_PASS_CONSUMERS", 1)
 const iterations   = integerEnv("TS_MIXIN_PASS_ITERATIONS", 400)
 const warmups      = integerEnv("TS_MIXIN_PASS_WARMUPS", 80)
+
+if (mode !== "source-view" && mode !== "emit") {
+    throw new Error(`Unknown TS_MIXIN_PASS_MODE ${JSON.stringify(mode)}; use "source-view" or "emit".`)
+}
 
 const fileName = "/virtual/transform-pass.ts"
 const target   = tsModule.ScriptTarget.ES2022
@@ -45,13 +48,11 @@ const original = tsModule.createSourceFile(
     tsModule.ScriptKind.TS
 )
 
-const warm: StepTimings = { clone : 0, transform : 0, preserve : 0, setParent : 0 }
-
 for (let index = 0; index < warmups; index++) {
-    runOnce(warm)
+    runOnce(new Map())
 }
 
-const totals: StepTimings = { clone : 0, transform : 0, preserve : 0, setParent : 0 }
+const totals: StepTimings = new Map()
 const wallStart = performance.now()
 
 for (let index = 0; index < iterations; index++) {
@@ -62,28 +63,47 @@ const wall = performance.now() - wallStart
 
 printResults()
 
-// One source-view transform, mirroring the source-view branch of the compiler
-// host's getSourceFile, with each step timed separately.
 function runOnce(into: StepTimings): void {
-    let mark = performance.now()
-    const cloned = cloneSourceFileForTransform(tsInstance, original, target)
-    into.clone += performance.now() - mark
+    if (mode === "emit") {
+        runEmitOnce(into)
+    } else {
+        runSourceViewOnce(into)
+    }
+}
 
-    mark = performance.now()
-    const transformed = transformSourceFile(tsInstance, cloned, { sourceView : true })
-    into.transform += performance.now() - mark
+// Mirrors the source-view branch of the compiler host's getSourceFile.
+function runSourceViewOnce(into: StepTimings): void {
+    const cloned = time(into, "clone (reparse)", () => cloneSourceFileForTransform(tsInstance, original, target))
+    const transformed = time(into, "transform (dispatch)", () => transformSourceFile(tsInstance, cloned, { sourceView : true }))
 
     if (transformed === cloned) {
         throw new Error("Generated file was not transformed -- mixin detection failed")
     }
 
-    mark = performance.now()
-    preserveTopLevelStatementRanges(tsInstance, transformed)
-    into.preserve += performance.now() - mark
+    time(into, "preserveRanges (JS)", () => preserveTopLevelStatementRanges(tsInstance, transformed))
+    time(into, "setParentRecursive", () => setParentRecursivePreservingVersion(tsInstance, transformed, original))
+}
 
-    mark = performance.now()
-    setParentRecursivePreservingVersion(tsInstance, transformed, original)
-    into.setParent += performance.now() - mark
+// Mirrors the emit branch of getSourceFile: transform, print, reparse.
+function runEmitOnce(into: StepTimings): void {
+    const transformed = time(into, "transform (dispatch)", () => transformSourceFile(tsInstance, original, { sourceView : false }))
+
+    if (transformed === original) {
+        throw new Error("Generated file was not transformed -- mixin detection failed")
+    }
+
+    const text = time(into, "print", () => printSourceFile(tsInstance, transformed))
+
+    time(into, "reparse", () => tsModule.createSourceFile(fileName, text, target, true, tsModule.ScriptKind.TS))
+}
+
+function time<T>(into: StepTimings, key: string, run: () => T): T {
+    const mark = performance.now()
+    const result = run()
+
+    into.set(key, (into.get(key) ?? 0) + (performance.now() - mark))
+
+    return result
 }
 
 function generateSource(mixins: number, properties: number, window: number, consumers: number): string {
@@ -127,10 +147,11 @@ function generateSource(mixins: number, properties: number, window: number, cons
 }
 
 function printResults(): void {
-    const sum = totals.clone + totals.transform + totals.preserve + totals.setParent
+    const sum = [ ...totals.values() ].reduce((accumulator, value) => accumulator + value, 0)
 
     console.log(`transform-pass benchmark`)
     console.log([
+        `mode=${mode}`,
         `mixins=${mixinCount}`,
         `props=${propertyCount}`,
         `window=${dependencyWindow}`,
@@ -141,10 +162,11 @@ function printResults(): void {
     console.log(`iterations=${iterations} warmups=${warmups}`)
     console.log("")
     console.log("step                    per-iter      share")
-    reportStep("clone (reparse)", totals.clone, sum)
-    reportStep("transform (dispatch)", totals.transform, sum)
-    reportStep("preserveRanges (JS)", totals.preserve, sum)
-    reportStep("setParentRecursive", totals.setParent, sum)
+
+    for (const [ label, value ] of totals) {
+        reportStep(label, value, sum)
+    }
+
     console.log(`${"sum".padEnd(24)}${formatMs(sum / iterations).padStart(8)}`)
     console.log(`${"wall".padEnd(24)}${formatMs(wall / iterations).padStart(8)}`)
 }
@@ -155,6 +177,10 @@ function reportStep(label: string, value: number, sum: number): void {
         formatMs(value / iterations).padStart(8),
         `${((value / sum) * 100).toFixed(1)}%`.padStart(11)
     ].join(""))
+}
+
+function stringEnv(name: string, fallback: string): string {
+    return process.env[name] ?? fallback
 }
 
 function countNodes(node: ts.Node): number {
