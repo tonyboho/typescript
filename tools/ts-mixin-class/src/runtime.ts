@@ -1,5 +1,5 @@
 import { C3LinearizationError, mergeC3Linearizations } from "./c3-linearization.js"
-import { base, factory, requirements, type AnyConstructor, type ClassStatics, type MixinFactory } from "./base.js"
+import { base, factory, requirements, type AnyConstructor, type ClassStatics, type MixinApplication, type MixinFactory } from "./base.js"
 export {
     base,
     factory,
@@ -31,6 +31,25 @@ export type RuntimeMixinClass<RequiredBase extends object = object> = {
     readonly [requirements]: readonly RuntimeMixinClass[],
     readonly [base]: AnyConstructor<RequiredBase>
 }
+
+// Factored static type of a non-generic mixin class value. The transformer emits
+// `... as unknown as MixinClassValue<X, typeof __X$mixin> & RuntimeMixinClass`
+// instead of inlining the constructor + ClassStatics + `mix` intersection at
+// every mixin (which dominated emitted output). Must stay structurally identical
+// to that inline form so inference, declaration emit, and manual `.mix()` are
+// unchanged. Generic mixins keep the inline form (their `mix`/constructor capture
+// the mixin's own type parameters, which a fixed alias cannot express).
+export type MixinClassValue<
+    Instance extends object,
+    Factory extends (...args: any[]) => any,
+    RequiredBase extends object = any
+> =
+    (new (...args: any[]) => Instance)
+    & ClassStatics<ReturnType<Factory>>
+    & {
+        readonly mix: <Base extends AnyConstructor<RequiredBase>>(base: Base) =>
+            MixinApplication<Base, Instance, ReturnType<Factory>>
+    }
 
 type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass & {
     readonly mix: <Base extends AnyConstructor<any>>(base: Base) => AnyConstructor<any>

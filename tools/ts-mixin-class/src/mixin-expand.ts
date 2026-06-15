@@ -9,6 +9,7 @@ import {
     generatedName,
     implementsTypes,
     isNamedClassElement,
+    mixinClassValueName,
     mixinFactoryName,
     requiredBaseType,
     runtimeMixinClassName,
@@ -148,45 +149,7 @@ export function expandMixinClass(
                         ),
                         factory.createKeywordTypeNode(tsInstance.SyntaxKind.UnknownKeyword)
                     ),
-                    factory.createIntersectionTypeNode([
-                        factory.createParenthesizedType(factory.createConstructorTypeNode(
-                            undefined,
-                            typeParameters,
-                            [ factory.createParameterDeclaration(
-                                undefined,
-                                factory.createToken(tsInstance.SyntaxKind.DotDotDotToken),
-                                "args",
-                                undefined,
-                                factory.createArrayTypeNode(factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword))
-                            ) ],
-                            factory.createTypeReferenceNode(
-                                ref.className,
-                                typeParameters?.map((typeParameter) => {
-                                    return factory.createTypeReferenceNode(typeParameter.name, undefined)
-                                })
-                            )
-                        )),
-                        factory.createTypeReferenceNode(classStaticsName, [
-                            factory.createTypeReferenceNode("ReturnType", [
-                                factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
-                            ])
-                        ]),
-                        createMixinApplyType(
-                            tsInstance,
-                            declaration,
-                            typeParameters,
-                            factory.createTypeReferenceNode(
-                                ref.className,
-                                typeParameters?.map((typeParameter) => {
-                                    return factory.createTypeReferenceNode(typeParameter.name, undefined)
-                                })
-                            ),
-                            factory.createTypeReferenceNode("ReturnType", [
-                                factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
-                            ])
-                        ),
-                        createRuntimeMixinClassType(tsInstance, declaration)
-                    ])
+                    createMixinValueCastType(tsInstance, declaration, ref, typeParameters)
                 )
             )
         ], tsInstance.NodeFlags.Const)
@@ -420,6 +383,61 @@ function asMixinFactory(tsInstance: TypeScript, expression: ts.Expression): ts.E
         ),
         tsInstance.factory.createTypeReferenceNode(mixinFactoryName, undefined)
     )
+}
+
+// Static type cast for a mixin value. Non-generic mixins use the shared
+// `MixinClassValue<Instance, typeof factory[, RequiredBase]>` alias (collapsing
+// the constructor + ClassStatics + `mix` intersection that otherwise dominates
+// emitted output). `& RuntimeMixinClass` stays a visible sibling so the .d.ts
+// mixin marker is unchanged. Generic mixins keep the inline form, since their
+// constructor and `mix` capture the mixin's own type parameters.
+function createMixinValueCastType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    ref: ResolvedMixinRef,
+    typeParameters: ts.TypeParameterDeclaration[] | undefined
+): ts.TypeNode {
+    const factory = tsInstance.factory
+    const instanceType = factory.createTypeReferenceNode(
+        ref.className,
+        typeParameters?.map((typeParameter) => {
+            return factory.createTypeReferenceNode(typeParameter.name, undefined)
+        })
+    )
+    const factoryReturnType = factory.createTypeReferenceNode("ReturnType", [
+        factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
+    ])
+
+    if (typeParameters !== undefined) {
+        return factory.createIntersectionTypeNode([
+            factory.createParenthesizedType(factory.createConstructorTypeNode(
+                undefined,
+                typeParameters,
+                [ factory.createParameterDeclaration(
+                    undefined,
+                    factory.createToken(tsInstance.SyntaxKind.DotDotDotToken),
+                    "args",
+                    undefined,
+                    factory.createArrayTypeNode(factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword))
+                ) ],
+                instanceType
+            )),
+            factory.createTypeReferenceNode(classStaticsName, [ factoryReturnType ]),
+            createMixinApplyType(tsInstance, declaration, typeParameters, instanceType, factoryReturnType),
+            createRuntimeMixinClassType(tsInstance, declaration)
+        ])
+    }
+
+    const requiredBase = requiredBaseType(tsInstance, declaration)
+
+    return factory.createIntersectionTypeNode([
+        factory.createTypeReferenceNode(mixinClassValueName, [
+            instanceType,
+            factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName)),
+            ...(requiredBase === undefined ? [] : [ heritageTypeToTypeReference(tsInstance, requiredBase) ])
+        ]),
+        createRuntimeMixinClassType(tsInstance, declaration)
+    ])
 }
 
 function createRuntimeMixinClassType(

@@ -17,6 +17,7 @@ import {
     metadataBaseLocalName,
     mixinApplicationName,
     mixinChainName,
+    mixinClassValueName,
     mixinFactoryName,
     runtimeMixinClassName,
     shouldSkipFileName,
@@ -493,7 +494,8 @@ function createHelperTypeImport(
                     factory.createIdentifier(metadataBaseImportName),
                     factory.createIdentifier(metadataBaseLocalName)
                 ),
-                factory.createImportSpecifier(true, undefined, factory.createIdentifier(runtimeMixinClassName))
+                factory.createImportSpecifier(true, undefined, factory.createIdentifier(runtimeMixinClassName)),
+                factory.createImportSpecifier(true, undefined, factory.createIdentifier(mixinClassValueName))
             ])
         ),
         factory.createStringLiteral(options.packageName)
