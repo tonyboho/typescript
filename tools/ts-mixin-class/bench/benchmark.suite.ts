@@ -1,5 +1,5 @@
 import { execFile, fork } from "node:child_process"
-import { readFile, rm } from "node:fs/promises"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
@@ -50,10 +50,12 @@ const warmups = integerEnv("TS_MIXIN_BENCH_WARMUPS", 1)
 const propertyCount = integerEnv("TS_MIXIN_BENCH_PROPERTY_COUNT", 1)
 const editCount = integerEnv("TS_MIXIN_BENCH_EDIT_COUNT", 8)
 const graphOptions = previousWindowGraphOptions()
+const outputFile = process.env.TS_MIXIN_BENCH_OUTPUT
+const reportLines: string[] = []
 
-console.log(`ts-mixin-class benchmark suite`)
-console.log(`mode=${mode}`)
-console.log([
+report(`ts-mixin-class benchmark suite`)
+report(`mode=${mode}`)
+report([
     `iterations=${iterations}`,
     `warmups=${warmups}`,
     `propertyCount=${propertyCount}`,
@@ -61,7 +63,7 @@ console.log([
     `window=${graphOptions.dependencyWindow}`,
     `seed=${graphOptions.seed}`
 ].join(" "))
-console.log("")
+report("")
 
 if (mode === "all" || mode === "compile") {
     await runCompileBenchmark()
@@ -75,6 +77,8 @@ if (mode === "all" || mode === "edit") {
     await runEditBenchmark()
 }
 
+await writeBenchmarkOutput()
+
 async function runCompileBenchmark(): Promise<void> {
     const results: BenchmarkResult[] = []
 
@@ -85,7 +89,7 @@ async function runCompileBenchmark(): Promise<void> {
             scenario
         })
 
-        console.log(`compile ${scenarioDirectoryName(scenario)}`)
+        report(`compile ${scenarioDirectoryName(scenario)}`)
 
         for (let index = 0; index < warmups; index++) {
             await runCleanCompile(fixture.tsconfigFile, fixture.directory)
@@ -113,7 +117,7 @@ async function runTsServerBenchmark(): Promise<void> {
             scenario
         })
 
-        console.log(`tsserver ${scenarioDirectoryName(scenario)}`)
+        report(`tsserver ${scenarioDirectoryName(scenario)}`)
 
         for (let index = 0; index < warmups; index++) {
             await runSemanticDiagnosticsRequest(fixture.directory, fixture.consumerFile)
@@ -141,7 +145,7 @@ async function runEditBenchmark(): Promise<void> {
             scenario
         })
 
-        console.log(`edit ${scenarioDirectoryName(scenario)} files=${editCount}`)
+        report(`edit ${scenarioDirectoryName(scenario)} files=${editCount}`)
 
         for (let index = 0; index < warmups; index++) {
             await runEditProcessingRequests(fixture, editCount)
@@ -420,20 +424,34 @@ function integerEnv(name: string, fallback: number): number {
 }
 
 function printResults(title: string, results: BenchmarkResult[]): void {
-    console.log("")
-    console.log(title)
-    console.log("scenario                              min       median    mean")
+    report("")
+    report(title)
+    report("scenario                              min       median    mean")
 
     for (const result of results) {
         const stats = durationStats(result.durations)
 
-        console.log([
+        report([
             scenarioDirectoryName(result.scenario).padEnd(36),
             formatDuration(stats.min).padStart(8),
             formatDuration(stats.median).padStart(9),
             formatDuration(stats.mean).padStart(8)
         ].join(" "))
     }
+}
+
+function report(line = ""): void {
+    console.log(line)
+    reportLines.push(line)
+}
+
+async function writeBenchmarkOutput(): Promise<void> {
+    if (outputFile === undefined) {
+        return
+    }
+
+    await mkdir(path.dirname(outputFile), { recursive : true })
+    await writeFile(outputFile, `${reportLines.join("\n")}\n`)
 }
 
 function durationStats(values: number[]): { min: number, median: number, mean: number } {

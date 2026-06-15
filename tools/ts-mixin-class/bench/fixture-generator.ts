@@ -216,21 +216,13 @@ function mixinDependencyIndexes(scenario: BenchmarkScenario, index: number): num
 
     const options = scenario.previousWindow ?? defaultPreviousWindowGraphOptions()
     const firstCandidate = Math.max(0, index - options.dependencyWindow)
-    const candidates = Array.from({ length : index - firstCandidate }, (_, offset) => firstCandidate + offset)
+    const candidates = Array.from({ length : index - firstCandidate }, (_, offset) => firstCandidate + offset).reverse()
     const random = createSeededRandom(options.seed + index * 9973)
     const minCount = Math.min(options.minDependencyCount, candidates.length)
     const maxCount = Math.min(Math.max(options.maxDependencyCount, minCount), candidates.length)
     const dependencyCount = minCount + Math.floor(random() * (maxCount - minCount + 1))
 
-    for (let candidateIndex = candidates.length - 1; candidateIndex > 0; candidateIndex--) {
-        const swapIndex = Math.floor(random() * (candidateIndex + 1))
-        const item = candidates[candidateIndex]!
-
-        candidates[candidateIndex] = candidates[swapIndex]!
-        candidates[swapIndex] = item
-    }
-
-    return candidates.slice(0, dependencyCount).sort((a, b) => a - b)
+    return candidates.slice(0, dependencyCount)
 }
 
 function createSeededRandom(seed: number): () => number {
@@ -275,7 +267,7 @@ function consumerLeafIndexes(size: number, count: number): number[] {
     const firstLeaf = Math.floor(size / 2)
     const leaves = Array.from({ length : size - firstLeaf }, (_, offset) => firstLeaf + offset)
 
-    return leaves.slice(-Math.min(count, leaves.length))
+    return leaves.slice(-Math.min(count, leaves.length)).reverse()
 }
 
 function mixinClassName(index: number): string {
