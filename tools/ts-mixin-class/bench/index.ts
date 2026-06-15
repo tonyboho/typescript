@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { readBenchConfig, type BenchConfig } from "./lib/env.js"
 import { resultsRoot } from "./lib/paths.js"
@@ -24,9 +25,12 @@ import { runTsServerEdit } from "./scenarios/tsserver-edit.js"
 //   --baseline <name>  compare each row's median against that saved snapshot
 //
 // The compare loop: `--save base` before a change, `--baseline base` after it.
+// Every run also writes its rendered output to bench/results/report.txt.
 
 type Scenario = "all" | "compile" | "edit" | "transform" | "tsserver"
 
+const transcript: string[] = []
+const reportFile = path.join(resultsRoot, "report.txt")
 const cli = parseArgs(process.argv.slice(2))
 const config = withCliOverrides(readBenchConfig(), cli)
 const baseline = cli.baseline === undefined ? undefined : await loadBaseline(baselineFile(cli.baseline))
@@ -36,16 +40,18 @@ printHeader(config, cli.scenario)
 const reports = await runScenarios(cli.scenario, config)
 
 for (const line of renderReports(reports, config.table, baseline)) {
-    console.log(line)
+    emit(line)
 }
 
 if (cli.save !== undefined) {
     const file = baselineFile(cli.save)
 
     await saveBaseline(file, buildBaseline(reports))
-    console.log("")
-    console.log(`Saved baseline to ${path.relative(process.cwd(), file)}`)
+    emit("")
+    emit(`Saved baseline to ${path.relative(process.cwd(), file)}`)
 }
+
+await writeReport()
 
 async function runScenarios(scenario: Scenario, config: BenchConfig): Promise<BenchReport[]> {
     const reports: BenchReport[] = []
@@ -70,8 +76,8 @@ async function runScenarios(scenario: Scenario, config: BenchConfig): Promise<Be
 }
 
 function printHeader(config: BenchConfig, scenario: Scenario): void {
-    console.log("ts-mixin-class benchmarks")
-    console.log([
+    emit("ts-mixin-class benchmarks")
+    emit([
         `scenario=${scenario}`,
         `samples=${config.iterations}`,
         `warmups=${config.warmups}`,
@@ -79,11 +85,11 @@ function printHeader(config: BenchConfig, scenario: Scenario): void {
     ].join(" "))
 
     if (scenario === "all" || scenario === "transform") {
-        console.log(`transform-pass: innerIterations=${config.transformPassIterations} pass=${config.passMode}`)
+        emit(`transform-pass: innerIterations=${config.transformPassIterations} pass=${config.passMode}`)
     }
 
     if (scenario !== "transform") {
-        console.log([
+        emit([
             "fixtures:",
             `construction=${config.construction}`,
             `visibility=${config.propertyVisibility}`,
@@ -151,4 +157,16 @@ function scenarioArg(value: string): Scenario {
 
 function baselineFile(name: string): string {
     return path.join(resultsRoot, name.endsWith(".json") ? name : `${name}.json`)
+}
+
+function emit(line = ""): void {
+    console.log(line)
+    transcript.push(line)
+}
+
+async function writeReport(): Promise<void> {
+    await mkdir(resultsRoot, { recursive : true })
+    await writeFile(reportFile, `${transcript.join("\n")}\n`)
+    console.log("")
+    console.log(`Report written to ${path.relative(process.cwd(), reportFile)}`)
 }

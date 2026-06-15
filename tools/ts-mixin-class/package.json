@@ -20,7 +20,7 @@
         "README.md"
     ],
     "scripts": {
-        "bench": "pnpm --silent run build && node dist/bench/index.js",
+        "bench": "pnpm --silent run build && node dist/bench/index.js --full",
         "bench:transform": "pnpm --silent run build && node dist/bench/index.js transform",
         "bench:compile": "pnpm --silent run build && node dist/bench/index.js compile",
         "bench:tsserver": "pnpm --silent run build && node dist/bench/index.js tsserver",

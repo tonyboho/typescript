@@ -1,13 +1,21 @@
 # Benchmarks
 
-One command, one set of metrics:
+One command, one fixed set of metrics:
 
 ```bash
 pnpm --silent run bench
 ```
 
-It builds the package and runs every scenario, printing one table each. Use
-`--silent` to drop pnpm's command echo.
+It builds the package, runs every scenario with the pinned default config, prints
+a full statistics table per scenario, and writes the same output to
+`bench/results/report.txt` (gitignored). A run takes ~20s. Use `--silent` to drop
+pnpm's command echo.
+
+This is the canonical run: the defaults are fixed (3 samples + 1 warmup; transform
+sizes `25/80/80/160`; fixture sizes `10,30`; `implicit` properties; `plain`
+construction; dependency window `8`, seed `19871`), so two runs are comparable
+without passing any flags. The environment variables below only matter when you
+deliberately want a different shape; the everyday loop needs none of them.
 
 ## Scenarios
 
@@ -47,12 +55,10 @@ compares each row's median against the baseline's.
 
 ## Output detail
 
-The default table is compact (median only). For min / median / mean / max,
-sample count, and the transform-pass step breakdown:
-
-```bash
-pnpm --silent run bench -- --full
-```
+`pnpm run bench` uses the full table (min / median / mean / max, sample count,
+and the transform-pass step breakdown). The single-scenario scripts and a bare
+`node dist/bench/index.js` default to a compact median-only table; pass `--full`
+to expand them, or `--full` is implied for the top-level `bench` script.
 
 ## Common settings (environment)
 
