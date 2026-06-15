@@ -20,7 +20,8 @@ export function buildImportedNameMap(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined,
-    facts?: SourceFileFacts
+    facts?: SourceFileFacts,
+    localNameFilter?: ReadonlySet<string>
 ): Map<string, ImportedNameBinding> {
     const importMap = new Map<string, ImportedNameBinding>()
 
@@ -30,6 +31,10 @@ export function buildImportedNameMap(
 
     const addImport = (statement: ts.ImportDeclaration, specifier: string, localNamesLength: number): void => {
         if (localNamesLength === 0) {
+            return
+        }
+
+        if (localNameFilter !== undefined && !importHasFilteredLocalName(tsInstance, statement, localNameFilter)) {
             return
         }
 
@@ -87,6 +92,25 @@ export function buildImportedNameMap(
     }
 
     return importMap
+}
+
+function importHasFilteredLocalName(
+    tsInstance: TypeScript,
+    statement: ts.ImportDeclaration,
+    localNameFilter: ReadonlySet<string>
+): boolean {
+    const importClause = statement.importClause
+    const namedBindings = importClause?.namedBindings
+
+    if (importClause?.name !== undefined && localNameFilter.has(importClause.name.text)) {
+        return true
+    }
+
+    return namedBindings !== undefined &&
+        tsInstance.isNamedImports(namedBindings) &&
+        namedBindings.elements.some((element) => {
+            return localNameFilter.has(element.name.text)
+        })
 }
 
 function importedRequiredBaseRef(

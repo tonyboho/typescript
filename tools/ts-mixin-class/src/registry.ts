@@ -59,6 +59,17 @@ export function buildMixinRegistry(
     }
 
     const importMaps = new Map<string, Map<string, { resolvedFileName: string, importedName: string }>>()
+    const dependencyNamesByFile = new Map<string, Set<string>>()
+
+    for (const candidate of candidates) {
+        const names = dependencyNamesByFile.get(candidate.sourceFile.fileName) ?? new Set<string>()
+
+        for (const dependencyName of candidate.dependencyNames) {
+            names.add(dependencyName)
+        }
+
+        dependencyNamesByFile.set(candidate.sourceFile.fileName, names)
+    }
 
     for (const candidate of candidates) {
         const fileName = candidate.sourceFile.fileName
@@ -75,7 +86,8 @@ export function buildMixinRegistry(
                 tsInstance,
                 candidate.sourceFile,
                 resolveModuleFileName,
-                getSourceFileFacts(tsInstance, candidate.sourceFile, resolvedOptions)
+                getSourceFileFacts(tsInstance, candidate.sourceFile, resolvedOptions),
+                dependencyNamesByFile.get(fileName)
             )
             importMaps.set(fileName, importMap)
         }
