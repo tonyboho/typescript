@@ -209,39 +209,27 @@ export function transformSourceFile(
             hasMixinDecorator(tsInstance, statement, mixinDecoratorImports, resolvedOptions)
         ) {
             expandedAnything = true
-            return [
-                ...createMixinDeclarationDiagnosticAliases(
-                    tsInstance,
-                    "AnonymousDefaultMixin",
-                    [ {
-                        node    : statement,
-                        message : "Invalid mixin class declaration. A default-exported mixin class must be named. " +
-                            "Write `export default class MyMixin` so the transformer can generate stable interface, factory, registry, and declaration names."
-                    } ],
-                    statement
-                ),
-                statement
-            ]
+            return anonymousClassDiagnosticStatements(
+                tsInstance,
+                statement,
+                "AnonymousDefaultMixin",
+                "Invalid mixin class declaration. A default-exported mixin class must be named. " +
+                    "Write `export default class MyMixin` so the transformer can generate stable interface, factory, registry, and declaration names."
+            )
         }
 
         if (tsInstance.isClassDeclaration(statement) && statement.name === undefined &&
             localMixinHeritageTypes(tsInstance, statement, context).length > 0
         ) {
             expandedAnything = true
-            return [
-                ...createMixinDeclarationDiagnosticAliases(
-                    tsInstance,
-                    "AnonymousMixinConsumer",
-                    [ {
-                        node    : statement,
-                        message : "Invalid mixin consumer declaration. A mixin consumer class must be named. " +
-                            "Write `class Consumer implements Mixin` or `export default class Consumer implements Mixin` " +
-                            "so the transformer can generate stable intermediate base, diagnostic, and declaration names."
-                    } ],
-                    statement
-                ),
-                statement
-            ]
+            return anonymousClassDiagnosticStatements(
+                tsInstance,
+                statement,
+                "AnonymousMixinConsumer",
+                "Invalid mixin consumer declaration. A mixin consumer class must be named. " +
+                    "Write `class Consumer implements Mixin` or `export default class Consumer implements Mixin` " +
+                    "so the transformer can generate stable intermediate base, diagnostic, and declaration names."
+            )
         }
 
         if (tsInstance.isClassDeclaration(statement) && statement.name !== undefined) {
@@ -293,6 +281,26 @@ export function transformSourceFile(
             ? insertGeneratedImports(tsInstance, expandedStatements, context, resolvedOptions)
             : expandedStatements
     )
+}
+
+function anonymousClassDiagnosticStatements(
+    tsInstance: TypeScript,
+    statement: ts.ClassDeclaration,
+    generatedBaseName: string,
+    message: string
+): ts.Statement[] {
+    return [
+        ...createMixinDeclarationDiagnosticAliases(
+            tsInstance,
+            generatedBaseName,
+            [ {
+                node : statement,
+                message
+            } ],
+            statement
+        ),
+        statement
+    ]
 }
 
 // Generated imports (type helpers + mixin factories from other modules) are
