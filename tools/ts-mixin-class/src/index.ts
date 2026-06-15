@@ -1,14 +1,28 @@
 import path from "node:path"
 import type * as ts from "typescript"
 import type { PluginConfig, ProgramTransformerExtras } from "ts-patch"
+import {
+    cloneNode,
+    cloneOptionalNode,
+    cloneOptionalNodeArray,
+    cloneSourceFileForTransform,
+    deepCloneNode,
+    generatedTextRange,
+    hasModifier,
+    preserveGeneratedDeclarationRange,
+    preserveSourceViewGeneratedClassLikeRange,
+    preserveSubtreeTextRange,
+    preserveTextRange,
+    preserveTopLevelStatementRanges,
+    printSourceFile,
+    scriptKindFromFileName,
+    setParentRecursivePreservingVersion,
+    zeroWidthRange
+} from "./util.js"
+import type { TypeScript } from "./util.js"
 
-type TypeScript = ProgramTransformerExtras["ts"]
-type TypeScriptWithParents = TypeScript & {
-    setParentRecursive<Node extends ts.Node>(node: Node, incremental: boolean): Node
-}
-type NodeFactoryWithCloneNode = ts.NodeFactory & {
-    cloneNode<Node extends ts.Node>(node: Node): Node
-}
+export * from "./runtime.js"
+export { printSourceFile } from "./util.js"
 
 export type MixinClassTransformerConfig = PluginConfig & {
     packageName? : string,
@@ -36,13 +50,13 @@ type MixinDecoratorImports = {
 }
 
 // ---------------------------------------------------------------------------
-// Реестр mixin-классов программы (кросс-файловость)
+// Program-wide mixin class registry (cross-file support)
 
 export type RegisteredMixin = {
     fileName     : string,
     name         : string,
     defaultExport : boolean,
-    // ключи реестра зависимостей (mixin-записи из implements)
+    // Dependency registry keys (mixin entries from implements)
     dependencies : string[],
     requiredBaseName : string | undefined,
     configProperties : ConfigProperty[]
@@ -62,12 +76,12 @@ type ImportedNameBinding = {
     typeOnly         : boolean
 }
 
-// Ссылка на миксин с точки зрения трансформируемого файла
+// Mixin reference from the transformed file's point of view
 type ResolvedMixinRef = {
     key              : string,
     className        : string,
-    // имя значения миксина в этом файле (same-file или импорт); undefined для
-    // транзитивной зависимости, которую файл не импортирует
+    // Mixin value name in this file (same-file or imported); undefined for a
+    // transitive dependency the file does not import.
     localValueName   : string | undefined,
     localFactoryName : string,
     factoryImport    : { specifier: string, importedName: string } | undefined,
@@ -87,7 +101,7 @@ type ResolvedMixinRef = {
 type FileMixinContext = {
     byLocalName : Map<string, ResolvedMixinRef>,
     byKey       : Map<string, ResolvedMixinRef>,
-    // фабрики, реально использованные в сгенерированных цепочках
+    // Factories actually used in generated chains.
     usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>
 }
 
@@ -148,285 +162,6 @@ const mixinValueSuffix = "$mixinValue"
 
 function generatedName(name: string, suffix: string): string {
     return `__${name}${suffix}`
-}
-
-// ---------------------------------------------------------------------------
-// Runtime/типовая поверхность пакета, используемая сгенерированным кодом
-
-export type AnyConstructor<T extends object = object> = new (...args: any[]) => T
-
-export type ClassStatics<C> = Omit<C, "prototype">
-
-export type NonFunctionPropertyNames<T> = {
-    [Key in keyof T]: T[Key] extends (...args: any[]) => any ? never : Key
-}[keyof T]
-
-export type Config<T> = Partial<Pick<T, NonFunctionPropertyNames<T>>>
-
-export type StaticNeverConflictKeys<Left, Right> = {
-    [Key in Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]:
-        [ ClassStatics<Left>[Key] & ClassStatics<Right>[Key] ] extends [ never ]
-            ? Key
-            : never
-}[Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]
-
-export type StaticStrictConflictKeys<Left, Right> = {
-    [Key in Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]:
-        [ ClassStatics<Left>[Key] ] extends [ ClassStatics<Right>[Key] ]
-            ? [ ClassStatics<Right>[Key] ] extends [ ClassStatics<Left>[Key] ]
-                ? never
-                : Key
-            : Key
-}[Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]
-
-export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
-
-export class Base {
-    initialize(props?: Config<this>): void {
-        if (props !== undefined) {
-            Object.assign(this, props)
-        }
-    }
-
-    static new<T extends typeof Base>(this: T, props?: Config<InstanceType<T>>): InstanceType<T> {
-        const instance = new this() as InstanceType<T>
-
-        instance.initialize(props)
-
-        return instance
-    }
-
-}
-
-export const factory: unique symbol = Symbol.for("ts-mixin-class.factory") as any
-export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements") as any
-export const base: unique symbol = Symbol.for("ts-mixin-class.base") as any
-
-export type RuntimeMixinClass<RequiredBase extends object = object> = {
-    readonly [factory]: MixinFactory,
-    readonly [requirements]: readonly RuntimeMixinClass[],
-    readonly [base]: AnyConstructor<RequiredBase>
-}
-
-type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass
-
-type RuntimeMixinMetadata = {
-    factory: MixinFactory,
-    requirements: RuntimeMixinClassValue[],
-    requiredBase: AnyConstructor<any>,
-    linearization: RuntimeMixinClassValue[] | undefined,
-    applications: WeakMap<AnyConstructor<any>, AnyConstructor<any>>
-}
-
-const runtimeMixinMetadata = new WeakMap<RuntimeMixinClassValue, RuntimeMixinMetadata>()
-const appliedMixinClasses = new WeakMap<AnyConstructor<any>, Set<RuntimeMixinClassValue>>()
-
-export function mixin(..._args: unknown[]): (..._decoratorArgs: unknown[]) => void {
-    return () => {}
-}
-
-export function defineMixinClass(
-    name: string,
-    mixinFactory: MixinFactory,
-    mixinRequirements: readonly RuntimeMixinClassValue[] = [],
-    requiredBase: AnyConstructor<any> = Object
-): RuntimeMixinClassValue {
-    const requirementList = [ ...mixinRequirements ]
-    const requirementLinearization = linearizeRuntimeRequirements(requirementList)
-    const canonicalBase = applyRuntimeMixins(requiredBase, requirementLinearization.slice().reverse())
-    const mixinClass = mixinFactory(canonicalBase) as RuntimeMixinClassValue
-    const applications = new WeakMap<AnyConstructor<any>, AnyConstructor<any>>()
-
-    applications.set(canonicalBase, mixinClass)
-
-    runtimeMixinMetadata.set(mixinClass, {
-        factory        : mixinFactory,
-        requirements   : requirementList,
-        requiredBase,
-        linearization  : [ mixinClass, ...requirementLinearization ],
-        applications
-    })
-
-    Object.defineProperty(mixinClass, factory, { value : mixinFactory })
-    Object.defineProperty(mixinClass, requirements, { value : requirementList })
-    Object.defineProperty(mixinClass, base, { value : requiredBase })
-    Object.defineProperty(mixinClass, Symbol.hasInstance, {
-        value(instance: unknown) {
-            return hasRuntimeMixinInstance(instance, mixinClass)
-        }
-    })
-
-    setClassName(mixinClass, name)
-    registerAppliedMixins(mixinClass, [ mixinClass, ...requirementLinearization ])
-
-    return mixinClass
-}
-
-export function mixinChain<Base extends AnyConstructor<any>>(
-    base: Base,
-    ...mixins: RuntimeMixinClassValue[]
-): AnyConstructor<any> {
-    return applyRuntimeMixins(base, linearizeRuntimeRequirements(mixins).slice().reverse())
-}
-
-function applyRuntimeMixins(
-    base: AnyConstructor<any>,
-    mixins: readonly RuntimeMixinClassValue[]
-): AnyConstructor<any> {
-    let current = base
-
-    for (const mixinClass of mixins) {
-        current = applyRuntimeMixin(current, mixinClass)
-    }
-
-    return current
-}
-
-function applyRuntimeMixin(
-    base: AnyConstructor<any>,
-    mixinClass: RuntimeMixinClassValue
-): AnyConstructor<any> {
-    const metadata = runtimeMetadataOf(mixinClass)
-    const cached = metadata.applications.get(base)
-
-    if (!classExtends(base, metadata.requiredBase)) {
-        throw new Error(
-            `Mixin class ${mixinClass.name || "<anonymous>"} requires base ` +
-            `${metadata.requiredBase.name || "<anonymous>"}`
-        )
-    }
-
-    if (cached !== undefined) {
-        return cached
-    }
-
-    const appliedClass = metadata.factory(base)
-
-    metadata.applications.set(base, appliedClass)
-    setClassName(appliedClass, mixinClass.name)
-    registerAppliedMixins(appliedClass, [ mixinClass, ...linearizeRuntimeMixin(mixinClass).slice(1) ])
-
-    return appliedClass
-}
-
-function linearizeRuntimeMixin(mixinClass: RuntimeMixinClassValue): RuntimeMixinClassValue[] {
-    const metadata = runtimeMetadataOf(mixinClass)
-
-    if (metadata.linearization !== undefined) {
-        return metadata.linearization
-    }
-
-    metadata.linearization = [
-        mixinClass,
-        ...linearizeRuntimeRequirements(metadata.requirements)
-    ]
-
-    return metadata.linearization
-}
-
-function linearizeRuntimeRequirements(
-    mixins: readonly RuntimeMixinClassValue[]
-): RuntimeMixinClassValue[] {
-    if (mixins.length === 0) {
-        return []
-    }
-
-    return mergeRuntimeLinearizations([
-        ...mixins.map((mixinClass) => [ ...linearizeRuntimeMixin(mixinClass) ]),
-        [ ...mixins ]
-    ])
-}
-
-function mergeRuntimeLinearizations(sequences: RuntimeMixinClassValue[][]): RuntimeMixinClassValue[] {
-    const result: RuntimeMixinClassValue[] = []
-    const pending = sequences
-        .map((sequence) => sequence.filter((mixinClass, index) => sequence.indexOf(mixinClass) === index))
-        .filter((sequence) => sequence.length > 0)
-
-    while (pending.length > 0) {
-        const candidate = pending
-            .map((sequence) => sequence[0])
-            .find((head) => {
-                return pending.every((sequence) => !sequence.slice(1).includes(head))
-            })
-
-        if (candidate === undefined) {
-            throw new Error("Cannot linearize mixin classes: inconsistent requirements")
-        }
-
-        result.push(candidate)
-
-        for (let index = pending.length - 1; index >= 0; index--) {
-            if (pending[index][0] === candidate) {
-                pending[index].shift()
-            }
-
-            if (pending[index].length === 0) {
-                pending.splice(index, 1)
-            }
-        }
-    }
-
-    return result
-}
-
-function runtimeMetadataOf(mixinClass: RuntimeMixinClassValue): RuntimeMixinMetadata {
-    const metadata = runtimeMixinMetadata.get(mixinClass)
-
-    if (metadata === undefined) {
-        throw new Error(`Class ${mixinClass.name || "<anonymous>"} is not a registered mixin class`)
-    }
-
-    return metadata
-}
-
-function classExtends(base: AnyConstructor<any>, requiredBase: AnyConstructor<any>): boolean {
-    return requiredBase === Object ||
-        base === requiredBase ||
-        requiredBase.prototype.isPrototypeOf(base.prototype)
-}
-
-function registerAppliedMixins(
-    appliedClass: AnyConstructor<any>,
-    mixins: readonly RuntimeMixinClassValue[]
-): void {
-    const inherited = appliedMixinClasses.get(Object.getPrototypeOf(appliedClass)) ?? new Set<RuntimeMixinClassValue>()
-    const applied = new Set<RuntimeMixinClassValue>(inherited)
-
-    for (const mixinClass of mixins) {
-        applied.add(mixinClass)
-    }
-
-    appliedMixinClasses.set(appliedClass, applied)
-}
-
-function hasRuntimeMixinInstance(instance: unknown, mixinClass: RuntimeMixinClassValue): boolean {
-    if (instance === null || typeof instance !== "object" && typeof instance !== "function") {
-        return false
-    }
-
-    let constructor = (instance as { constructor?: unknown }).constructor
-
-    while (typeof constructor === "function") {
-        if (appliedMixinClasses.get(constructor as AnyConstructor<any>)?.has(mixinClass)) {
-            return true
-        }
-
-        constructor = Object.getPrototypeOf(constructor)
-    }
-
-    return false
-}
-
-function setClassName(classConstructor: AnyConstructor<any>, name: string): void {
-    if (name.length === 0) {
-        return
-    }
-
-    Object.defineProperty(classConstructor, "name", {
-        configurable : true,
-        value        : name
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -539,349 +274,8 @@ export function createMixinClassCompilerHost(
     }
 }
 
-function preserveTopLevelStatementRanges(tsInstance: TypeScript, sourceFile: ts.SourceFile): void {
-    let previousEnd = 0
-
-    for (const statement of sourceFile.statements) {
-        const descendantRange = realDescendantRange(tsInstance, statement)
-
-        if (statement.pos < 0 || statement.end < 0) {
-            tsInstance.setTextRange(
-                statement,
-                descendantRange ?? generatedTextRange(sourceFile, previousEnd)
-            )
-        } else if (descendantRange !== undefined) {
-            tsInstance.setTextRange(statement, {
-                pos : Math.min(statement.pos, descendantRange.pos),
-                end : Math.max(statement.end, descendantRange.end)
-            })
-        }
-
-        if (statement.end >= 0) {
-            previousEnd = statement.end
-        }
-    }
-
-    const first = sourceFile.statements[0]
-    const last  = sourceFile.statements.at(-1)
-
-    if (first !== undefined && last !== undefined) {
-        tsInstance.setTextRange(sourceFile.statements, {
-            pos : Math.max(0, first.pos),
-            end : Math.max(first.end, last.end)
-        })
-    }
-
-    preserveSyntheticDescendantRanges(tsInstance, sourceFile, generatedTextRange(sourceFile, 0))
-}
-
-function realDescendantRange(tsInstance: TypeScript, node: ts.Node): ts.TextRange | undefined {
-    let range: ts.TextRange | undefined
-
-    const visit = (child: ts.Node): void => {
-        if (child.pos >= 0 && child.end >= 0) {
-            range = range === undefined
-                ? { pos : child.pos, end : child.end }
-                : {
-                    pos : Math.min(range.pos, child.pos),
-                    end : Math.max(range.end, child.end)
-                }
-        }
-
-        tsInstance.forEachChild(child, visit)
-    }
-
-    tsInstance.forEachChild(node, visit)
-
-    return range
-}
-
-function zeroWidthRange(position: number): ts.TextRange {
-    return {
-        pos : position,
-        end : position
-    }
-}
-
-function generatedTextRange(sourceFile: ts.SourceFile, position: number): ts.TextRange {
-    if (sourceFile.text.length === 0) {
-        return zeroWidthRange(0)
-    }
-
-    const pos = generatedTextPosition(sourceFile.text, position)
-
-    return {
-        pos,
-        end : pos + 1
-    }
-}
-
-function generatedTextPosition(text: string, position: number): number {
-    const initialPosition = Math.min(Math.max(0, position), text.length - 1)
-
-    if (!isLineBreak(text[initialPosition])) {
-        return initialPosition
-    }
-
-    for (let index = initialPosition - 1; index >= 0; index--) {
-        if (!isLineBreak(text[index])) {
-            return index
-        }
-    }
-
-    for (let index = initialPosition + 1; index < text.length; index++) {
-        if (!isLineBreak(text[index])) {
-            return index
-        }
-    }
-
-    return initialPosition
-}
-
-function isLineBreak(char: string | undefined): boolean {
-    return char === "\n" || char === "\r"
-}
-
-function preserveSyntheticDescendantRanges(
-    tsInstance: TypeScript,
-    node: ts.Node,
-    parentRange: ts.TextRange
-): void {
-    const currentRange = node.pos >= 0 && node.end >= 0
-        ? {
-            pos : node.pos,
-            end : node.end
-        }
-        : parentRange
-
-    if (node.pos < 0 || node.end < 0) {
-        tsInstance.setTextRange(node, currentRange)
-    }
-
-    // NodeArray тоже должен получить диапазон: tsserver-сервисы (getChildren)
-    // читают nodes.pos напрямую и падают на отрицательных позициях
-    tsInstance.forEachChild(node, (child) => {
-        preserveSyntheticDescendantRanges(tsInstance, child, currentRange)
-    }, (children) => {
-        if (children.pos < 0 || children.end < 0) {
-            tsInstance.setTextRange(children, currentRange)
-        }
-
-        for (const child of children) {
-            preserveSyntheticDescendantRanges(tsInstance, child, currentRange)
-        }
-    })
-}
-
-function preserveTextRange<Range extends ts.TextRange>(
-    tsInstance: TypeScript,
-    range: Range,
-    original: ts.TextRange
-): Range {
-    tsInstance.setTextRange(range, original)
-
-    return range
-}
-
-function preserveGeneratedDeclarationRange<Node extends ts.Node>(
-    tsInstance: TypeScript,
-    node: Node,
-    range: ts.TextRange,
-    original: ts.Node
-): Node {
-    tsInstance.setOriginalNode(node, original)
-    preserveGeneratedOriginalNodes(tsInstance, node, original)
-
-    return preserveTextRange(tsInstance, node, range)
-}
-
-function preserveSourceViewGeneratedClassLikeRange<
-    Node extends ts.ClassDeclaration | ts.InterfaceDeclaration
->(
-    tsInstance: TypeScript,
-    node: Node,
-    original: ts.ClassDeclaration
-): Node {
-    tsInstance.setOriginalNode(node, original)
-    preserveGeneratedOriginalNodes(tsInstance, node, original)
-    preserveTextRange(tsInstance, node, original)
-    preserveTextRange(tsInstance, node, {
-        pos : original.pos,
-        end : original.members.pos
-    })
-
-    if (node.name !== undefined && original.name !== undefined) {
-        preserveTextRange(tsInstance, node.name, {
-            pos : original.pos,
-            end : original.name.end
-        })
-    }
-
-    if (node.typeParameters !== undefined) {
-        const generatedTypeParameterRange = zeroWidthRange(original.typeParameters?.end ?? original.name?.end ?? original.end)
-
-        preserveTextRange(tsInstance, node.typeParameters, generatedTypeParameterRange)
-
-        node.typeParameters.forEach((typeParameter) => {
-            preserveSubtreeTextRange(
-                tsInstance,
-                typeParameter,
-                generatedTypeParameterRange
-            )
-        })
-    }
-
-    if (node.heritageClauses !== undefined) {
-        const originalHeritage = original.heritageClauses
-        const originalHeritageTypes = originalHeritage?.flatMap((heritageClause) => [ ...heritageClause.types ]) ?? []
-        const originalHeritageRange = originalHeritage === undefined
-            ? zeroWidthRange(original.name?.end ?? original.end)
-            : { pos : originalHeritage.pos, end : originalHeritage.end }
-        let generatedHeritageRange: ts.TextRange | undefined
-
-        preserveTextRange(tsInstance, node.heritageClauses, originalHeritageRange)
-
-        node.heritageClauses.forEach((heritageClause, index) => {
-            const originalClause = originalHeritage?.[Math.min(index, originalHeritage.length - 1)]
-            const clauseRange = originalClause ?? originalHeritageRange
-            const mappedOriginalTypes = heritageClause.types.map((_heritageType, typeIndex) => {
-                return originalHeritageTypes[typeIndex] ??
-                    originalClause?.types[Math.min(typeIndex, originalClause.types.length - 1)]
-            })
-            const mappedOriginalTypesWithRanges = mappedOriginalTypes.filter((type): type is ts.ExpressionWithTypeArguments => {
-                return type !== undefined
-            })
-
-            const heritageTypesRange = mappedOriginalTypesWithRanges.length === 0
-                ? clauseRange
-                : {
-                    pos : mappedOriginalTypesWithRanges[0].pos,
-                    end : mappedOriginalTypesWithRanges.at(-1)!.end
-                }
-
-            const nextHeritageRange = {
-                pos : clauseRange.pos,
-                end : heritageTypesRange.end
-            }
-
-            generatedHeritageRange = generatedHeritageRange === undefined
-                ? nextHeritageRange
-                : {
-                    pos : Math.min(generatedHeritageRange.pos, nextHeritageRange.pos),
-                    end : Math.max(generatedHeritageRange.end, nextHeritageRange.end)
-                }
-
-            preserveTextRange(tsInstance, heritageClause, nextHeritageRange)
-            preserveTextRange(tsInstance, heritageClause.types, heritageTypesRange)
-
-            heritageClause.types.forEach((heritageType, typeIndex) => {
-                const originalType = mappedOriginalTypes[typeIndex]
-                const typeRange = originalType ?? clauseRange
-
-                preserveTextRange(tsInstance, heritageType, typeRange)
-                preserveTextRange(tsInstance, heritageType.expression, originalType?.expression ?? typeRange)
-
-                if (heritageType.typeArguments !== undefined) {
-                    const originalTypeArguments = originalType?.typeArguments
-                    const generatedTypeArgumentRange = zeroWidthRange(heritageType.expression.end)
-
-                    preserveTextRange(
-                        tsInstance,
-                        heritageType.typeArguments,
-                        originalTypeArguments ?? generatedTypeArgumentRange
-                    )
-
-                    heritageType.typeArguments.forEach((typeArgument, argumentIndex) => {
-                        preserveSubtreeTextRange(
-                            tsInstance,
-                            typeArgument,
-                            originalTypeArguments?.[argumentIndex] ?? generatedTypeArgumentRange
-                        )
-                    })
-                }
-            })
-        })
-
-        if (generatedHeritageRange !== undefined) {
-            preserveTextRange(tsInstance, node.heritageClauses, generatedHeritageRange)
-        }
-    }
-
-    if ("members" in node) {
-        const generatedHeaderEnd = node.heritageClauses?.end ?? node.typeParameters?.end ?? node.name?.end ?? original.members.pos
-
-        preserveTextRange(tsInstance, node.members, node.members.length === 0
-            ? zeroWidthRange(generatedHeaderEnd)
-            : original.members
-        )
-
-        if (node.members.length === 0) {
-            preserveTextRange(tsInstance, node, {
-                pos : node.pos,
-                end : generatedHeaderEnd
-            })
-        }
-    }
-
-    return node
-}
-
-function preserveSubtreeTextRange(
-    tsInstance: TypeScript,
-    node: ts.Node,
-    range: ts.TextRange
-): void {
-    preserveTextRange(tsInstance, node, range)
-
-    tsInstance.forEachChild(node, (child) => {
-        preserveSubtreeTextRange(tsInstance, child, range)
-    })
-}
-
-function preserveGeneratedOriginalNodes(
-    tsInstance: TypeScript,
-    node: ts.Node,
-    original: ts.Node
-): void {
-    tsInstance.forEachChild(node, (child) => {
-        if (tsInstance.getParseTreeNode(child) === undefined) {
-            tsInstance.setOriginalNode(child, original)
-        }
-
-        preserveGeneratedOriginalNodes(tsInstance, child, original)
-    })
-}
-
-function cloneSourceFileForTransform(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions
-): ts.SourceFile {
-    const cloned = tsInstance.createSourceFile(
-        sourceFile.fileName,
-        sourceFile.text,
-        languageVersionOrOptions,
-        true,
-        scriptKindFromFileName(tsInstance, sourceFile.fileName)
-    )
-
-    ;(cloned as SourceFileWithVersion).version = (sourceFile as SourceFileWithVersion).version
-
-    return cloned
-}
-
-function setParentRecursivePreservingVersion(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    originalSourceFile: ts.SourceFile
-): ts.SourceFile {
-    ;(sourceFile as SourceFileWithVersion).version = (originalSourceFile as SourceFileWithVersion).version
-
-    return (tsInstance as TypeScriptWithParents).setParentRecursive(sourceFile, false)
-}
-
 // ---------------------------------------------------------------------------
-// Построение реестра mixin-классов по всем файлам программы
+// Building the mixin class registry from all program files
 
 export function buildMixinRegistry(
     tsInstance: TypeScript,
@@ -1236,7 +630,7 @@ function runtimeModuleFileNames(declarationFileName: string): string[] {
     ]
 }
 
-// localName -> откуда импортировано (только успешно разрешённые именованные импорты)
+// localName -> import source (only successfully resolved named imports)
 function buildImportedNameMap(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
@@ -1315,7 +709,7 @@ function importedRequiredBaseRef(
 }
 
 // ---------------------------------------------------------------------------
-// Трансформация исходного файла
+// Source file transformation
 
 export function transformSourceFile(
     tsInstance: TypeScript,
@@ -1421,8 +815,8 @@ export function transformSourceFile(
     )
 }
 
-// Сгенерированные импорты (хелперы типов + фабрики миксинов из других модулей)
-// вставляются после последнего исходного импорта
+// Generated imports (type helpers + mixin factories from other modules) are
+// inserted after the last original import.
 function insertGeneratedImports(
     tsInstance: TypeScript,
     statements: ts.Statement[],
@@ -1478,7 +872,7 @@ function insertGeneratedImports(
 }
 
 // ---------------------------------------------------------------------------
-// Контекст миксинов трансформируемого файла
+// Mixin context for the transformed file
 
 function buildFileMixinContext(
     tsInstance: TypeScript,
@@ -1493,7 +887,7 @@ function buildFileMixinContext(
         usedFactoryImports : new Map()
     }
 
-    // 1. mixin-классы этого файла
+    // 1. Mixin classes from this file.
     if (imports.identifiers.size > 0 || imports.namespaces.size > 0) {
         for (const statement of sourceFile.statements) {
             if (!tsInstance.isClassDeclaration(statement) ||
@@ -1525,7 +919,7 @@ function buildFileMixinContext(
         }
     }
 
-    // 2. импортированные mixin-классы (по реестру)
+    // 2. Imported mixin classes (from the registry).
     if (crossFile !== undefined) {
         const importMap = buildImportedNameMap(tsInstance, sourceFile, crossFile.resolveModuleFileName)
 
@@ -1614,7 +1008,7 @@ function buildFileMixinContext(
         }
     }
 
-    // 3. зависимости same-file миксинов (по локальным именам из implements)
+    // 3. Same-file mixin dependencies (by local names from implements).
     for (const ref of context.byLocalName.values()) {
         if (ref.declaration === undefined) {
             continue
@@ -1631,7 +1025,7 @@ function buildFileMixinContext(
         }
     }
 
-    // 4. транзитивное замыкание по реестру: зависимости, которые файл не импортирует
+    // 4. Transitive registry closure: dependencies the file does not import.
     if (crossFile !== undefined) {
         const queue = [ ...context.byKey.values() ].flatMap((ref) => ref.dependencies)
 
@@ -1857,12 +1251,12 @@ function parameterNameForDiagnostic(
 }
 
 // ---------------------------------------------------------------------------
-// Трансформация mixin-класса
+// Mixin class transformation
 //
-// Mixin-класс разворачивается в три декларации:
+// A mixin class expands into three declarations:
 //
-//     interface X<T> { ...сигнатуры инстанс-членов... }
-//     const __X$mixin = <T>(base: AnyConstructor) => class extends base { ...тело... }
+//     interface X<T> { ...instance member signatures... }
+//     const __X$mixin = <T>(base: AnyConstructor) => class extends base { ...body... }
 //     const X = __X$mixin(Object) as unknown as
 //         (new <T>(...args: any[]) => X<T>) & ClassStatics<ReturnType<typeof __X$mixin>>
 
@@ -2098,9 +1492,9 @@ function expandSourceViewMixinClass(
     return [ baseInterface, baseClass, updatedDeclaration ]
 }
 
-// База mixin-класса в source view: каст, который добавляет к статикам класса
-// метаданные RuntimeMixinClass (символы factory/requirements/base) и статики
-// required base / зависимостей - так typeof MixinClass совпадает с runtime-значением
+// Source-view mixin class base: a cast that adds RuntimeMixinClass metadata
+// (factory/requirements/base symbols) and required-base/dependency statics, so
+// typeof MixinClass matches the runtime value.
 function createSourceViewMixinMetadataBase(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
@@ -2234,8 +1628,8 @@ function createRuntimeMixinClassType(
     )
 }
 
-// Параметр base фабрики: AnyConstructor, либо AnyConstructor<Dep1<...> & Dep2<...>>
-// для миксина с зависимостями - это даёт типизированный super внутри тела
+// Factory base parameter: AnyConstructor, or AnyConstructor<Dep1<...> & Dep2<...>>
+// for a mixin with dependencies. This gives the body typed super access.
 function createBaseParameter(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
@@ -2273,14 +1667,14 @@ function createBaseParameter(
 }
 
 // ---------------------------------------------------------------------------
-// Трансформация класса-потребителя
+// Consumer class transformation
 //
-// Потребитель разворачивается в промежуточную базу с declaration merging:
+// A consumer expands into an intermediate base with declaration merging:
 //
 //     interface __X$base<A> extends Mixin1<...>, Mixin2<...> {}
 //     class __X$base<A> extends (mixinChain(Base, Mixin1, Mixin2) as unknown as
 //         typeof Base & ClassStatics<typeof Mixin1> & ClassStatics<typeof Mixin2>) {}
-//     class X<A> extends __X$base<A> implements Mixin1<...>, Mixin2<...> { ...тело без изменений... }
+//     class X<A> extends __X$base<A> implements Mixin1<...>, Mixin2<...> { ...body unchanged... }
 
 function consumedMixins(
     tsInstance: TypeScript,
@@ -2405,9 +1799,9 @@ function expandConsumerClass(
         ...missingRuntimeImportValidations,
         ...staticCollisionValidations
     ]
-    // Каждая сгенерированная декларация получает собственные клоны параметров типов:
-    // переиспользование одного узла в двух декларациях ломает резолв имён в tsserver,
-    // потому что биндер перепривязывает parent узла к последней из деклараций
+    // Each generated declaration gets its own type parameter clones: reusing one
+    // node in two declarations breaks name resolution in tsserver because the
+    // binder reassigns the node parent to the last declaration.
     const checkedTypeParameters = () => options.sourceView
         ? appendSourceViewValidationTypeParameters(tsInstance, declaration.typeParameters, consumerValidations)
         : appendRequiredBaseValidationTypeParameters(
@@ -2423,8 +1817,8 @@ function expandConsumerClass(
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
-                // В source view база без аргументов типов тоже попадает в interface
-                // extends - так клоны heritage-типов сопоставляются с оригиналами 1:1
+                // In source view, even a base without type arguments goes into
+                // interface extends so cloned heritage types map to originals 1:1.
                 ...(extendsType !== undefined && (options.sourceView || extendsType.typeArguments !== undefined)
                     ? [ cloneExpressionWithTypeArguments(tsInstance, extendsType) ]
                     : []),
@@ -2727,9 +2121,9 @@ function createConstructionMembers(
     )
     const consumerType = createConsumerInstanceType(tsInstance, declaration)
 
-    // Проверка смежности перегрузок в checker позиционная (subsequent.pos === node.end),
-    // поэтому в source view перегрузки получают последовательные диапазоны ненулевой
-    // ширины: нулевая ширина делает узел "missing" для checker
+    // The checker validates overload adjacency by position (subsequent.pos ===
+    // node.end), so source-view overloads get consecutive non-zero-width ranges:
+    // zero width makes a node "missing" for the checker.
     const overloadRange = (index: number): ts.TextRange => options.sourceView
         ? { pos : generatedRange.pos + index, end : generatedRange.pos + index + 1 }
         : generatedRange
@@ -3827,8 +3221,8 @@ function runtimeMixinClassRequiredBaseInstanceType(
     ])
 }
 
-// Каст runtime-цепочки: typeof Base (или typeof __X$empty без явной базы)
-// плюс статика каждого применённого миксина, чьё значение доступно в файле
+// Runtime-chain cast: typeof Base (or typeof __X without an explicit base)
+// plus statics for each applied mixin whose value is available in the file.
 function createConsumerBaseCastType(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
@@ -4041,7 +3435,7 @@ function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expressio
 }
 
 // ---------------------------------------------------------------------------
-// Линеаризация и построение runtime-цепочки
+// Linearization and runtime-chain construction
 
 function linearizeDependencies(
     dependencyKeys: string[],
@@ -4145,7 +3539,7 @@ function createMixinChainExpression(
 }
 
 // ---------------------------------------------------------------------------
-// Сигнатуры инстанс-членов для сгенерированного интерфейса
+// Instance member signatures for the generated interface
 
 function buildInterfaceMembers(
     tsInstance: TypeScript,
@@ -4279,7 +3673,7 @@ function signatureParameter(
     sourceFile: ts.SourceFile,
     parameter: ts.ParameterDeclaration
 ): ts.ParameterDeclaration {
-    // у параметра с инициализатором в сигнатуре инициализатор заменяется опциональностью
+    // A signature parameter with an initializer becomes optional.
     return preserveTextRange(tsInstance, tsInstance.factory.createParameterDeclaration(
         undefined,
         cloneOptionalNode(tsInstance, parameter.dotDotDotToken),
@@ -4318,35 +3712,8 @@ function parameterSignatureRange(parameter: ts.ParameterDeclaration): ts.TextRan
     }
 }
 
-function cloneNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node): Node {
-    return (tsInstance.factory as NodeFactoryWithCloneNode).cloneNode(node)
-}
-
-// Глубокий клон: factory.cloneNode копирует узел поверхностно, разделяя детей с
-// оригиналом - в source view это ломает parent-цепочки и резолв имён в tsserver
-function deepCloneNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node): Node {
-    return (tsInstance as unknown as {
-        getSynthesizedDeepClone<T extends ts.Node>(node: T, includeTrivia?: boolean): T
-    }).getSynthesizedDeepClone(node, false)
-}
-
-function cloneOptionalNode<Node extends ts.Node>(tsInstance: TypeScript, node: Node | undefined): Node | undefined {
-    return node === undefined ? undefined : cloneNode(tsInstance, node)
-}
-
-function cloneOptionalNodeArray<Node extends ts.Node>(
-    tsInstance: TypeScript,
-    nodes: ts.NodeArray<Node> | undefined
-): ts.NodeArray<Node> | undefined {
-    if (nodes === undefined) {
-        return undefined
-    }
-
-    return tsInstance.factory.createNodeArray(nodes.map((node) => cloneNode(tsInstance, node)))
-}
-
 // ---------------------------------------------------------------------------
-// Вспомогательные построители
+// Helper builders
 
 function createHelperTypeImport(
     tsInstance: TypeScript,
@@ -4468,15 +3835,6 @@ function exportModifiersOf(
     return [ tsInstance.factory.createToken(tsInstance.SyntaxKind.ExportKeyword) ]
 }
 
-function hasModifier(
-    tsInstance: TypeScript,
-    node: ts.Node,
-    kind: ts.SyntaxKind
-): boolean {
-    return tsInstance.canHaveModifiers(node) &&
-        (tsInstance.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false)
-}
-
 function isNamedClassElement(
     member: ts.ClassElement
 ): member is ts.ClassElement & { name: ts.PropertyName } {
@@ -4528,7 +3886,7 @@ function nodePosition(sourceFile: ts.SourceFile, node: ts.Node): string {
 }
 
 // ---------------------------------------------------------------------------
-// Детект маркер-декоратора (import-aware)
+// Import-aware marker decorator detection
 
 export function hasMixinDecorator(
     tsInstance: TypeScript,
@@ -4544,10 +3902,6 @@ export function hasMixinDecorator(
     return tsInstance.getDecorators(node)?.some((decorator) => {
         return isMixinDecorator(tsInstance, decorator, imports, resolvedOptions)
     }) ?? false
-}
-
-export function printSourceFile(tsInstance: TypeScript, sourceFile: ts.SourceFile): string {
-    return tsInstance.createPrinter({ newLine : tsInstance.NewLineKind.LineFeed }).printFile(sourceFile)
 }
 
 function isMixinDecorator(
@@ -4626,10 +3980,6 @@ function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
     return sourceFile.isDeclarationFile || shouldSkipFileName(sourceFile.fileName)
 }
 
-type SourceFileWithVersion = ts.SourceFile & {
-    version? : string
-}
-
 function resolveUsePrintedSourceFile(
     config: MixinClassTransformerConfig,
     compilerOptions: ts.CompilerOptions
@@ -4671,12 +4021,4 @@ function shouldSkipFileName(fileName: string): boolean {
     return normalizedFileName.includes("/node_modules/") ||
         normalizedFileName.endsWith(".d.ts") ||
         !/\.[cm]?tsx?$/.test(normalizedFileName)
-}
-
-function scriptKindFromFileName(tsInstance: TypeScript, fileName: string): ts.ScriptKind {
-    if (fileName.endsWith(".tsx") || fileName.endsWith(".mtsx") || fileName.endsWith(".ctsx")) {
-        return tsInstance.ScriptKind.TSX
-    }
-
-    return tsInstance.ScriptKind.TS
 }
