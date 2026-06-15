@@ -209,6 +209,10 @@ function collectDeclarationFileMixinCandidates(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile
 ): Candidate[] {
+    if (!sourceFile.text.includes(runtimeMixinClassName)) {
+        return []
+    }
+
     const candidates: Candidate[] = []
     const interfaces = new Map<string, ts.InterfaceDeclaration>()
     const defaultExportNames = new Set<string>()
