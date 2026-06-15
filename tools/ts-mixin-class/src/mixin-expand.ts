@@ -323,7 +323,7 @@ function createSourceViewMixinMetadataBase(
     const headType = requiredBase === undefined
         ? factory.createTypeReferenceNode(anyConstructorName, undefined)
         : createSourceViewConsumerBaseHeadType(tsInstance, requiredBase, undefined, undefined)
-    const manualMixinApplyTypes = hasManualMixinApplySyntax(sourceFile.text)
+    const manualMixinApplyTypes = hasManualMixinApplySyntax(sourceFile)
         ? [ createSourceViewMixinApplyType(
             tsInstance,
             declaration,

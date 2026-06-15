@@ -9,8 +9,23 @@ import { heritageTypeToTypeReference } from "./expand-util.js"
 import { deepCloneNode, hasModifier } from "./util.js"
 import type { TypeScript } from "./util.js"
 
-export function hasManualMixinApplySyntax(text: string): boolean {
-    return /\.mix\s*(?:<|\()/.test(text)
+const manualMixinApplySyntaxCache = new WeakMap<ts.SourceFile, boolean>()
+
+// Result depends only on the (immutable) file text, but the source-view metadata
+// base is built once per mixin, so memoize per file to avoid rescanning the whole
+// text for every mixin declaration in the file.
+export function hasManualMixinApplySyntax(sourceFile: ts.SourceFile): boolean {
+    const cached = manualMixinApplySyntaxCache.get(sourceFile)
+
+    if (cached !== undefined) {
+        return cached
+    }
+
+    const result = /\.mix\s*(?:<|\()/.test(sourceFile.text)
+
+    manualMixinApplySyntaxCache.set(sourceFile, result)
+
+    return result
 }
 
 export function createSourceViewMixinApplyType(
