@@ -11,7 +11,8 @@ import {
     type StaticCollisionCheckMode,
     type StaticSource
 } from "./model.js"
-import { cloneNode, hasModifier, preserveTextRange } from "./util.js"
+import type { SourceFileFacts } from "./source-file-facts.js"
+import { cloneNode, preserveTextRange } from "./util.js"
 import type { TypeScript } from "./util.js"
 
 export function createStaticCollisionValidations(
@@ -23,6 +24,7 @@ export function createStaticCollisionValidations(
     emptyBaseName: string | undefined,
     mixinRefs: ResolvedMixinRef[],
     generatedRange: ts.TextRange,
+    facts: SourceFileFacts,
     mode: StaticCollisionCheckMode,
     sourceView = false
 ): RequiredBaseValidation[] {
@@ -31,9 +33,9 @@ export function createStaticCollisionValidations(
     }
 
     const sources = [
-        ...consumerBaseStaticSources(tsInstance, sourceFile, extendsType, implicitRequiredBase, emptyBaseName),
+        ...consumerBaseStaticSources(tsInstance, sourceFile, extendsType, implicitRequiredBase, emptyBaseName, facts),
         ...mixinRefs.flatMap((ref) => {
-            return mixinStaticSource(tsInstance, ref)
+            return mixinStaticSource(tsInstance, ref, facts)
         })
     ]
     const validations: RequiredBaseValidation[] = []
@@ -90,7 +92,8 @@ function consumerBaseStaticSources(
     sourceFile: ts.SourceFile,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
     implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
-    emptyBaseName: string | undefined
+    emptyBaseName: string | undefined,
+    facts: SourceFileFacts
 ): StaticSource[] {
     const baseType = extendsType ?? implicitRequiredBase
 
@@ -109,13 +112,14 @@ function consumerBaseStaticSources(
     return [ {
         name        : heritageTypeText(tsInstance, sourceFile, baseType),
         typeNode    : tsInstance.factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression)),
-        staticNames : staticNamesOfBaseExpression(tsInstance, sourceFile, baseType.expression)
+        staticNames : staticNamesOfBaseExpression(tsInstance, baseType.expression, facts)
     } ]
 }
 
 function mixinStaticSource(
     tsInstance: TypeScript,
-    ref: ResolvedMixinRef
+    ref: ResolvedMixinRef,
+    facts: SourceFileFacts
 ): StaticSource[] {
     if (ref.localValueName === undefined) {
         return []
@@ -124,46 +128,22 @@ function mixinStaticSource(
     return [ {
         name        : ref.className,
         typeNode    : tsInstance.factory.createTypeQueryNode(tsInstance.factory.createIdentifier(ref.localValueName)),
-        staticNames : ref.declaration === undefined ? undefined : staticMemberNames(tsInstance, ref.declaration)
+        staticNames : ref.declaration === undefined
+            ? undefined
+            : facts.classesByDeclaration.get(ref.declaration)?.staticNames
     } ]
 }
 
 function staticNamesOfBaseExpression(
     tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    expression: ts.Expression
+    expression: ts.Expression,
+    facts: SourceFileFacts
 ): Set<string> | undefined {
     if (!tsInstance.isIdentifier(expression)) {
         return undefined
     }
 
-    const declaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
-        return tsInstance.isClassDeclaration(statement) && statement.name?.text === expression.text
-    })
-
-    return declaration === undefined ? undefined : staticMemberNames(tsInstance, declaration)
-}
-
-function staticMemberNames(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
-): Set<string> {
-    const names = new Set<string>()
-
-    for (const member of declaration.members) {
-        if (!hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) || member.name === undefined) {
-            continue
-        }
-
-        if (tsInstance.isIdentifier(member.name) ||
-            tsInstance.isStringLiteral(member.name) ||
-            tsInstance.isNumericLiteral(member.name)
-        ) {
-            names.add(member.name.text)
-        }
-    }
-
-    return names
+    return facts.classesByName.get(expression.text)?.staticNames
 }
 
 function knownStaticNameOverlap(

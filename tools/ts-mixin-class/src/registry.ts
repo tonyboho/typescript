@@ -1,14 +1,10 @@
 import type * as ts from "typescript"
 import { buildImportedNameMap } from "./context.js"
-import { collectMixinDecoratorImports, hasMixinDecorator } from "./decorators.js"
 import {
     defaultTransformOptions,
-    implementsTypes,
-    instanceConfigProperties,
     normalizePath,
     propertyNameText,
     registryKey,
-    requiredBaseIdentifierName,
     runtimeMixinClassName,
     shouldSkipFileName,
     uniqueConfigProperties,
@@ -16,6 +12,7 @@ import {
     type MixinRegistry,
     type TransformOptions
 } from "./model.js"
+import { getSourceFileFacts } from "./source-file-facts.js"
 import { hasModifier } from "./util.js"
 import type { TypeScript } from "./util.js"
 
@@ -46,31 +43,25 @@ export function buildMixinRegistry(
             continue
         }
 
-        const imports = collectMixinDecoratorImports(tsInstance, sourceFile, resolvedOptions)
+        const facts = getSourceFileFacts(tsInstance, sourceFile, resolvedOptions)
 
-        if (imports.identifiers.size === 0 && imports.namespaces.size === 0) {
+        if (facts.mixinDecoratorImports.identifiers.size === 0 && facts.mixinDecoratorImports.namespaces.size === 0) {
             continue
         }
 
-        for (const statement of sourceFile.statements) {
-            if (!tsInstance.isClassDeclaration(statement) ||
-                statement.name === undefined ||
-                !hasMixinDecorator(tsInstance, statement, imports, resolvedOptions)
-            ) {
+        for (const classFacts of facts.classes) {
+            if (classFacts.name === undefined || !classFacts.hasMixinDecorator) {
                 continue
             }
 
             candidates.push({
                 sourceFile,
-                name                 : statement.name.text,
-                dependencyNames      : implementsTypes(tsInstance, statement)
-                    .map((heritageType) => heritageType.expression)
-                    .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
-                    .map((expression) => expression.text),
-                requiredBaseName     : requiredBaseIdentifierName(tsInstance, statement),
-                configProperties     : instanceConfigProperties(tsInstance, statement, true),
+                name                 : classFacts.name,
+                dependencyNames      : classFacts.implementsIdentifierNames,
+                requiredBaseName     : classFacts.requiredBaseName,
+                configProperties     : classFacts.configProperties,
                 declarationHeritage  : false,
-                defaultExport        : hasModifier(tsInstance, statement, tsInstance.SyntaxKind.DefaultKeyword)
+                defaultExport        : classFacts.defaultExport
             })
         }
     }

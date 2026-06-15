@@ -31,6 +31,7 @@ import {
     localMixinHeritageTypes,
     localMixinRefs
 } from "./mixin-refs.js"
+import { getSourceFileFacts } from "./source-file-facts.js"
 import { createStaticCollisionValidations } from "./static-collisions.js"
 import {
     consumerBaseSuffix,
@@ -141,6 +142,7 @@ export function expandConsumerClass(
         expansion.directMixinRefs,
         mixinHeritage
     )
+    const facts = getSourceFileFacts(tsInstance, sourceFile, options)
     const staticCollisionValidations = createStaticCollisionValidations(
         tsInstance,
         sourceFile,
@@ -150,6 +152,7 @@ export function expandConsumerClass(
         emptyBaseName,
         linearized,
         expansion.generatedHeritageTypeRange,
+        facts,
         options.staticCollisionCheck,
         options.sourceView
     )

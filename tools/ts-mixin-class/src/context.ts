@@ -1,10 +1,7 @@
 import path from "node:path"
 import type * as ts from "typescript"
-import { hasMixinDecorator } from "./decorators.js"
 import {
     generatedName,
-    implementsTypes,
-    instanceConfigProperties,
     mixinFactorySuffix,
     mixinValueSuffix,
     normalizePath,
@@ -16,6 +13,7 @@ import {
     type ResolvedMixinRef,
     type TransformOptions
 } from "./model.js"
+import { getSourceFileFacts, type SourceFileFacts } from "./source-file-facts.js"
 import type { TypeScript } from "./util.js"
 
 export function buildImportedNameMap(
@@ -100,7 +98,8 @@ export function buildFileMixinContext(
     sourceFile: ts.SourceFile,
     imports: MixinDecoratorImports,
     options: TransformOptions,
-    crossFile?: CrossFileContext
+    crossFile?: CrossFileContext,
+    facts = getSourceFileFacts(tsInstance, sourceFile, options)
 ): FileMixinContext {
     const context: FileMixinContext = {
         byLocalName        : new Map(),
@@ -108,13 +107,13 @@ export function buildFileMixinContext(
         usedFactoryImports : new Map()
     }
 
-    addLocalMixinRefs(tsInstance, sourceFile, imports, options, context)
+    addLocalMixinRefs(sourceFile, imports, facts, context)
 
     if (crossFile !== undefined) {
         addImportedMixinRefs(tsInstance, sourceFile, crossFile, context)
     }
 
-    addSameFileDependencies(tsInstance, context)
+    addSameFileDependencies(facts, context)
 
     if (crossFile !== undefined) {
         addTransitiveRegistryClosure(sourceFile, crossFile, context)
@@ -124,25 +123,18 @@ export function buildFileMixinContext(
 }
 
 function addLocalMixinRefs(
-    tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     imports: MixinDecoratorImports,
-    options: TransformOptions,
+    facts: SourceFileFacts,
     context: FileMixinContext
 ): void {
     if (imports.identifiers.size > 0 || imports.namespaces.size > 0) {
-        for (const statement of sourceFile.statements) {
-            if (!tsInstance.isClassDeclaration(statement) ||
-                !hasMixinDecorator(tsInstance, statement, imports, options)
-            ) {
+        for (const classFacts of facts.classes) {
+            if (!classFacts.hasMixinDecorator || classFacts.name === undefined) {
                 continue
             }
 
-            if (statement.name === undefined) {
-                continue
-            }
-
-            const name = statement.name.text
+            const name = classFacts.name
             const ref: ResolvedMixinRef = {
                 key              : registryKey(sourceFile.fileName, name),
                 className        : name,
@@ -151,8 +143,8 @@ function addLocalMixinRefs(
                 factoryImport    : undefined,
                 requiredBase     : undefined,
                 dependencies     : [],
-                declaration      : statement,
-                configProperties : instanceConfigProperties(tsInstance, statement, true),
+                declaration      : classFacts.declaration,
+                configProperties : classFacts.configProperties,
                 missingRuntimeImport : undefined
             }
 
@@ -257,7 +249,7 @@ function addImportedMixinRefs(
 }
 
 function addSameFileDependencies(
-    tsInstance: TypeScript,
+    facts: SourceFileFacts,
     context: FileMixinContext
 ): void {
     for (const ref of context.byLocalName.values()) {
@@ -265,13 +257,17 @@ function addSameFileDependencies(
             continue
         }
 
-        for (const heritageType of implementsTypes(tsInstance, ref.declaration)) {
-            if (tsInstance.isIdentifier(heritageType.expression)) {
-                const dependency = context.byLocalName.get(heritageType.expression.text)
+        const classFacts = facts.classesByDeclaration.get(ref.declaration)
 
-                if (dependency !== undefined) {
-                    ref.dependencies.push(dependency.key)
-                }
+        if (classFacts === undefined) {
+            continue
+        }
+
+        for (const dependencyName of classFacts.implementsIdentifierNames) {
+            const dependency = context.byLocalName.get(dependencyName)
+
+            if (dependency !== undefined) {
+                ref.dependencies.push(dependency.key)
             }
         }
     }

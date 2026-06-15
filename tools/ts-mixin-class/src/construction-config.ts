@@ -1,21 +1,15 @@
 import type * as ts from "typescript"
-import { isPackageImport } from "./decorators.js"
 import { MixinTransformError } from "./expand-util.js"
 import {
     anyConstructorName,
-    extendsClause,
-    instanceConfigProperties,
-    isNamedClassElement,
-    propertyNameText,
     uniqueConfigProperties,
     type ConfigProperty,
-    type ConstructionConfigMode,
     type ResolvedMixinRef,
     type TransformOptions
 } from "./model.js"
+import { getSourceFileFacts, type SourceFileFacts } from "./source-file-facts.js"
 import {
     deepCloneNode,
-    hasModifier,
     preserveGeneratedDeclarationRange
 } from "./util.js"
 import type { TypeScript } from "./util.js"
@@ -30,9 +24,11 @@ export function createConstructionMembers(
     options: TransformOptions,
     generatedRange: ts.TextRange
 ): ts.ClassElement[] {
+    const facts = getSourceFileFacts(tsInstance, sourceFile, options)
+
     if (declaration.name === undefined ||
-        hasStaticMemberNamed(tsInstance, declaration, "new") ||
-        !isConstructionBaseOptIn(tsInstance, sourceFile, extendsType ?? implicitRequiredBase, options)
+        facts.classesByDeclaration.get(declaration)?.hasStaticNew === true ||
+        !isConstructionBaseOptIn(tsInstance, sourceFile, extendsType ?? implicitRequiredBase, options, facts)
     ) {
         return []
     }
@@ -46,7 +42,8 @@ export function createConstructionMembers(
         extendsType,
         implicitRequiredBase,
         mixinRefs,
-        options.constructionConfig
+        options,
+        facts
     )
     const consumerType = createConsumerInstanceType(tsInstance, declaration)
 
@@ -143,13 +140,14 @@ export function isConstructionBaseOptIn(
     sourceFile: ts.SourceFile,
     baseType: ts.ExpressionWithTypeArguments | undefined,
     options: TransformOptions,
+    facts = getSourceFileFacts(tsInstance, sourceFile, options),
     seen = new Set<string>()
 ): boolean {
     if (baseType === undefined) {
         return false
     }
 
-    if (isPackageBaseExpression(tsInstance, sourceFile, baseType.expression, options)) {
+    if (isPackageBaseExpression(tsInstance, baseType.expression, options, facts)) {
         return true
     }
 
@@ -165,24 +163,23 @@ export function isConstructionBaseOptIn(
 
     seen.add(baseName)
 
-    const baseDeclaration = localClassDeclaration(tsInstance, sourceFile, baseName)
-    const nextBase = baseDeclaration === undefined ? undefined : extendsClause(tsInstance, baseDeclaration)?.types[0]
+    const nextBase = facts.classesByName.get(baseName)?.extendsType
 
-    return isConstructionBaseOptIn(tsInstance, sourceFile, nextBase, options, seen)
+    return isConstructionBaseOptIn(tsInstance, sourceFile, nextBase, options, facts, seen)
 }
 
 function isPackageBaseExpression(
     tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
     expression: ts.Expression,
-    options: TransformOptions
+    options: TransformOptions,
+    facts: SourceFileFacts
 ): boolean {
-    for (const statement of sourceFile.statements) {
-        if (!isPackageBaseImport(tsInstance, statement, options)) {
+    for (const importFacts of facts.imports) {
+        if (!isPackageBaseImport(importFacts.specifier, options)) {
             continue
         }
 
-        const importClause = (statement as ts.ImportDeclaration).importClause
+        const importClause = importFacts.declaration.importClause
         const namedBindings = importClause?.namedBindings
 
         if (namedBindings === undefined) {
@@ -214,26 +211,10 @@ function isPackageBaseExpression(
 }
 
 function isPackageBaseImport(
-    tsInstance: TypeScript,
-    statement: ts.Statement,
+    specifier: string,
     options: TransformOptions
 ): boolean {
-    return isPackageImport(tsInstance, statement, options) ||
-        tsInstance.isImportDeclaration(statement) &&
-        tsInstance.isStringLiteral(statement.moduleSpecifier) &&
-        statement.moduleSpecifier.text === `${options.packageName}/base`
-}
-
-function hasStaticMemberNamed(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    name: string
-): boolean {
-    return declaration.members.some((member) => {
-        return hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) &&
-            isNamedClassElement(member) &&
-            propertyNameText(tsInstance, member.name) === name
-    })
+    return specifier === options.packageName || specifier === `${options.packageName}/base`
 }
 
 function createConstructionConfigType(
@@ -243,11 +224,12 @@ function createConstructionConfigType(
     extendsType: ts.ExpressionWithTypeArguments | undefined,
     implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
     mixinRefs: ResolvedMixinRef[],
-    mode: ConstructionConfigMode
+    options: TransformOptions,
+    facts: SourceFileFacts
 ): ts.TypeNode {
     const factory = tsInstance.factory
 
-    if (mode === "instance-type") {
+    if (options.constructionConfig === "instance-type") {
         return factory.createTypeReferenceNode("Partial", [
             createConsumerInstanceType(tsInstance, declaration)
         ])
@@ -255,11 +237,11 @@ function createConstructionConfigType(
 
     const properties = staticConstructionConfigProperties(
         tsInstance,
-        sourceFile,
         declaration,
         extendsType,
         implicitRequiredBase,
-        mixinRefs
+        mixinRefs,
+        facts
     )
     const requiredNames: string[] = []
     const optionalNames: string[] = []
@@ -313,16 +295,16 @@ function createConstructionConfigType(
 
 function staticConstructionConfigProperties(
     tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
     implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
-    mixinRefs: ResolvedMixinRef[]
+    mixinRefs: ResolvedMixinRef[],
+    facts: SourceFileFacts
 ): ConfigProperty[] {
     return uniqueConfigProperties([
-        ...baseConfigProperties(tsInstance, sourceFile, extendsType ?? implicitRequiredBase),
+        ...baseConfigProperties(tsInstance, extendsType ?? implicitRequiredBase, facts),
         ...mixinRefs.flatMap((ref) => ref.configProperties),
-        ...instanceConfigProperties(tsInstance, declaration, true)
+        ...(facts.classesByDeclaration.get(declaration)?.configProperties ?? [])
     ])
 }
 
@@ -341,27 +323,16 @@ function literalKeyUnionType(
 
 function baseConfigProperties(
     tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    baseType: ts.ExpressionWithTypeArguments | undefined
+    baseType: ts.ExpressionWithTypeArguments | undefined,
+    facts: SourceFileFacts
 ): ConfigProperty[] {
     if (baseType === undefined || !tsInstance.isIdentifier(baseType.expression)) {
         return []
     }
 
     const baseName = baseType.expression.text
-    const baseDeclaration = localClassDeclaration(tsInstance, sourceFile, baseName)
 
-    return baseDeclaration === undefined ? [] : instanceConfigProperties(tsInstance, baseDeclaration, true)
-}
-
-function localClassDeclaration(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    name: string
-): ts.ClassDeclaration | undefined {
-    return sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
-        return tsInstance.isClassDeclaration(statement) && statement.name?.text === name
-    })
+    return facts.classesByName.get(baseName)?.configProperties ?? []
 }
 
 function createConsumerInstanceType(

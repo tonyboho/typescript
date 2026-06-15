@@ -4,16 +4,15 @@ import { expandConsumerClass } from "./consumer-expand.js"
 import { rewritePublicOnlyUndefinedInitializerClass } from "./construction-initializers.js"
 import { isConstructionBaseOptIn } from "./construction-config.js"
 import { buildFileMixinContext } from "./context.js"
-import { collectMixinDecoratorImports, hasMixinDecorator } from "./decorators.js"
 import { createMixinDeclarationDiagnosticAliases } from "./expand-util.js"
 import { expandMixinClass } from "./mixin-expand.js"
 import { localMixinHeritageTypes } from "./mixin-refs.js"
+import { getSourceFileFacts } from "./source-file-facts.js"
 import {
     anyConstructorName,
     classStaticsName,
     defaultTransformOptions,
     defineMixinClassName,
-    extendsClause,
     metadataBaseImportName,
     metadataBaseLocalName,
     mixinApplicationName,
@@ -244,46 +243,46 @@ export function transformSourceFile(
         return sourceFile
     }
 
-    const mixinDecoratorImports = collectMixinDecoratorImports(tsInstance, sourceFile, resolvedOptions)
+    const facts                 = getSourceFileFacts(tsInstance, sourceFile, resolvedOptions)
+    const mixinDecoratorImports = facts.mixinDecoratorImports
     const context               = buildFileMixinContext(
-        tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions, crossFile
+        tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions, crossFile, facts
     )
 
-    const hasAnonymousMixinDiagnostics = sourceFile.statements.some((statement) => {
-        return tsInstance.isClassDeclaration(statement) &&
-            statement.name === undefined &&
-            hasMixinDecorator(tsInstance, statement, mixinDecoratorImports, resolvedOptions)
+    const hasAnonymousMixinDiagnostics = facts.classes.some((classFacts) => {
+        return classFacts.name === undefined && classFacts.hasMixinDecorator
     })
-    const hasAnonymousConsumerDiagnostics = sourceFile.statements.some((statement) => {
-        return tsInstance.isClassDeclaration(statement) &&
-            statement.name === undefined &&
-            localMixinHeritageTypes(tsInstance, statement, context).length > 0
+    const hasAnonymousConsumerDiagnostics = facts.classes.some((classFacts) => {
+        return classFacts.name === undefined &&
+            localMixinHeritageTypes(tsInstance, classFacts.declaration, context).length > 0
     })
 
     let expandedAnything = false
     let needsGeneratedImports = false
 
     const expandedStatements = sourceFile.statements.flatMap((statement): ts.Statement[] => {
-        if (tsInstance.isClassDeclaration(statement) && statement.name === undefined &&
-            hasMixinDecorator(tsInstance, statement, mixinDecoratorImports, resolvedOptions)
-        ) {
+        const classFacts = tsInstance.isClassDeclaration(statement)
+            ? facts.classesByDeclaration.get(statement)
+            : undefined
+
+        if (classFacts !== undefined && classFacts.name === undefined && classFacts.hasMixinDecorator) {
             expandedAnything = true
             return anonymousClassDiagnosticStatements(
                 tsInstance,
-                statement,
+                classFacts.declaration,
                 "AnonymousDefaultMixin",
                 "Invalid mixin class declaration. A default-exported mixin class must be named. " +
                     "Write `export default class MyMixin` so the transformer can generate stable interface, factory, registry, and declaration names."
             )
         }
 
-        if (tsInstance.isClassDeclaration(statement) && statement.name === undefined &&
-            localMixinHeritageTypes(tsInstance, statement, context).length > 0
+        if (classFacts !== undefined && classFacts.name === undefined &&
+            localMixinHeritageTypes(tsInstance, classFacts.declaration, context).length > 0
         ) {
             expandedAnything = true
             return anonymousClassDiagnosticStatements(
                 tsInstance,
-                statement,
+                classFacts.declaration,
                 "AnonymousMixinConsumer",
                 "Invalid mixin consumer declaration. A mixin consumer class must be named. " +
                     "Write `class Consumer implements Mixin` or `export default class Consumer implements Mixin` " +
@@ -291,8 +290,8 @@ export function transformSourceFile(
             )
         }
 
-        if (tsInstance.isClassDeclaration(statement) && statement.name !== undefined) {
-            const ref = context.byLocalName.get(statement.name.text)
+        if (classFacts !== undefined && classFacts.name !== undefined) {
+            const ref = context.byLocalName.get(classFacts.name)
 
             if (ref !== undefined && ref.declaration === statement) {
                 expandedAnything = true
@@ -300,23 +299,23 @@ export function transformSourceFile(
                 return expandMixinClass(tsInstance, sourceFile, ref, context, resolvedOptions)
             }
 
-            const mixinHeritage = localMixinHeritageTypes(tsInstance, statement, context)
+            const mixinHeritage = localMixinHeritageTypes(tsInstance, classFacts.declaration, context)
 
             if (mixinHeritage.length > 0) {
                 expandedAnything = true
                 needsGeneratedImports = true
-                return expandConsumerClass(tsInstance, sourceFile, statement, context, resolvedOptions, mixinHeritage)
+                return expandConsumerClass(tsInstance, sourceFile, classFacts.declaration, context, resolvedOptions, mixinHeritage)
             }
 
             if (isConstructionBaseOptIn(
                 tsInstance,
                 sourceFile,
-                extendsClause(tsInstance, statement)?.types[0],
+                classFacts.extendsType,
                 resolvedOptions
             )) {
                 const rewrittenStatement = rewritePublicOnlyUndefinedInitializerClass(
                     tsInstance,
-                    statement,
+                    classFacts.declaration,
                     resolvedOptions
                 )
 
