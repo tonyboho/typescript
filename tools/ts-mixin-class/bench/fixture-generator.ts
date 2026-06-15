@@ -72,6 +72,18 @@ export function defaultCompileScenarios(): BenchmarkScenario[] {
     })
 }
 
+export function defaultTsServerScenarios(): BenchmarkScenario[] {
+    return [ 25, 100 ].map((size) => {
+        return {
+            name              : `binary-tree-${size}-public-properties`,
+            size,
+            graph             : "binary-tree",
+            members           : "public-properties",
+            consumerLeafCount : Math.min(8, Math.max(1, Math.ceil(size / 32)))
+        }
+    })
+}
+
 export function scenarioDirectoryName(scenario: BenchmarkScenario): string {
     return scenario.name.replaceAll(/[^a-zA-Z0-9_.-]/g, "-")
 }
