@@ -48,6 +48,18 @@ import {
 } from "./util.js"
 import type { TypeScript } from "./util.js"
 
+type ConsumerExpansionContext = {
+    name                       : string,
+    baseName                   : string,
+    extendsType                : ts.ExpressionWithTypeArguments | undefined,
+    directMixinRefs            : ResolvedMixinRef[],
+    generatedRange             : ts.TextRange,
+    sourceViewGeneratedRange   : ts.TextRange,
+    originalExtendsClause      : ts.HeritageClause | undefined,
+    generatedHeritageRange     : ts.TextRange,
+    generatedHeritageTypeRange : ts.TextRange
+}
+
 export function expandConsumerClass(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
@@ -57,21 +69,19 @@ export function expandConsumerClass(
     mixinHeritage = localMixinHeritageTypes(tsInstance, declaration, context)
 ): ts.Statement[] {
     const factory = tsInstance.factory
-
-    if (declaration.name === undefined) {
-        throw new MixinTransformError(sourceFile, declaration, "A mixin consumer class must have a name")
-    }
-
-    const name           = declaration.name.text
-    const baseName       = generatedName(name, consumerBaseSuffix)
-    const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
-
-    const directMixinRefs = localMixinRefs(context, mixinHeritage)
+    const expansion = createConsumerExpansionContext(
+        tsInstance,
+        sourceFile,
+        declaration,
+        context,
+        options,
+        mixinHeritage
+    )
     let linearized: ResolvedMixinRef[]
 
     try {
         linearized = linearizeDependencies(
-            directMixinRefs.map((ref) => ref.key),
+            expansion.directMixinRefs.map((ref) => ref.key),
             context
         )
     } catch (error) {
@@ -81,75 +91,62 @@ export function expandConsumerClass(
                 sourceFile,
                 declaration,
                 context,
-                directMixinRefs,
+                expansion.directMixinRefs,
                 error
             )
         }
 
         throw error
     }
-    const generatedRange = options.sourceView ? declaration : generatedTextRange(sourceFile, declaration.pos)
-    const sourceViewGeneratedRange = generatedTextRange(sourceFile, declaration.pos)
-    const originalExtendsClause = extendsClause(tsInstance, declaration)
-    const firstHeritageType = declaration.heritageClauses?.[0]?.types[0]
-    const generatedHeritageRange = originalExtendsClause ??
-        (options.sourceView && declaration.heritageClauses !== undefined
-            ? { pos : declaration.heritageClauses.pos, end : declaration.heritageClauses.end }
-            : generatedTextRange(
-                sourceFile,
-                declaration.heritageClauses?.pos ?? declaration.name.end
-            ))
-    const generatedHeritageTypeRange = extendsType ??
-        (options.sourceView && firstHeritageType !== undefined ? firstHeritageType : generatedHeritageRange)
 
-    if (extendsType !== undefined && !isSupportedBaseExpression(tsInstance, extendsType.expression)) {
+    if (expansion.extendsType !== undefined && !isSupportedBaseExpression(tsInstance, expansion.extendsType.expression)) {
         return expandConsumerClassWithUnsupportedBaseDiagnostic(
             tsInstance,
             sourceFile,
             declaration,
             context,
-            directMixinRefs,
+            expansion.directMixinRefs,
             linearized,
             options,
-            generatedRange,
-            generatedHeritageRange,
-            generatedHeritageTypeRange
+            expansion.generatedRange,
+            expansion.generatedHeritageRange,
+            expansion.generatedHeritageTypeRange
         )
     }
 
-    const implicitRequiredBase = extendsType === undefined
+    const implicitRequiredBase = expansion.extendsType === undefined
         ? firstRequiredBaseType(tsInstance, context, linearized)
         : undefined
-    const emptyBaseName = extendsType === undefined && implicitRequiredBase === undefined
-        ? generatedName(name, consumerEmptyBaseSuffix)
+    const emptyBaseName = expansion.extendsType === undefined && implicitRequiredBase === undefined
+        ? generatedName(expansion.name, consumerEmptyBaseSuffix)
         : undefined
-    const requiredBaseValidations = extendsType === undefined
+    const requiredBaseValidations = expansion.extendsType === undefined
         ? []
         : createRequiredBaseValidations(
             tsInstance,
             context,
             sourceFile,
             declaration,
-            extendsType,
+            expansion.extendsType,
             linearized,
-            generatedHeritageTypeRange,
+            expansion.generatedHeritageTypeRange,
             options
         )
     const missingRuntimeImportValidations = createMissingRuntimeImportValidations(
         tsInstance,
         declaration,
-        directMixinRefs,
+        expansion.directMixinRefs,
         mixinHeritage
     )
     const staticCollisionValidations = createStaticCollisionValidations(
         tsInstance,
         sourceFile,
         declaration,
-        extendsType,
+        expansion.extendsType,
         implicitRequiredBase,
         emptyBaseName,
         linearized,
-        generatedHeritageTypeRange,
+        expansion.generatedHeritageTypeRange,
         options.staticCollisionCheck,
         options.sourceView
     )
@@ -171,15 +168,15 @@ export function expandConsumerClass(
 
     const baseInterfaceNode = factory.createInterfaceDeclaration(
         undefined,
-        baseName,
+        expansion.baseName,
         checkedTypeParameters(),
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
                 // In source view, even a base without type arguments goes into
                 // interface extends so cloned heritage types map to originals 1:1.
-                ...(extendsType !== undefined && (options.sourceView || extendsType.typeArguments !== undefined)
-                    ? [ cloneExpressionWithTypeArguments(tsInstance, extendsType) ]
+                ...(expansion.extendsType !== undefined && (options.sourceView || expansion.extendsType.typeArguments !== undefined)
+                    ? [ cloneExpressionWithTypeArguments(tsInstance, expansion.extendsType) ]
                     : []),
                 ...(implicitRequiredBase === undefined
                     ? []
@@ -193,18 +190,18 @@ export function expandConsumerClass(
     )
     const baseInterface = options.sourceView
         ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseInterfaceNode, declaration)
-        : preserveGeneratedDeclarationRange(tsInstance, baseInterfaceNode, generatedRange, declaration)
+        : preserveGeneratedDeclarationRange(tsInstance, baseInterfaceNode, expansion.generatedRange, declaration)
 
     const baseClassNode = factory.createClassDeclaration(
         undefined,
-        baseName,
+        expansion.baseName,
         checkedTypeParameters(),
         [ consumerBaseClassHeritage(
             tsInstance,
-            extendsType,
+            expansion.extendsType,
             implicitRequiredBase,
             emptyBaseName,
-            directMixinRefs,
+            expansion.directMixinRefs,
             linearized,
             options
         ) ],
@@ -212,28 +209,28 @@ export function expandConsumerClass(
     )
     const baseClass = options.sourceView
         ? preserveSourceViewGeneratedClassLikeRange(tsInstance, baseClassNode, declaration)
-        : preserveGeneratedDeclarationRange(tsInstance, baseClassNode, generatedRange, declaration)
+        : preserveGeneratedDeclarationRange(tsInstance, baseClassNode, expansion.generatedRange, declaration)
 
     const constructionMembers = createConstructionMembers(
         tsInstance,
         sourceFile,
         declaration,
-        extendsType,
+        expansion.extendsType,
         implicitRequiredBase,
         linearized,
         options,
-        options.sourceView ? generatedTextRange(sourceFile, declaration.members.end) : generatedRange
+        options.sourceView ? generatedTextRange(sourceFile, declaration.members.end) : expansion.generatedRange
     )
     const consumerMembersWithSuper = addSyntheticSuperCallToConstructors(
         tsInstance,
         sourceFile,
         declaration.members,
-        originalExtendsClause === undefined
+        expansion.originalExtendsClause === undefined
     )
     const consumerMembers = isConstructionBaseOptIn(
         tsInstance,
         sourceFile,
-        extendsType ?? implicitRequiredBase,
+        expansion.extendsType ?? implicitRequiredBase,
         options
     )
         ? rewritePublicOnlyUndefinedInitializers(tsInstance, consumerMembersWithSuper, options)
@@ -249,11 +246,11 @@ export function expandConsumerClass(
         consumerHeritageClauses(
             tsInstance,
             declaration,
-            baseName,
-            generatedHeritageRange,
-            generatedHeritageTypeRange,
+            expansion.baseName,
+            expansion.generatedHeritageRange,
+            expansion.generatedHeritageTypeRange,
             consumerValidations.map((validation) => validation.typeArgument),
-            !options.sourceView || originalExtendsClause !== undefined
+            !options.sourceView || expansion.originalExtendsClause !== undefined
         ),
         updatedConsumerMembers
     )
@@ -264,17 +261,58 @@ export function expandConsumerClass(
             ? preserveGeneratedDeclarationRange(
                 tsInstance,
                 factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
-                sourceViewGeneratedRange,
+                expansion.sourceViewGeneratedRange,
                 declaration
             )
             : preserveGeneratedDeclarationRange(
                 tsInstance,
                 factory.createClassDeclaration(undefined, emptyBaseName, undefined, undefined, []),
-                generatedRange,
+                expansion.generatedRange,
                 declaration
             ) ]
 
     return [ ...emptyBaseClass, baseInterface, baseClass, updatedConsumer ]
+}
+
+function createConsumerExpansionContext(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration,
+    context: FileMixinContext,
+    options: TransformOptions,
+    mixinHeritage: ts.ExpressionWithTypeArguments[]
+): ConsumerExpansionContext {
+    if (declaration.name === undefined) {
+        throw new MixinTransformError(sourceFile, declaration, "A mixin consumer class must have a name")
+    }
+
+    const name = declaration.name.text
+    const originalExtendsClause = extendsClause(tsInstance, declaration)
+    const extendsType = originalExtendsClause?.types[0]
+    const generatedRange = options.sourceView ? declaration : generatedTextRange(sourceFile, declaration.pos)
+    const sourceViewGeneratedRange = generatedTextRange(sourceFile, declaration.pos)
+    const firstHeritageType = declaration.heritageClauses?.[0]?.types[0]
+    const generatedHeritageRange = originalExtendsClause ??
+        (options.sourceView && declaration.heritageClauses !== undefined
+            ? { pos : declaration.heritageClauses.pos, end : declaration.heritageClauses.end }
+            : generatedTextRange(
+                sourceFile,
+                declaration.heritageClauses?.pos ?? declaration.name.end
+            ))
+    const generatedHeritageTypeRange = extendsType ??
+        (options.sourceView && firstHeritageType !== undefined ? firstHeritageType : generatedHeritageRange)
+
+    return {
+        name,
+        baseName : generatedName(name, consumerBaseSuffix),
+        extendsType,
+        directMixinRefs : localMixinRefs(context, mixinHeritage),
+        generatedRange,
+        sourceViewGeneratedRange,
+        originalExtendsClause,
+        generatedHeritageRange,
+        generatedHeritageTypeRange
+    }
 }
 
 function expandConsumerClassWithUnsupportedBaseDiagnostic(
