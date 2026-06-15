@@ -189,6 +189,22 @@ export function createMixinClassCompilerHost(
                 onError,
                 usePrintedSourceFile ? shouldCreateNewSourceFile : true
             )
+
+            // Skipped files (declaration files, package-internal files) are never
+            // transformed, and the skip test is fileName-based, so it is identical
+            // for the layered and host candidates. Bail out before the structural
+            // comparison so we don't walk both ASTs of every lib / node_modules
+            // .d.ts on a cold program build.
+            const skipCandidate = hostSourceFile ?? layeredSourceFile
+
+            if (skipCandidate === undefined) {
+                return skipCandidate
+            }
+
+            if (shouldSkipSourceFile(skipCandidate)) {
+                return cachePreserveSourceFile(skipCandidate)
+            }
+
             const useLayeredSourceFile = layeredSourceFile !== undefined &&
                 (
                     hostSourceFile === undefined ||
@@ -196,8 +212,8 @@ export function createMixinClassCompilerHost(
                 )
             const sourceFile = useLayeredSourceFile ? layeredSourceFile : hostSourceFile
 
-            if (sourceFile === undefined || shouldSkipSourceFile(sourceFile)) {
-                return sourceFile === undefined ? sourceFile : cachePreserveSourceFile(sourceFile)
+            if (sourceFile === undefined) {
+                return sourceFile
             }
 
             if (usePrintedSourceFile) {
