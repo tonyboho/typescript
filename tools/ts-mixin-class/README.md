@@ -117,12 +117,13 @@ class ValueLabel<T> implements StoredValue<T> {
     }
 }
 
-class Box<T> implements StoredValue<T>, ValueLabel<T> {
+class Box<T> implements ValueLabel<T>, StoredValue<T> {
+    constructor(value: T) {
+        this.value = value
+    }
 }
 
-const box = new Box<number>()
-
-box.value = 42
+const box = new Box<number>(42)
 
 const value: number | undefined = box.getValue()
 const label: string = box.label()

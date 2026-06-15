@@ -66,6 +66,29 @@ it("expands a consumer class without an explicit base", async (t: Test) => {
         "Helper chain does not use Object as the implicit consumer base")
 })
 
+it("adds a synthetic super call to consumer constructors without an explicit base", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class SourceClass<T> {
+            passThrough (a: T): T { return a }
+        }
+
+        class Consumer<T> implements SourceClass<T> {
+            value: T
+
+            constructor (value: T) {
+                this.value = value
+            }
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.match(printed, "constructor(value: T) {\n        super();\n        this.value = value;\n    }",
+        "Consumer constructor gets a leading synthetic super call")
+})
+
 it("emits a generic consumer base class", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { mixin } from "ts-mixin-class"

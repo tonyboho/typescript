@@ -186,6 +186,50 @@ it("transformed generic consumer base output typechecks", async (t: Test) => {
     t.expect(diagnostics).toEqual([])
 })
 
+it("consumer constructor without explicit base typechecks after synthetic super injection", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class StoredValue<T> {
+            value: T | undefined
+
+            getValue (): T | undefined {
+                return this.value
+            }
+        }
+
+        @mixin()
+        class ValueLabel<T> implements StoredValue<T> {
+            label (): string {
+                return String(super.getValue())
+            }
+        }
+
+        class Box<T> implements ValueLabel<T>, StoredValue<T> {
+            ownValue: T
+
+            constructor (value: T) {
+                this.ownValue = value
+            }
+        }
+
+        const box = new Box<number>(42)
+
+        box.value = 42
+
+        const value: number | undefined = box.getValue()
+        const label: string = box.label()
+        const ownValue: number = box.ownValue
+
+        void [ value, label, ownValue ]
+    `))
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.expect(diagnostics).toEqual([])
+})
+
 it("instance-type construction config mode preserves generic new inference without public-only filtering", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { Base, mixin } from "ts-mixin-class"
