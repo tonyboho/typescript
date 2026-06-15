@@ -30,7 +30,9 @@ import {
 } from "./model.js"
 import { buildMixinRegistry, hasRuntimeModuleForDeclaration } from "./registry.js"
 import {
+    cloneLayeredSourceFileForTransform,
     cloneSourceFileForTransform,
+    hasDifferentAstShape,
     preserveTopLevelStatementRanges,
     printSourceFile,
     scriptKindFromFileName,
@@ -56,6 +58,8 @@ export { printSourceFile } from "./util.js"
 
 // ---------------------------------------------------------------------------
 // ts-patch ProgramTransformer
+
+const preserveSourceCache = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
 
 function resolveTransformOptions(config: MixinClassTransformerConfig): TransformOptions {
     return {
@@ -103,8 +107,15 @@ export default function transformProgram(
     }
 
     const registry  = buildMixinRegistry(tsInstance, program, options, resolveModuleFileName)
-    const crossFile = registry.size === 0 ? undefined : { registry, resolveModuleFileName, canImportRuntimeValue }
-    const nextHost  = createMixinClassCompilerHost(tsInstance, compilerHost, compilerOptions, config, crossFile)
+    const crossFile = registry.size === 0
+        ? undefined
+        : {
+            registry,
+            cacheKey : registryCacheKey(registry),
+            resolveModuleFileName,
+            canImportRuntimeValue
+        }
+    const nextHost  = createMixinClassCompilerHost(tsInstance, compilerHost, compilerOptions, config, crossFile, program)
 
     return tsInstance.createProgram(
         program.getRootFileNames(),
@@ -119,50 +130,98 @@ export function createMixinClassCompilerHost(
     compilerHost: ts.CompilerHost,
     compilerOptions: ts.CompilerOptions,
     config: MixinClassTransformerConfig,
-    crossFile?: CrossFileContext
+    crossFile?: CrossFileContext,
+    baseProgram?: ts.Program
 ): ts.CompilerHost {
     const options = resolveTransformOptions(config)
+    const sourceCache = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
     const usePrintedSourceFile = resolveUsePrintedSourceFile(config, compilerOptions)
 
     return {
         ...compilerHost,
 
         getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) {
-            const sourceFile = compilerHost.getSourceFile(
+            const layeredSourceFile = baseProgram?.getSourceFile(fileName)
+            const preserveCacheKey = usePrintedSourceFile
+                ? undefined
+                : preserveSourceCacheKey(options, crossFile, languageVersionOrOptions)
+
+            if (preserveCacheKey !== undefined && layeredSourceFile !== undefined) {
+                const cached = preserveSourceCache.get(layeredSourceFile)?.get(preserveCacheKey)
+
+                if (cached !== undefined) {
+                    return cached
+                }
+            }
+
+            const cachePreserveSourceFile = (result: ts.SourceFile): ts.SourceFile => {
+                if (preserveCacheKey !== undefined && layeredSourceFile !== undefined) {
+                    setCachedSourceFile(preserveSourceCache, layeredSourceFile, preserveCacheKey, result)
+                }
+
+                return result
+            }
+
+            const hostSourceFile = compilerHost.getSourceFile(
                 fileName,
                 languageVersionOrOptions,
                 onError,
                 usePrintedSourceFile ? shouldCreateNewSourceFile : true
             )
+            const useLayeredSourceFile = layeredSourceFile !== undefined &&
+                (
+                    hostSourceFile === undefined ||
+                    layeredSourceFile !== hostSourceFile && hasDifferentAstShape(tsInstance, layeredSourceFile, hostSourceFile)
+                )
+            const sourceFile = useLayeredSourceFile ? layeredSourceFile : hostSourceFile
 
             if (sourceFile === undefined || shouldSkipSourceFile(sourceFile)) {
-                return sourceFile
+                return sourceFile === undefined ? sourceFile : cachePreserveSourceFile(sourceFile)
             }
 
-            const transformSourceFileInput = usePrintedSourceFile
-                ? sourceFile
+            if (usePrintedSourceFile) {
+                const cacheKey = String(shouldCreateNewSourceFile)
+                const cached   = sourceCache.get(sourceFile)?.get(cacheKey)
+
+                if (cached !== undefined) {
+                    return cached
+                }
+
+                const transformedSourceFile = transformSourceFile(tsInstance, sourceFile, options, crossFile)
+
+                if (transformedSourceFile === sourceFile) {
+                    setCachedSourceFile(sourceCache, sourceFile, cacheKey, sourceFile)
+                    return sourceFile
+                }
+
+                const printedSourceFile = tsInstance.createSourceFile(
+                    fileName,
+                    printSourceFile(tsInstance, transformedSourceFile),
+                    languageVersionOrOptions,
+                    true,
+                    scriptKindFromFileName(tsInstance, fileName)
+                )
+
+                setCachedSourceFile(sourceCache, sourceFile, cacheKey, printedSourceFile)
+
+                return printedSourceFile
+            }
+
+            const transformSourceFileInput = useLayeredSourceFile
+                ? cloneLayeredSourceFileForTransform(tsInstance, sourceFile)
                 : cloneSourceFileForTransform(tsInstance, sourceFile, languageVersionOrOptions)
             const transformedSourceFile = transformSourceFile(tsInstance, transformSourceFileInput, {
                 ...options,
-                sourceView : !usePrintedSourceFile
+                sourceView : true
             }, crossFile)
 
             if (transformedSourceFile === transformSourceFileInput) {
-                return sourceFile
+                return cachePreserveSourceFile(sourceFile)
             }
 
-            if (!usePrintedSourceFile) {
-                preserveTopLevelStatementRanges(tsInstance, transformedSourceFile)
-                return setParentRecursivePreservingVersion(tsInstance, transformedSourceFile, sourceFile)
-            }
+            preserveTopLevelStatementRanges(tsInstance, transformedSourceFile)
 
-            return tsInstance.createSourceFile(
-                fileName,
-                printSourceFile(tsInstance, transformedSourceFile),
-                languageVersionOrOptions,
-                true,
-                scriptKindFromFileName(tsInstance, fileName)
-            )
+            return cachePreserveSourceFile(setParentRecursivePreservingVersion(tsInstance, transformedSourceFile, sourceFile))
         }
     }
 }
@@ -405,6 +464,61 @@ function createHelperTypeImport(
 
 function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
     return sourceFile.isDeclarationFile || shouldSkipFileName(sourceFile.fileName)
+}
+
+function setCachedSourceFile(
+    sourceCache: WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>,
+    sourceFile: ts.SourceFile,
+    cacheKey: string,
+    cachedSourceFile: ts.SourceFile
+): void {
+    const cachedByOptions = sourceCache.get(sourceFile) ?? new Map<string, ts.SourceFile>()
+
+    cachedByOptions.set(cacheKey, cachedSourceFile)
+    sourceCache.set(sourceFile, cachedByOptions)
+}
+
+function preserveSourceCacheKey(
+    options: TransformOptions,
+    crossFile: CrossFileContext | undefined,
+    languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions
+): string {
+    const languageVersionKey = typeof languageVersionOrOptions === "object"
+        ? [
+            languageVersionOrOptions.languageVersion,
+            languageVersionOrOptions.impliedNodeFormat ?? "",
+            languageVersionOrOptions.jsDocParsingMode ?? ""
+        ].join(":")
+        : String(languageVersionOrOptions)
+
+    return [
+        options.packageName,
+        options.decoratorName,
+        options.staticCollisionCheck,
+        options.constructionConfig,
+        String(options.allowUndefinedForRequiredProperties),
+        crossFile?.cacheKey ?? "",
+        languageVersionKey
+    ].join("|")
+}
+
+function registryCacheKey(registry: CrossFileContext["registry"]): string {
+    return [ ...registry.entries() ]
+        .map(([ key, entry ]) => {
+            return [
+                key,
+                entry.fileName,
+                entry.name,
+                String(entry.defaultExport),
+                entry.requiredBaseName ?? "",
+                entry.dependencies.join(","),
+                entry.configProperties.map((property) => {
+                    return `${property.name}:${String(property.optional)}`
+                }).join(",")
+            ].join(":")
+        })
+        .sort()
+        .join("|")
 }
 
 function resolveUsePrintedSourceFile(

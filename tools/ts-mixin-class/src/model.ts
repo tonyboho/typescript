@@ -44,6 +44,7 @@ export type MixinRegistry = Map<string, RegisteredMixin>
 
 export type CrossFileContext = {
     registry : MixinRegistry,
+    cacheKey : string,
     resolveModuleFileName : (specifier: string, containingFile: string) => string | undefined
     canImportRuntimeValue? : (resolvedFileName: string) => boolean
 }

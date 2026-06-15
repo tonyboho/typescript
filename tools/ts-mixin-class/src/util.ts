@@ -346,6 +346,76 @@ export function cloneSourceFileForTransform(
     return cloned
 }
 
+export function cloneLayeredSourceFileForTransform(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile
+): ts.SourceFile {
+    const transformed = tsInstance.transform(sourceFile, [
+        (context) => {
+            const visit: ts.Visitor = (node) => {
+                return cloneNode(tsInstance, tsInstance.visitEachChild(node, visit, context))
+            }
+
+            return (nextSourceFile) => tsInstance.visitNode(nextSourceFile, visit) as ts.SourceFile
+        }
+    ])
+
+    try {
+        const cloned = transformed.transformed[0]
+
+        ;(cloned as SourceFileWithVersion).version = (sourceFile as SourceFileWithVersion).version
+
+        return (tsInstance as TypeScriptWithParents).setParentRecursive(cloned, false)
+    } finally {
+        transformed.dispose()
+    }
+}
+
+export function hasDifferentAstShape(
+    tsInstance: TypeScript,
+    left: ts.SourceFile,
+    right: ts.SourceFile
+): boolean {
+    const leftStack: ts.Node[] = [ left ]
+    const rightStack: ts.Node[] = [ right ]
+    const leftChildren: ts.Node[] = []
+    const rightChildren: ts.Node[] = []
+    const collectChildren = (node: ts.Node, children: ts.Node[]): void => {
+        children.length = 0
+
+        tsInstance.forEachChild(node, (child) => {
+            children.push(child)
+        })
+    }
+
+    while (leftStack.length > 0) {
+        const leftNode = leftStack.pop() as ts.Node
+        const rightNode = rightStack.pop()
+
+        if (rightNode === undefined) {
+            return true
+        }
+
+        if (leftNode.kind !== rightNode.kind || leftNode.pos !== rightNode.pos || leftNode.end !== rightNode.end) {
+            return true
+        }
+
+        collectChildren(leftNode, leftChildren)
+        collectChildren(rightNode, rightChildren)
+
+        if (leftChildren.length !== rightChildren.length) {
+            return true
+        }
+
+        for (let index = leftChildren.length - 1; index >= 0; index--) {
+            leftStack.push(leftChildren[index])
+            rightStack.push(rightChildren[index])
+        }
+    }
+
+    return rightStack.length !== 0
+}
+
 export function setParentRecursivePreservingVersion(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
