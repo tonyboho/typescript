@@ -96,13 +96,35 @@ export default function transformProgram(
     const compilerOptions = program.getCompilerOptions()
     const compilerHost    = host ?? tsInstance.createCompilerHost(compilerOptions)
     const options         = resolveTransformOptions(config)
+    const resolvedModuleFileNames = new Map<string, string | undefined>()
+    const runtimeModuleAvailability = new Map<string, boolean>()
 
     const resolveModuleFileName = (specifier: string, containingFile: string): string | undefined => {
-        return tsInstance.resolveModuleName(specifier, containingFile, compilerOptions, compilerHost)
+        const cacheKey = `${containingFile}\0${specifier}`
+
+        if (resolvedModuleFileNames.has(cacheKey)) {
+            return resolvedModuleFileNames.get(cacheKey)
+        }
+
+        const resolvedFileName = tsInstance.resolveModuleName(specifier, containingFile, compilerOptions, compilerHost)
             .resolvedModule?.resolvedFileName
+
+        resolvedModuleFileNames.set(cacheKey, resolvedFileName)
+
+        return resolvedFileName
     }
     const canImportRuntimeValue = (resolvedFileName: string): boolean => {
-        return hasRuntimeModuleForDeclaration(tsInstance, compilerHost, resolvedFileName)
+        const cached = runtimeModuleAvailability.get(resolvedFileName)
+
+        if (cached !== undefined) {
+            return cached
+        }
+
+        const available = hasRuntimeModuleForDeclaration(tsInstance, compilerHost, resolvedFileName)
+
+        runtimeModuleAvailability.set(resolvedFileName, available)
+
+        return available
     }
 
     const registry  = buildMixinRegistry(tsInstance, program, options, resolveModuleFileName)
