@@ -6,7 +6,7 @@ import { isConstructionBaseOptIn } from "./construction-config.js"
 import { buildFileMixinContext } from "./context.js"
 import { createMixinDeclarationDiagnosticAliases } from "./expand-util.js"
 import { expandMixinClass } from "./mixin-expand.js"
-import { localMixinHeritageTypes } from "./mixin-refs.js"
+import { localMixinHeritageTypesFromFacts } from "./mixin-refs.js"
 import { getSourceFileFacts, type SourceFileFacts } from "./source-file-facts.js"
 import {
     anyConstructorName,
@@ -296,7 +296,7 @@ export function transformSourceFile(
         }
 
         if (classFacts !== undefined && classFacts.name === undefined &&
-            localMixinHeritageTypes(tsInstance, classFacts.declaration, context).length > 0
+            localMixinHeritageTypesFromFacts(tsInstance, classFacts, context).length > 0
         ) {
             expandedAnything = true
             return anonymousClassDiagnosticStatements(
@@ -318,7 +318,7 @@ export function transformSourceFile(
                 return expandMixinClass(tsInstance, sourceFile, ref, context, resolvedOptions)
             }
 
-            const mixinHeritage = localMixinHeritageTypes(tsInstance, classFacts.declaration, context)
+            const mixinHeritage = localMixinHeritageTypesFromFacts(tsInstance, classFacts, context)
 
             if (mixinHeritage.length > 0) {
                 expandedAnything = true
