@@ -61,7 +61,8 @@ export function expandConsumerClass(
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
     context: FileMixinContext,
-    options: TransformOptions
+    options: TransformOptions,
+    mixinHeritage = consumedMixins(tsInstance, declaration, context)
 ): ts.Statement[] {
     const factory = tsInstance.factory
 
@@ -73,7 +74,6 @@ export function expandConsumerClass(
     const baseName       = generatedName(name, consumerBaseSuffix)
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
 
-    const mixinHeritage = consumedMixins(tsInstance, declaration, context)
     const directMixinRefs = mixinHeritage.map((heritageType) => {
         return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
     })

@@ -252,10 +252,12 @@ export function transformSourceFile(
                 return expandMixinClass(tsInstance, sourceFile, ref, context, resolvedOptions)
             }
 
-            if (consumedMixins(tsInstance, statement, context).length > 0) {
+            const mixinHeritage = consumedMixins(tsInstance, statement, context)
+
+            if (mixinHeritage.length > 0) {
                 expandedAnything = true
                 needsGeneratedImports = true
-                return expandConsumerClass(tsInstance, sourceFile, statement, context, resolvedOptions)
+                return expandConsumerClass(tsInstance, sourceFile, statement, context, resolvedOptions, mixinHeritage)
             }
 
             if (isConstructionBaseOptIn(
