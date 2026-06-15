@@ -3,9 +3,9 @@ import { collectMixinDecoratorImports, hasMixinDecorator } from "./decorators.js
 import {
     extendsClause,
     implementsTypes,
-    instanceConfigProperties,
     propertyNameText,
     requiredBaseIdentifierName,
+    uniqueConfigProperties,
     type ConfigProperty,
     type MixinDecoratorImports,
     type TransformOptions
@@ -124,6 +124,11 @@ function importFacts(
     }
 }
 
+type ClassMemberFacts = {
+    staticNames      : Set<string>,
+    configProperties : ConfigProperty[]
+}
+
 function classFacts(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
@@ -131,7 +136,19 @@ function classFacts(
     options: TransformOptions
 ): ClassFacts {
     const implementedTypes = implementsTypes(tsInstance, declaration)
-    const staticNames = staticMemberNames(tsInstance, declaration)
+
+    // staticNames and configProperties both require a walk over the class
+    // members, and are only read for classes that turn out to be mixins,
+    // consumers, or construction opt-ins. Defer them to a single shared
+    // member pass, memoized so ordinary classes never get walked at all.
+    let memberFacts: ClassMemberFacts | undefined
+    const getMemberFacts = (): ClassMemberFacts => {
+        if (memberFacts === undefined) {
+            memberFacts = collectClassMemberFacts(tsInstance, declaration)
+        }
+
+        return memberFacts
+    }
 
     return {
         declaration,
@@ -144,32 +161,61 @@ function classFacts(
             .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
             .map((expression) => expression.text),
         requiredBaseName          : requiredBaseIdentifierName(tsInstance, declaration),
-        configProperties          : instanceConfigProperties(tsInstance, declaration, true),
-        staticNames,
-        hasStaticNew              : staticNames.has("new"),
+        get configProperties() {
+            return getMemberFacts().configProperties
+        },
+        get staticNames() {
+            return getMemberFacts().staticNames
+        },
+        get hasStaticNew() {
+            return getMemberFacts().staticNames.has("new")
+        },
         hasMixinDecorator         : hasMixinDecorator(tsInstance, declaration, mixinDecoratorImports, options)
     }
 }
 
-function staticMemberNames(
+function collectClassMemberFacts(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration
-): Set<string> {
-    const names = new Set<string>()
+): ClassMemberFacts {
+    const staticNames = new Set<string>()
+    const configProperties: ConfigProperty[] = []
 
     for (const member of declaration.members) {
-        if (!hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) || member.name === undefined) {
+        if (hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword)) {
+            if (member.name !== undefined) {
+                const name = propertyNameText(tsInstance, member.name)
+
+                if (name !== undefined) {
+                    staticNames.add(name)
+                }
+            }
+
+            continue
+        }
+
+        if (!tsInstance.isPropertyDeclaration(member) ||
+            hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) ||
+            hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) ||
+            !hasModifier(tsInstance, member, tsInstance.SyntaxKind.PublicKeyword)
+        ) {
             continue
         }
 
         const name = propertyNameText(tsInstance, member.name)
 
         if (name !== undefined) {
-            names.add(name)
+            configProperties.push({
+                name,
+                optional : member.questionToken !== undefined
+            })
         }
     }
 
-    return names
+    return {
+        staticNames,
+        configProperties : uniqueConfigProperties(configProperties)
+    }
 }
 
 function sourceFileFactsCacheKey(options: TransformOptions): string {

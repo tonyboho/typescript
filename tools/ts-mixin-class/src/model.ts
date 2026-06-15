@@ -1,6 +1,5 @@
 import type * as ts from "typescript"
 import type { PluginConfig } from "ts-patch"
-import { hasModifier } from "./util.js"
 import type { TypeScript } from "./util.js"
 
 export type MixinClassTransformerConfig = PluginConfig & {
@@ -147,32 +146,6 @@ export function staticConflictKeysName(mode: Exclude<StaticCollisionCheckMode, f
 
 export function generatedName(name: string, suffix: string): string {
     return `__${name}${suffix}`
-}
-
-export function instanceConfigProperties(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    requirePublicModifier = false
-): ConfigProperty[] {
-    return uniqueConfigProperties(declaration.members
-        .filter((member): member is ts.PropertyDeclaration => {
-            return tsInstance.isPropertyDeclaration(member) &&
-                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) &&
-                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) &&
-                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) &&
-                (!requirePublicModifier || hasModifier(tsInstance, member, tsInstance.SyntaxKind.PublicKeyword))
-        })
-        .flatMap((member) => {
-            const name = propertyNameText(tsInstance, member.name)
-
-            return name === undefined
-                ? []
-                : [ {
-                    name,
-                    optional : member.questionToken !== undefined
-                } ]
-        })
-    )
 }
 
 export function propertyNameText(tsInstance: TypeScript, name: ts.PropertyName): string | undefined {
