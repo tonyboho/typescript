@@ -1,4 +1,5 @@
 import type * as ts from "typescript"
+import { rewritePublicOnlyUndefinedInitializers } from "./construction-initializers.js"
 import { buildInterfaceMembers, interfaceDeclarationRange } from "./interface-members.js"
 import {
     anyConstructorName,
@@ -235,7 +236,7 @@ export function expandMixinClass(
     if (options.sourceView) {
         return [
             ...diagnosticAliases,
-            ...expandSourceViewMixinClass(tsInstance, sourceFile, declaration, context)
+            ...expandSourceViewMixinClass(tsInstance, sourceFile, declaration, context, options)
         ]
     }
 
@@ -256,7 +257,7 @@ export function expandMixinClass(
                 ref.localFactoryName,
                 undefined,
                 undefined,
-                createMixinFactoryExpression(tsInstance, declaration, typeParameters, context)
+                createMixinFactoryExpression(tsInstance, declaration, typeParameters, context, options)
             )
         ], tsInstance.NodeFlags.Const)
     ), generatedTextRange(sourceFile, declaration.end))
@@ -356,7 +357,8 @@ function expandSourceViewMixinClass(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
-    context: FileMixinContext
+    context: FileMixinContext,
+    options: TransformOptions
 ): ts.Statement[] {
     const factory = tsInstance.factory
 
@@ -389,7 +391,7 @@ function expandSourceViewMixinClass(
                 factory.createNodeArray([ metadataExtendsClause, ...(declaration.heritageClauses ?? []) ]),
                 declaration.heritageClauses ?? generatedHeritageRange
             ),
-            declaration.members
+            rewritePublicOnlyUndefinedInitializers(tsInstance, declaration.members, options)
         ) ]
     }
 
@@ -429,7 +431,7 @@ function expandSourceViewMixinClass(
         declaration.name,
         declaration.typeParameters,
         consumerHeritageClauses(tsInstance, declaration, baseName, generatedHeritageRange),
-        declaration.members
+        rewritePublicOnlyUndefinedInitializers(tsInstance, declaration.members, options)
     )
 
     return [ baseInterface, baseClass, updatedDeclaration ]
@@ -481,7 +483,8 @@ function createMixinFactoryExpression(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration,
     typeParameters: ts.TypeParameterDeclaration[] | undefined,
-    context: FileMixinContext
+    context: FileMixinContext,
+    options: TransformOptions
 ): ts.FunctionExpression {
     const factory = tsInstance.factory
 
@@ -500,7 +503,7 @@ function createMixinFactoryExpression(
                 [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
                     factory.createExpressionWithTypeArguments(factory.createIdentifier("base"), undefined)
                 ]) ],
-                mixinRuntimeMembers(tsInstance, declaration)
+                mixinRuntimeMembers(tsInstance, declaration, options)
             ))
         ], true)
     )
@@ -508,9 +511,10 @@ function createMixinFactoryExpression(
 
 function mixinRuntimeMembers(
     tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
+    declaration: ts.ClassDeclaration,
+    options: TransformOptions
 ): ts.NodeArray<ts.ClassElement> {
-    return tsInstance.factory.createNodeArray(declaration.members.filter((member) => {
+    const members = tsInstance.factory.createNodeArray(declaration.members.filter((member) => {
         if (tsInstance.isConstructorDeclaration(member) ||
             hasModifier(tsInstance, member, tsInstance.SyntaxKind.AbstractKeyword) ||
             hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) ||
@@ -522,6 +526,8 @@ function mixinRuntimeMembers(
 
         return isSupportedMixinClassMember(tsInstance, member)
     }))
+
+    return rewritePublicOnlyUndefinedInitializers(tsInstance, members, options)
 }
 
 function asMixinFactory(tsInstance: TypeScript, expression: ts.Expression): ts.Expression {

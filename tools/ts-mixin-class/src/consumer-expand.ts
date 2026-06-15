@@ -1,4 +1,5 @@
 import type * as ts from "typescript"
+import { rewritePublicOnlyUndefinedInitializers } from "./construction-initializers.js"
 import { isPackageImport } from "./decorators.js"
 import {
     cloneExpressionWithTypeArguments,
@@ -240,12 +241,20 @@ export function expandConsumerClass(
         options,
         options.sourceView ? generatedTextRange(sourceFile, declaration.members.end) : generatedRange
     )
-    const consumerMembers = addSyntheticSuperCallToConstructors(
+    const consumerMembersWithSuper = addSyntheticSuperCallToConstructors(
         tsInstance,
         sourceFile,
         declaration.members,
         originalExtendsClause === undefined
     )
+    const consumerMembers = isConstructionBaseOptIn(
+        tsInstance,
+        sourceFile,
+        extendsType ?? implicitRequiredBase,
+        options
+    )
+        ? rewritePublicOnlyUndefinedInitializers(tsInstance, consumerMembersWithSuper, options)
+        : consumerMembersWithSuper
     const updatedConsumerMembers = constructionMembers.length === 0
         ? consumerMembers
         : preserveTextRange(tsInstance, factory.createNodeArray([ ...consumerMembers, ...constructionMembers ]), consumerMembers)
@@ -663,7 +672,7 @@ function createConstructionMembers(
     ]
 }
 
-function isConstructionBaseOptIn(
+export function isConstructionBaseOptIn(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     baseType: ts.ExpressionWithTypeArguments | undefined,

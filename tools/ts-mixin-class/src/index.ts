@@ -1,6 +1,7 @@
 import type * as ts from "typescript"
 import type { ProgramTransformerExtras } from "ts-patch"
-import { expandConsumerClass, consumedMixins } from "./consumer-expand.js"
+import { expandConsumerClass, consumedMixins, isConstructionBaseOptIn } from "./consumer-expand.js"
+import { rewritePublicOnlyUndefinedInitializerClass } from "./construction-initializers.js"
 import { buildFileMixinContext } from "./context.js"
 import { collectMixinDecoratorImports, hasMixinDecorator } from "./decorators.js"
 import { createMixinDeclarationDiagnosticAliases } from "./expand-util.js"
@@ -10,6 +11,7 @@ import {
     classStaticsName,
     defaultTransformOptions,
     defineMixinClassName,
+    extendsClause,
     metadataBaseImportName,
     metadataBaseLocalName,
     mixinChainName,
@@ -59,7 +61,10 @@ function resolveTransformOptions(config: MixinClassTransformerConfig): Transform
         decoratorName        : config.decoratorName ?? defaultTransformOptions.decoratorName,
         sourceView           : false,
         staticCollisionCheck : normalizeStaticCollisionCheck(config.staticCollisionCheck),
-        constructionConfig   : config.constructionConfig ?? defaultTransformOptions.constructionConfig
+        constructionConfig   : config.constructionConfig ?? defaultTransformOptions.constructionConfig,
+        allowUndefinedForRequiredProperties :
+            config.allowUndefinedForRequiredProperties ??
+            defaultTransformOptions.allowUndefinedForRequiredProperties
     }
 }
 
@@ -251,6 +256,24 @@ export function transformSourceFile(
             if (consumedMixins(tsInstance, statement, context).length > 0) {
                 expandedAnything = true
                 return expandConsumerClass(tsInstance, sourceFile, statement, context, resolvedOptions)
+            }
+
+            if (isConstructionBaseOptIn(
+                tsInstance,
+                sourceFile,
+                extendsClause(tsInstance, statement)?.types[0],
+                resolvedOptions
+            )) {
+                const rewrittenStatement = rewritePublicOnlyUndefinedInitializerClass(
+                    tsInstance,
+                    statement,
+                    resolvedOptions
+                )
+
+                if (rewrittenStatement !== statement) {
+                    expandedAnything = true
+                    return [ rewrittenStatement ]
+                }
             }
         }
 

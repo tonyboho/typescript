@@ -453,6 +453,7 @@ it("tsserver semantic diagnostics stay clean for fixture-suite runtime tests", a
     const sourceDirectory  = path.join(fixtureDirectory, "src")
     const sourceFiles      = (await readdir(sourceDirectory))
         .filter((fileName) => fileName.endsWith(".t.ts"))
+        .filter((fileName) => !fileName.startsWith("construction-allow-undefined-required"))
         .filter((fileName) => !fileName.startsWith("construction-instance-type"))
         .map((fileName) => path.join(sourceDirectory, fileName))
 

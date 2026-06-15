@@ -191,6 +191,51 @@ extends `Base`.
   are required.
 - `instance-type` uses the broader `Partial<Consumer<T>>` shape.
 
+
+
+### Initializing required properties
+
+Required `public-only` properties sometimes need an own runtime slot before a real value
+is known. For example, a class may want to keep object shapes stable but cannot use a
+neutral value like `0` or `""`.
+
+The `allowUndefinedForRequiredProperties` transformer option allows this pattern for
+required public construction properties:
+
+```json
+{
+    "compilerOptions": {
+        "plugins": [
+            {
+                "transform": "ts-mixin-class",
+                "transformProgram": true,
+                "allowUndefinedForRequiredProperties": true
+            }
+        ]
+    }
+}
+```
+
+With that option enabled, the transformer accepts:
+
+```ts
+class User extends Base {
+    public id: string = undefined
+}
+
+const user = User.new({ id : "42" })
+
+const id: string = user.id
+```
+
+The property type is still `string`; it is not widened to `string | undefined`. Internally
+the initializer is treated like `undefined!`, so the runtime value is `undefined` while
+the declared property type remains strict. This option only applies to required
+`public-only` construction properties. Optional fields, non-public fields, static fields,
+and `constructionConfig: "instance-type"` keep normal TypeScript checking.
+
+### Initializing with generics
+
 Generic consumers can also use `Base.new(config)`. The generated static adapter keeps
 generic parameters, so the type can be written explicitly or inferred from the config
 object:
@@ -218,12 +263,6 @@ const inferred = ConfiguredBox.new({
 const numericValue: number = explicit.value
 const stringValue: string = inferred.value
 ```
-
-`Config<this>` is intentionally a broader helper than the generated `new(...)` config
-type. It is useful for implementing `initialize`, but it cannot see AST-only information
-such as “this field was explicitly marked `public`” or whether a property came from the
-generated `public-only` config list. The strict required/optional contract is enforced at
-the `new(...)` call site.
 
 ## Runtime Metadata
 
@@ -268,6 +307,13 @@ type annotations. The transformer has to generate interface members and declarat
 output before relying on inferred implementation details. In ordinary classes TypeScript
 can infer public member types from initializers and method bodies, but mixins need a
 stable AST-level public surface that can be copied into generated declarations.
+
+`Config<this>` is intentionally a broader helper than the generated `new(...)` config
+type. It is useful for implementing `initialize`, but it cannot see AST-only information
+such as “this field was explicitly marked `public`” or whether a property came from the
+generated `public-only` config list. The strict required/optional contract is enforced at
+the `new(...)` call site.
+
 
 ## Future Work
 

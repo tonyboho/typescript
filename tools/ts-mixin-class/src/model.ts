@@ -8,7 +8,8 @@ export type MixinClassTransformerConfig = PluginConfig & {
     decoratorName? : string,
     mode? : MixinClassTransformerMode,
     staticCollisionCheck? : StaticCollisionCheckMode | boolean,
-    constructionConfig? : ConstructionConfigMode
+    constructionConfig? : ConstructionConfigMode,
+    allowUndefinedForRequiredProperties? : boolean
 }
 
 export type MixinClassTransformerMode = "emit" | "ide"
@@ -20,7 +21,8 @@ export type TransformOptions = {
     decoratorName : string,
     sourceView : boolean,
     staticCollisionCheck : StaticCollisionCheckMode,
-    constructionConfig : ConstructionConfigMode
+    constructionConfig : ConstructionConfigMode,
+    allowUndefinedForRequiredProperties : boolean
 }
 
 export type MixinDecoratorImports = {
@@ -114,11 +116,12 @@ export class DependencyLinearizationError extends Error {
 }
 
 export const defaultTransformOptions: TransformOptions = {
-    packageName          : "ts-mixin-class",
-    decoratorName        : "mixin",
-    sourceView           : false,
-    staticCollisionCheck : "never",
-    constructionConfig   : "public-only"
+    packageName                                : "ts-mixin-class",
+    decoratorName                              : "mixin",
+    sourceView                                 : false,
+    staticCollisionCheck                       : "never",
+    constructionConfig                         : "public-only",
+    allowUndefinedForRequiredProperties : false
 }
 
 export const anyConstructorName = "AnyConstructor"

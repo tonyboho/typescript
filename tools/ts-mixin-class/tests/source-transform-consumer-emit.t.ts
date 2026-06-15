@@ -240,3 +240,37 @@ it("can use instance-type construction config mode", async (t: Test) => {
     t.notMatch(printed, "Pick<Consumer<T>",
         "Instance-type construction config mode skips static public-property collection")
 })
+
+it("can emit undefined non-null initializers for public-only construction config fields", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base, mixin } from "ts-mixin-class"
+
+        class ShapeBase extends Base {
+            public baseValue: number = undefined
+        }
+
+        @mixin()
+        class ShapeMixin {
+            public mixinValue: string = undefined
+        }
+
+        class ShapeConsumer extends ShapeBase implements ShapeMixin {
+            public ownValue: boolean = undefined
+            skippedValue: number = undefined
+        }
+    `), {
+        allowUndefinedForRequiredProperties : true
+    })
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.match(printed, "public baseValue: number = undefined!",
+        "Base public-only config field gets a local undefined non-null initializer")
+    t.match(printed, "public mixinValue: string = undefined!",
+        "Mixin public-only config field gets a local undefined non-null initializer")
+    t.match(printed, "public ownValue: boolean = undefined!",
+        "Consumer public-only config field gets a local undefined non-null initializer")
+    t.match(printed, "skippedValue: number = undefined",
+        "Non-public field keeps the original strict initializer")
+    t.notMatch(printed, "number | undefined",
+        "Declared property types are not widened")
+})

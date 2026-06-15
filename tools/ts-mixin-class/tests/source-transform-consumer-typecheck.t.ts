@@ -230,6 +230,121 @@ it("consumer constructor without explicit base typechecks after synthetic super 
     t.expect(diagnostics).toEqual([])
 })
 
+it("public-only construction config rejects undefined initializers by default", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base, mixin } from "ts-mixin-class"
+
+        class ShapeBase extends Base {
+            public baseValue: number = undefined
+        }
+
+        @mixin()
+        class ShapeMixin {
+            public mixinValue: string = undefined
+        }
+
+        class ShapeConsumer extends ShapeBase implements ShapeMixin {
+            public ownValue: boolean = undefined
+        }
+
+        void ShapeConsumer
+    `))
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.match(messages, "TS2322", "Plain undefined initializer is still rejected without opt-in")
+    t.match(messages, "Type 'undefined' is not assignable to type 'number'",
+        "Base public-only config field keeps the original strict initializer diagnostic")
+    t.match(messages, "Type 'undefined' is not assignable to type 'string'",
+        "Mixin public-only config field keeps the original strict initializer diagnostic")
+    t.match(messages, "Type 'undefined' is not assignable to type 'boolean'",
+        "Consumer public-only config field keeps the original strict initializer diagnostic")
+})
+
+it("can allow undefined initializers for public-only construction config fields", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base, mixin } from "ts-mixin-class"
+
+        class ShapeBase extends Base {
+            public baseValue: number = undefined
+            public optionalBaseValue?: number = undefined
+            baseSkippedValue: number = undefined
+        }
+
+        @mixin()
+        class ShapeMixin {
+            public mixinValue: string = undefined
+        }
+
+        class ShapeConsumer extends ShapeBase implements ShapeMixin {
+            public ownValue: boolean = undefined
+
+            constructor () {
+                super()
+            }
+        }
+
+        const constructed = ShapeConsumer.new({
+            baseValue  : 1,
+            mixinValue : "value",
+            ownValue   : true
+        })
+
+        const baseValue: number = constructed.baseValue
+        const mixinValue: string = constructed.mixinValue
+        const ownValue: boolean = constructed.ownValue
+
+        // @ts-expect-error public-only config field type stays number, not number | undefined.
+        const stillStrict: undefined = constructed.baseValue
+
+        void [ baseValue, mixinValue, ownValue, stillStrict ]
+    `), {
+        allowUndefinedForRequiredProperties : true
+    })
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+
+    t.equal(diagnostics.length, 1, "Only the non-public field keeps the strict undefined initializer diagnostic")
+    t.match(diagnostics[0], "TS2322", "The remaining diagnostic is the assignability error")
+    t.match(diagnostics[0], "Type 'undefined' is not assignable to type 'number'",
+        "The remaining diagnostic comes from the intentionally skipped field")
+})
+
+it("does not allow undefined initializers in instance-type construction config mode", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { Base, mixin } from "ts-mixin-class"
+
+        class ShapeBase extends Base {
+            public baseValue: number = undefined
+        }
+
+        @mixin()
+        class ShapeMixin {
+            public mixinValue: string = undefined
+        }
+
+        class ShapeConsumer extends ShapeBase implements ShapeMixin {
+            public ownValue: boolean = undefined
+        }
+
+        void ShapeConsumer
+    `), {
+        allowUndefinedForRequiredProperties : true,
+        constructionConfig                  : "instance-type"
+    })
+
+    const diagnostics = typecheckText(printSourceFile(ts, transformedFile))
+    const messages = diagnostics.join("\n")
+
+    t.match(messages, "Type 'undefined' is not assignable to type 'number'",
+        "Base field is still checked in instance-type mode")
+    t.match(messages, "Type 'undefined' is not assignable to type 'string'",
+        "Mixin field is still checked in instance-type mode")
+    t.match(messages, "Type 'undefined' is not assignable to type 'boolean'",
+        "Consumer field is still checked in instance-type mode")
+})
+
 it("instance-type construction config mode preserves generic new inference without public-only filtering", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { Base, mixin } from "ts-mixin-class"
