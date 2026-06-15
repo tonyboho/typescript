@@ -4,12 +4,16 @@ import { isPackageImport } from "./decorators.js"
 import {
     cloneExpressionWithTypeArguments,
     consumerHeritageClauses,
+    createDiagnosticLiteralType,
     createSourceViewConsumerBaseHeadType,
+    expressionToEntityName,
+    heritageTypeText,
     heritageTypeToTypeReference,
     MixinTransformError,
     mixinValueIdentifier
 } from "./expand-util.js"
 import { linearizeDependencies } from "./linearization.js"
+import { createStaticCollisionValidations } from "./static-collisions.js"
 import {
     anyConstructorName,
     classStaticsName,
@@ -26,8 +30,6 @@ import {
     mixinChainName,
     propertyNameText,
     requiredBaseType,
-    staticNeverConflictKeysName,
-    staticStrictConflictKeysName,
     uniqueConfigProperties,
     type ConfigProperty,
     type ConstructionConfigMode,
@@ -35,8 +37,6 @@ import {
     type RequiredBaseRequirement,
     type RequiredBaseValidation,
     type ResolvedMixinRef,
-    type StaticCollisionCheckMode,
-    type StaticSource,
     type TransformOptions
 } from "./model.js"
 import {
@@ -1274,224 +1274,6 @@ function missingRuntimeImportDiagnosticMessage(
         `import ${mixinRef.className} as a value, or remove ${mixinRef.className} from the implements list.`
 }
 
-function createStaticCollisionValidations(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    declaration: ts.ClassDeclaration,
-    extendsType: ts.ExpressionWithTypeArguments | undefined,
-    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
-    emptyBaseName: string | undefined,
-    mixinRefs: ResolvedMixinRef[],
-    generatedRange: ts.TextRange,
-    mode: StaticCollisionCheckMode,
-    sourceView = false
-): RequiredBaseValidation[] {
-    if (mode === false) {
-        return []
-    }
-
-    const sources = [
-        ...consumerBaseStaticSources(tsInstance, sourceFile, extendsType, implicitRequiredBase, emptyBaseName),
-        ...mixinRefs.flatMap((ref) => {
-            return mixinStaticSource(tsInstance, ref)
-        })
-    ]
-    const validations: RequiredBaseValidation[] = []
-
-    for (let leftIndex = 0; leftIndex < sources.length; leftIndex++) {
-        for (let rightIndex = leftIndex + 1; rightIndex < sources.length; rightIndex++) {
-            const left = sources[leftIndex]
-            const right = sources[rightIndex]
-            const knownOverlap = knownStaticNameOverlap(left, right)
-
-            if (sourceView && knownOverlap === undefined) {
-                continue
-            }
-
-            if (knownOverlap !== undefined && knownOverlap.length === 0) {
-                continue
-            }
-
-            validations.push({
-                typeParameter : preserveTextRange(tsInstance, tsInstance.factory.createTypeParameterDeclaration(
-                    undefined,
-                    uniqueGeneratedTypeParameterName(declaration, `__mixinStaticCollision${validations.length}`),
-                    tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
-                    undefined
-                ), generatedRange),
-                typeArgument : preserveTextRange(
-                    tsInstance,
-                    sourceView && knownOverlap !== undefined
-                        ? createDiagnosticLiteralType(tsInstance, staticCollisionDiagnosticMessage(
-                            declaration,
-                            left,
-                            right,
-                            knownOverlap
-                        ))
-                        : createStaticCollisionDiagnosticType(
-                            tsInstance,
-                            declaration,
-                            left,
-                            right,
-                            knownOverlap,
-                            mode
-                        ),
-                    generatedRange
-                )
-            })
-        }
-    }
-
-    return validations
-}
-
-function consumerBaseStaticSources(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    extendsType: ts.ExpressionWithTypeArguments | undefined,
-    implicitRequiredBase: ts.ExpressionWithTypeArguments | undefined,
-    emptyBaseName: string | undefined
-): StaticSource[] {
-    const baseType = extendsType ?? implicitRequiredBase
-
-    if (baseType === undefined) {
-        if (emptyBaseName === undefined) {
-            return []
-        }
-
-        return [ {
-            name        : emptyBaseName,
-            typeNode    : tsInstance.factory.createTypeQueryNode(tsInstance.factory.createIdentifier(emptyBaseName)),
-            staticNames : new Set()
-        } ]
-    }
-
-    return [ {
-        name        : heritageTypeText(tsInstance, sourceFile, baseType),
-        typeNode    : tsInstance.factory.createTypeQueryNode(expressionToEntityName(tsInstance, baseType.expression)),
-        staticNames : staticNamesOfBaseExpression(tsInstance, sourceFile, baseType.expression)
-    } ]
-}
-
-function mixinStaticSource(
-    tsInstance: TypeScript,
-    ref: ResolvedMixinRef
-): StaticSource[] {
-    if (ref.localValueName === undefined) {
-        return []
-    }
-
-    return [ {
-        name        : ref.className,
-        typeNode    : tsInstance.factory.createTypeQueryNode(tsInstance.factory.createIdentifier(ref.localValueName)),
-        staticNames : ref.declaration === undefined ? undefined : staticMemberNames(tsInstance, ref.declaration)
-    } ]
-}
-
-function staticNamesOfBaseExpression(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    expression: ts.Expression
-): Set<string> | undefined {
-    if (!tsInstance.isIdentifier(expression)) {
-        return undefined
-    }
-
-    const declaration = sourceFile.statements.find((statement): statement is ts.ClassDeclaration => {
-        return tsInstance.isClassDeclaration(statement) && statement.name?.text === expression.text
-    })
-
-    return declaration === undefined ? undefined : staticMemberNames(tsInstance, declaration)
-}
-
-function staticMemberNames(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
-): Set<string> {
-    const names = new Set<string>()
-
-    for (const member of declaration.members) {
-        if (!hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) || !isNamedClassElement(member)) {
-            continue
-        }
-
-        if (tsInstance.isIdentifier(member.name) ||
-            tsInstance.isStringLiteral(member.name) ||
-            tsInstance.isNumericLiteral(member.name)
-        ) {
-            names.add(member.name.text)
-        }
-    }
-
-    return names
-}
-
-function knownStaticNameOverlap(
-    left: StaticSource,
-    right: StaticSource
-): string[] | undefined {
-    if (left.staticNames === undefined || right.staticNames === undefined) {
-        return undefined
-    }
-
-    return [ ...left.staticNames ].filter((name) => right.staticNames?.has(name) === true)
-}
-
-function createStaticCollisionDiagnosticType(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    left: StaticSource,
-    right: StaticSource,
-    knownOverlap: string[] | undefined,
-    mode: Exclude<StaticCollisionCheckMode, false>
-): ts.TypeNode {
-    const factory = tsInstance.factory
-
-    return factory.createConditionalTypeNode(
-        factory.createTupleTypeNode([
-            factory.createTypeReferenceNode(staticConflictKeysName(mode), [
-                cloneNode(tsInstance, left.typeNode),
-                cloneNode(tsInstance, right.typeNode)
-            ])
-        ]),
-        factory.createTupleTypeNode([
-            factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword)
-        ]),
-        factory.createKeywordTypeNode(tsInstance.SyntaxKind.NeverKeyword),
-        factory.createLiteralTypeNode(factory.createStringLiteral(
-            staticCollisionDiagnosticMessage(declaration, left, right, knownOverlap)
-        ))
-    )
-}
-
-function createDiagnosticLiteralType(
-    tsInstance: TypeScript,
-    message: string
-): ts.LiteralTypeNode {
-    return tsInstance.factory.createLiteralTypeNode(tsInstance.factory.createStringLiteral(message))
-}
-
-function staticConflictKeysName(mode: Exclude<StaticCollisionCheckMode, false>): string {
-    return mode === "strict" ? staticStrictConflictKeysName : staticNeverConflictKeysName
-}
-
-function staticCollisionDiagnosticMessage(
-    declaration: ts.ClassDeclaration,
-    left: StaticSource,
-    right: StaticSource,
-    knownOverlap: string[] | undefined
-): string {
-    const consumerName = declaration.name?.text ?? "<anonymous consumer>"
-    const names = knownOverlap === undefined || knownOverlap.length === 0
-        ? "one or more static members"
-        : knownOverlap.join(", ")
-
-    return "Static mixin member collision. " +
-        `Consumer ${consumerName} combines ${left.name} and ${right.name}, which both declare incompatible static member(s): ${names}. ` +
-        "Runtime inheritance can only keep one implementation for a static name, so this would make the generated class misleadingly typed. " +
-        "Fix: rename one static member, make the static member types compatible, or remove one mixin from the implements list."
-}
-
 function appendRequiredBaseValidationTypeParameters(
     tsInstance: TypeScript,
     consumerTypeParameters: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
@@ -1667,26 +1449,6 @@ function requiredBaseDiagnosticMessage(
         `or remove ${mixinRef.className} from the implements list.`
 }
 
-function heritageTypeText(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    heritageType: ts.ExpressionWithTypeArguments
-): string {
-    if (heritageType.pos >= 0 && heritageType.end >= 0) {
-        return heritageType.getText(sourceFile)
-    }
-
-    if (tsInstance.isIdentifier(heritageType.expression) || tsInstance.isPropertyAccessExpression(heritageType.expression)) {
-        const typeArguments = heritageType.typeArguments === undefined || heritageType.typeArguments.length === 0
-            ? ""
-            : "<...>"
-
-        return `${heritageType.expression.getText(sourceFile)}${typeArguments}`
-    }
-
-    return "<base class>"
-}
-
 function runtimeMixinClassRequiredBaseInstanceType(
     tsInstance: TypeScript,
     valueName: string
@@ -1802,19 +1564,4 @@ function isSupportedBaseExpression(tsInstance: TypeScript, expression: ts.Expres
     return tsInstance.isPropertyAccessExpression(expression) &&
         tsInstance.isIdentifier(expression.name) &&
         isSupportedBaseExpression(tsInstance, expression.expression)
-}
-
-function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expression): ts.EntityName {
-    if (tsInstance.isIdentifier(expression)) {
-        return tsInstance.factory.createIdentifier(expression.text)
-    }
-
-    if (tsInstance.isPropertyAccessExpression(expression) && tsInstance.isIdentifier(expression.name)) {
-        return tsInstance.factory.createQualifiedName(
-            expressionToEntityName(tsInstance, expression.expression),
-            expression.name.text
-        )
-    }
-
-    throw new Error("Unsupported base class expression of a mixin consumer")
 }

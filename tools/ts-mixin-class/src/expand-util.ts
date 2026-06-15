@@ -82,6 +82,33 @@ export function heritageTypeToTypeReference(
     )
 }
 
+export function heritageTypeText(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    heritageType: ts.ExpressionWithTypeArguments
+): string {
+    if (heritageType.pos >= 0 && heritageType.end >= 0) {
+        return heritageType.getText(sourceFile)
+    }
+
+    if (tsInstance.isIdentifier(heritageType.expression) || tsInstance.isPropertyAccessExpression(heritageType.expression)) {
+        const typeArguments = heritageType.typeArguments === undefined || heritageType.typeArguments.length === 0
+            ? ""
+            : "<...>"
+
+        return `${heritageType.expression.getText(sourceFile)}${typeArguments}`
+    }
+
+    return "<base class>"
+}
+
+export function createDiagnosticLiteralType(
+    tsInstance: TypeScript,
+    message: string
+): ts.LiteralTypeNode {
+    return tsInstance.factory.createLiteralTypeNode(tsInstance.factory.createStringLiteral(message))
+}
+
 export function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expression): ts.EntityName {
     if (tsInstance.isIdentifier(expression)) {
         return tsInstance.factory.createIdentifier(expression.text)
