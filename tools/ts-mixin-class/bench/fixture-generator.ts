@@ -9,13 +9,15 @@ export type BenchmarkScenario = {
     size              : number,
     graph             : BenchmarkGraphKind,
     members           : BenchmarkMemberKind,
+    propertyCount     : number,
     consumerLeafCount : number
 }
 
 export type BenchmarkFixture = {
     directory    : string,
     tsconfigFile : string,
-    consumerFile : string
+    consumerFile : string,
+    mixinFiles   : string[]
 }
 
 export type CreateBenchmarkFixtureOptions = {
@@ -56,32 +58,43 @@ export async function createBenchmarkFixture(options: CreateBenchmarkFixtureOpti
     return {
         directory,
         tsconfigFile : path.join(directory, "tsconfig.json"),
-        consumerFile : path.join(directory, "src", "consumer.ts")
+        consumerFile : path.join(directory, "src", "consumer.ts"),
+        mixinFiles   : Array.from({ length : options.scenario.size }, (_, index) => {
+            return path.join(directory, "src", `${mixinModuleName(index)}.ts`)
+        })
     }
 }
 
-export function defaultCompileScenarios(): BenchmarkScenario[] {
+export function defaultCompileScenarios(propertyCount = 1): BenchmarkScenario[] {
     return [ 25, 100, 250 ].map((size) => {
-        return {
-            name              : `binary-tree-${size}-public-properties`,
-            size,
-            graph             : "binary-tree",
-            members           : "public-properties",
-            consumerLeafCount : Math.min(8, Math.max(1, Math.ceil(size / 32)))
-        }
+        return binaryTreePublicPropertiesScenario(size, propertyCount)
     })
 }
 
-export function defaultTsServerScenarios(): BenchmarkScenario[] {
+export function defaultTsServerScenarios(propertyCount = 1): BenchmarkScenario[] {
     return [ 25, 100 ].map((size) => {
-        return {
-            name              : `binary-tree-${size}-public-properties`,
-            size,
-            graph             : "binary-tree",
-            members           : "public-properties",
-            consumerLeafCount : Math.min(8, Math.max(1, Math.ceil(size / 32)))
-        }
+        return binaryTreePublicPropertiesScenario(size, propertyCount)
     })
+}
+
+export function defaultEditScenarios(propertyCount = 1): BenchmarkScenario[] {
+    return [ 25, 100 ].map((size) => {
+        return binaryTreePublicPropertiesScenario(size, propertyCount)
+    })
+}
+
+export function binaryTreePublicPropertiesScenario(
+    size: number,
+    propertyCount: number
+): BenchmarkScenario {
+    return {
+        name              : `binary-tree-${size}-public-properties-${propertyCount}-props`,
+        size,
+        graph             : "binary-tree",
+        members           : "public-properties",
+        propertyCount,
+        consumerLeafCount : Math.min(8, Math.max(1, Math.ceil(size / 32)))
+    }
 }
 
 export function scenarioDirectoryName(scenario: BenchmarkScenario): string {
@@ -101,11 +114,15 @@ function generateSourceFiles(scenario: BenchmarkScenario): SourceFile[] {
         throw new Error(`Unsupported benchmark member kind: ${scenario.members}`)
     }
 
+    if (scenario.propertyCount < 1) {
+        throw new Error(`Benchmark scenario ${scenario.name} must contain at least one property per mixin`)
+    }
+
     return [
         ...Array.from({ length : scenario.size }, (_, index) => {
             return {
                 fileName : `src/${mixinModuleName(index)}.ts`,
-                text     : mixinSource(index)
+                text     : mixinSource(scenario, index)
             }
         }),
         {
@@ -115,7 +132,7 @@ function generateSourceFiles(scenario: BenchmarkScenario): SourceFile[] {
     ]
 }
 
-function mixinSource(index: number): string {
+function mixinSource(scenario: BenchmarkScenario, index: number): string {
     const parentIndex = index === 0 ? undefined : Math.floor((index - 1) / 2)
     const imports = [
         `import { mixin } from "ts-mixin-class"`,
@@ -126,16 +143,15 @@ function mixinSource(index: number): string {
     const implementsClause = parentIndex === undefined
         ? ""
         : ` implements ${mixinClassName(parentIndex)}`
+    const properties = Array.from({ length : scenario.propertyCount }, (_, propertyIndex) => {
+        return `    value${index}_${propertyIndex}: number = ${index * 1000 + propertyIndex}`
+    })
 
     return `${imports.join("\n")}
 
 @mixin()
 export class ${mixinClassName(index)}${implementsClause} {
-    value${index}: number = ${index}
-
-    getValue${index}(): number {
-        return this.value${index}
-    }
+${properties.join("\n")}
 }
 `
 }
@@ -146,8 +162,10 @@ function consumerSource(scenario: BenchmarkScenario): string {
         return `import { ${mixinClassName(index)} } from "./${mixinModuleName(index)}.js"`
     })
     const implementsClause = leafIndexes.map((index) => mixinClassName(index)).join(", ")
-    const checks = leafIndexes.map((index) => {
-        return `consumer.getValue${index}()`
+    const checks = leafIndexes.flatMap((index) => {
+        return Array.from({ length : scenario.propertyCount }, (_, propertyIndex) => {
+            return `consumer.value${index}_${propertyIndex}`
+        })
     })
 
     return `${imports.join("\n")}

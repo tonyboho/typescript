@@ -22,6 +22,7 @@
     "scripts": {
         "bench": "pnpm run build && node dist/bench/benchmark.suite.js all",
         "bench:compile": "pnpm run build && node dist/bench/benchmark.suite.js compile",
+        "bench:edit": "pnpm run build && node dist/bench/benchmark.suite.js edit",
         "bench:tsserver": "pnpm run build && node dist/bench/benchmark.suite.js tsserver",
         "build": "tsc -p tsconfig.json",
         "pretest": "pnpm run build",
