@@ -19,10 +19,12 @@
         "sourceMap": false
     },
     "include": [
+        "bench/**/*.ts",
         "src/**/*.ts",
         "tests/**/*.ts"
     ],
     "exclude": [
+        "bench/fixtures/generated/**/*.ts",
         "tests/declaration-fixture-suite/**/*.ts",
         "tests/fixture-suite/**/*.ts"
     ]

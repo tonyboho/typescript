@@ -20,6 +20,8 @@
         "README.md"
     ],
     "scripts": {
+        "bench": "pnpm run bench:compile",
+        "bench:compile": "pnpm run build && node dist/bench/benchmark.suite.js",
         "build": "tsc -p tsconfig.json",
         "pretest": "pnpm run build",
         "test": "siesta dist/tests",

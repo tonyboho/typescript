@@ -1,3 +1,4 @@
 /dist
 /node_modules
+/bench/fixtures/generated
 /tests/fixture-suite/tsserver.log
