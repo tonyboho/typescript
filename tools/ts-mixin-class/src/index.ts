@@ -249,14 +249,6 @@ export function transformSourceFile(
         tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions, crossFile, facts
     )
 
-    const hasAnonymousMixinDiagnostics = facts.classes.some((classFacts) => {
-        return classFacts.name === undefined && classFacts.hasMixinDecorator
-    })
-    const hasAnonymousConsumerDiagnostics = facts.classes.some((classFacts) => {
-        return classFacts.name === undefined &&
-            localMixinHeritageTypes(tsInstance, classFacts.declaration, context).length > 0
-    })
-
     let expandedAnything = false
     let needsGeneratedImports = false
 
