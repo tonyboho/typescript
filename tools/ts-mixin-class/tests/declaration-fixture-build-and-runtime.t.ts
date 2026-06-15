@@ -35,6 +35,30 @@ it("builds and runs the declaration fixture suite", async (t: Test) => {
 
     t.match(mixinsDeclaration, "export declare const __SourceClass1$mixin", "Named mixin factory is exported for downstream generated imports")
     t.match(mixinsDeclaration, "export declare const SourceClass1", "Named mixin runtime value is exported")
+
+    // Lock both value-cast forms in the emitted declarations: non-generic mixins
+    // use the factored MixinClassValue alias (with the required base as the third
+    // argument when present); generic mixins keep the inline constructor cast.
+    t.match(
+        mixinsDeclaration,
+        "export declare const ContractMixin: MixinClassValue<ContractMixin, typeof __ContractMixin$mixin> & RuntimeMixinClass;",
+        "Non-generic mixin value uses the factored MixinClassValue alias"
+    )
+    t.match(
+        mixinsDeclaration,
+        "export declare const RequiredMixin: MixinClassValue<RequiredMixin, typeof __RequiredMixin$mixin, RequiredBase> & RuntimeMixinClass<RequiredBase>;",
+        "Non-generic required-base mixin keeps the required base in MixinClassValue and RuntimeMixinClass"
+    )
+    t.match(
+        mixinsDeclaration,
+        "export declare const SourceClass1: (new <A1>(...args: any[]) => SourceClass1<A1>) &",
+        "Generic mixin keeps the inline constructor cast"
+    )
+    t.notMatch(
+        mixinsDeclaration,
+        "SourceClass1: MixinClassValue",
+        "Generic mixin is not collapsed into the MixinClassValue alias"
+    )
     t.match(defaultMixinDeclaration, "export declare const __DefaultMixin$mixin", "Default mixin factory is exported for downstream generated imports")
     t.match(defaultMixinDeclaration, "declare const DefaultMixin", "Default mixin runtime value is declared")
     t.match(defaultMixinDeclaration, "export default DefaultMixin", "Default mixin declaration preserves default export shape")
