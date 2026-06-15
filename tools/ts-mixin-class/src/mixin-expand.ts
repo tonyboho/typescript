@@ -36,7 +36,8 @@ import {
 } from "./mixin-diagnostics.js"
 import {
     localMixinHeritageTypes,
-    localMixinRefs
+    localMixinRefs,
+    reduceTransitiveMixinHeritageTypes
 } from "./mixin-refs.js"
 import {
     cloneNode,
@@ -104,7 +105,7 @@ export function expandMixinClass(
         exportModifiers,
         ref.className,
         typeParameters,
-        interfaceHeritageClauses(tsInstance, declaration),
+        interfaceHeritageClauses(tsInstance, declaration, context),
         interfaceMembers
     ), interfaceDeclarationRange(declaration, interfaceMembers))
 
@@ -240,6 +241,7 @@ function expandSourceViewMixinClass(
 
     const requiredBase = requiredBaseType(tsInstance, declaration)
     const dependencyHeritage = localMixinHeritageTypes(tsInstance, declaration, context)
+    const reducedDependencyHeritage = reduceTransitiveMixinHeritageTypes(tsInstance, context, dependencyHeritage)
     const generatedHeritageRange = generatedTextRange(
         sourceFile,
         declaration.heritageClauses?.pos ?? declaration.typeParameters?.end ?? declaration.name.end
@@ -280,7 +282,7 @@ function expandSourceViewMixinClass(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
                 ...(requiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, requiredBase) ]),
-                ...dependencyHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+                ...reducedDependencyHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
             ]
         ) ],
         []
@@ -436,12 +438,13 @@ function createRuntimeMixinClassType(
 
 function interfaceHeritageClauses(
     tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
+    declaration: ts.ClassDeclaration,
+    context: FileMixinContext
 ): ts.HeritageClause[] | undefined {
     const requiredBase = requiredBaseType(tsInstance, declaration)
     const types = [
         ...(requiredBase === undefined ? [] : [ cloneExpressionWithTypeArguments(tsInstance, requiredBase) ]),
-        ...implementsTypes(tsInstance, declaration)
+        ...reduceTransitiveMixinHeritageTypes(tsInstance, context, implementsTypes(tsInstance, declaration))
     ]
 
     if (types.length === 0) {

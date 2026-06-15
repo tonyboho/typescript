@@ -19,9 +19,11 @@ import {
     defaultCompileScenarios,
     defaultPreviousWindowGraphOptions,
     defaultTsServerScenarios,
-    previousWindowPublicPropertiesScenario,
+    previousWindowPropertiesScenario,
     scenarioDirectoryName,
     type BenchmarkFixture,
+    type BenchmarkConstructionMode,
+    type BenchmarkPropertyVisibility,
     type BenchmarkScenario,
     type PreviousWindowGraphOptions
 } from "./fixture-generator.js"
@@ -98,6 +100,8 @@ const mode = benchmarkMode()
 const iterations = integerEnv("TS_MIXIN_BENCH_ITERATIONS", 3)
 const warmups = integerEnv("TS_MIXIN_BENCH_WARMUPS", 1)
 const propertyCount = integerEnv("TS_MIXIN_BENCH_PROPERTY_COUNT", 1)
+const propertyVisibility = benchmarkPropertyVisibility()
+const constructionMode = benchmarkConstructionMode()
 const editCount = integerEnv("TS_MIXIN_BENCH_EDIT_COUNT", 8)
 const transformPassIterations = integerEnv("TS_MIXIN_BENCH_TRANSFORM_ITERATIONS", 80)
 const tableMode = benchmarkTableMode()
@@ -105,19 +109,7 @@ const graphOptions = previousWindowGraphOptions()
 const outputFile = process.env.TS_MIXIN_BENCH_OUTPUT
 const reportLines: string[] = []
 
-report(`ts-mixin-class benchmark suite`)
-report(`mode=${mode}`)
-report([
-    `iterations=${iterations}`,
-    `warmups=${warmups}`,
-    `propertyCount=${propertyCount}`,
-    `deps=${graphOptions.minDependencyCount}-${graphOptions.maxDependencyCount}`,
-    `window=${graphOptions.dependencyWindow}`,
-    `transformInnerIterations=${transformPassIterations}`,
-    `table=${tableMode}`,
-    `seed=${graphOptions.seed}`
-].join(" "))
-report("")
+printSuiteHeader()
 
 if (mode === "all" || mode === "transform") {
     runTransformPassBenchmark()
@@ -142,8 +134,6 @@ function runTransformPassBenchmark(): void {
 
     for (const scenario of transformPassScenarios()) {
         const fixture = createTransformPassFixture(scenario)
-
-        report(`transform ${scenario.name}`)
 
         for (let index = 0; index < warmups; index++) {
             runTransformPassSample(fixture.sourceFile, transformPassIterations)
@@ -171,8 +161,6 @@ async function runCompileBenchmark(): Promise<void> {
             scenario
         })
 
-        report(`compile ${scenarioDirectoryName(scenario)}`)
-
         for (let index = 0; index < warmups; index++) {
             await runCleanCompile(fixture.tsconfigFile, fixture.directory)
         }
@@ -186,7 +174,7 @@ async function runCompileBenchmark(): Promise<void> {
         results.push({ scenario, durations })
     }
 
-    printResults("Compile benchmark", results)
+    printResults("Compile fixtures", results)
 }
 
 async function runTsServerBenchmark(): Promise<void> {
@@ -198,8 +186,6 @@ async function runTsServerBenchmark(): Promise<void> {
             root : path.join(generatedRoot, "tsserver"),
             scenario
         })
-
-        report(`tsserver ${scenarioDirectoryName(scenario)}`)
 
         for (let index = 0; index < warmups; index++) {
             await runSemanticDiagnosticsRequest(fixture.directory, fixture.consumerFile)
@@ -214,7 +200,7 @@ async function runTsServerBenchmark(): Promise<void> {
         results.push({ scenario, durations })
     }
 
-    printResults("Tsserver semantic diagnostics benchmark", results)
+    printResults("Tsserver diagnostics fixtures", results)
 }
 
 async function runEditBenchmark(): Promise<void> {
@@ -226,8 +212,6 @@ async function runEditBenchmark(): Promise<void> {
             root : path.join(generatedRoot, "edit"),
             scenario
         })
-
-        report(`edit ${scenarioDirectoryName(scenario)} files=${editCount}`)
 
         for (let index = 0; index < warmups; index++) {
             await runEditProcessingRequests(fixture, editCount)
@@ -242,7 +226,7 @@ async function runEditBenchmark(): Promise<void> {
         results.push({ scenario, durations })
     }
 
-    printResults("Tsserver edit processing benchmark", results)
+    printResults("Tsserver edit fixtures", results)
 }
 
 function createTransformPassFixture(scenario: TransformPassScenario): TransformPassFixture {
@@ -527,48 +511,41 @@ function createTsServerSession(fixtureDirectory: string): TsServerSession {
 }
 
 function compileScenarios(): BenchmarkScenario[] {
-    const sizes = process.env.TS_MIXIN_BENCH_SIZES
+    const sizes = scenarioSizes("TS_MIXIN_BENCH_SIZES")
 
-    if (sizes === undefined) {
-        return defaultCompileScenarios(propertyCount, graphOptions)
-    }
-
-    return sizes.split(",")
-        .map((size) => Number.parseInt(size.trim(), 10))
-        .filter((size) => Number.isFinite(size) && size > 0)
-        .map((size) => {
-            return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
+    return sizes === undefined
+        ? defaultCompileScenarios(propertyCount, graphOptions, propertyVisibility, constructionMode)
+        : sizes.map((size) => {
+            return previousWindowPropertiesScenario(size, propertyCount, graphOptions, propertyVisibility, constructionMode)
         })
 }
 
 function tsServerScenarios(): BenchmarkScenario[] {
-    const sizes = process.env.TS_MIXIN_BENCH_TSSERVER_SIZES
+    const sizes = scenarioSizes("TS_MIXIN_BENCH_TSSERVER_SIZES")
 
-    if (sizes === undefined) {
-        return defaultTsServerScenarios(propertyCount, graphOptions)
-    }
-
-    return sizes.split(",")
-        .map((size) => Number.parseInt(size.trim(), 10))
-        .filter((size) => Number.isFinite(size) && size > 0)
-        .map((size) => {
-            return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
+    return sizes === undefined
+        ? defaultTsServerScenarios(propertyCount, graphOptions, propertyVisibility, constructionMode)
+        : sizes.map((size) => {
+            return previousWindowPropertiesScenario(size, propertyCount, graphOptions, propertyVisibility, constructionMode)
         })
 }
 
 function editScenarios(): BenchmarkScenario[] {
-    const sizes = process.env.TS_MIXIN_BENCH_EDIT_SIZES
+    const sizes = scenarioSizes("TS_MIXIN_BENCH_EDIT_SIZES")
 
-    if (sizes === undefined) {
-        return defaultEditScenarios(propertyCount, graphOptions)
-    }
+    return sizes === undefined
+        ? defaultEditScenarios(propertyCount, graphOptions, propertyVisibility, constructionMode)
+        : sizes.map((size) => {
+            return previousWindowPropertiesScenario(size, propertyCount, graphOptions, propertyVisibility, constructionMode)
+        })
+}
 
-    return sizes.split(",")
+function scenarioSizes(specificEnvName: string): number[] | undefined {
+    const sizes = process.env[specificEnvName] ?? process.env.TS_MIXIN_BENCH_SIZES
+
+    return sizes?.split(",")
         .map((size) => Number.parseInt(size.trim(), 10))
         .filter((size) => Number.isFinite(size) && size > 0)
-        .map((size) => {
-            return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
-        })
 }
 
 function transformPassScenarios(): TransformPassScenario[] {
@@ -667,6 +644,28 @@ function benchmarkTableMode(): BenchmarkTableMode {
     throw new Error(`Unknown TS_MIXIN_BENCH_TABLE ${JSON.stringify(modeName)}. Use compact or full.`)
 }
 
+function benchmarkPropertyVisibility(): BenchmarkPropertyVisibility {
+    const visibility = process.env.TS_MIXIN_BENCH_PROPERTY_VISIBILITY ?? "implicit"
+
+    if (visibility === "implicit" || visibility === "public") {
+        return visibility
+    }
+
+    throw new Error(
+        `Unknown TS_MIXIN_BENCH_PROPERTY_VISIBILITY ${JSON.stringify(visibility)}. Use implicit or public.`
+    )
+}
+
+function benchmarkConstructionMode(): BenchmarkConstructionMode {
+    const construction = process.env.TS_MIXIN_BENCH_CONSTRUCTION ?? "plain"
+
+    if (construction === "plain" || construction === "base") {
+        return construction
+    }
+
+    throw new Error(`Unknown TS_MIXIN_BENCH_CONSTRUCTION ${JSON.stringify(construction)}. Use plain or base.`)
+}
+
 function integerEnv(name: string, fallback: number): number {
     const value = process.env[name]
 
@@ -688,13 +687,39 @@ function printResults(title: string, results: BenchmarkResult[]): void {
     }))
 }
 
+function printSuiteHeader(): void {
+    report("ts-mixin-class benchmarks")
+    report([
+        `groups=${mode}`,
+        `samples=${iterations}`,
+        `warmups=${warmups}`,
+        `table=${tableMode}`
+    ].join(" "))
+
+    if (mode === "all" || mode === "transform") {
+        report(`transform-pass: innerIterations=${transformPassIterations}`)
+    }
+
+    if (mode === "all" || mode === "compile" || mode === "edit" || mode === "tsserver") {
+        report([
+            "fixtures:",
+            `construction=${constructionMode}`,
+            `visibility=${propertyVisibility}`,
+            `properties=${propertyCount}`,
+            `deps=${graphOptions.minDependencyCount}-${graphOptions.maxDependencyCount}`,
+            `window=${graphOptions.dependencyWindow}`,
+            `seed=${graphOptions.seed}`
+        ].join(" "))
+    }
+}
+
 function printDurationResults(title: string, results: DurationResult[]): void {
     report("")
     report(title)
 
     if (tableMode === "compact") {
         report([
-            "scenario".padEnd(64),
+            "name".padEnd(64),
             "median".padStart(9)
         ].join(" "))
 
@@ -711,7 +736,7 @@ function printDurationResults(title: string, results: DurationResult[]): void {
     }
 
     report([
-        "scenario".padEnd(64),
+        "name".padEnd(64),
         "min".padStart(9),
         "median".padStart(9),
         "mean".padStart(9),
@@ -735,11 +760,11 @@ function printDurationResults(title: string, results: DurationResult[]): void {
 
 function printTransformPassResults(results: TransformPassResult[]): void {
     report("")
-    report("Transform-pass source-view benchmark")
+    report("Transform-pass source-view")
 
     if (tableMode === "compact") {
         report([
-            "scenario".padEnd(38),
+            "name".padEnd(38),
             "median".padStart(9)
         ].join(" "))
 
@@ -757,7 +782,7 @@ function printTransformPassResults(results: TransformPassResult[]): void {
     }
 
     report([
-        "scenario".padEnd(38),
+        "name".padEnd(38),
         "nodes".padStart(7),
         "min".padStart(9),
         "median".padStart(9),

@@ -6,6 +6,12 @@ The base benchmark suite is the default entry point:
 pnpm run bench
 ```
 
+For output without pnpm's command echo, run:
+
+```bash
+pnpm --silent run bench
+```
+
 It builds the package and prints one transform-pass table plus end-to-end
 fixture tables:
 
@@ -79,12 +85,26 @@ inside each measured sample. Increasing it makes the per-pass timing steadier.
 TS_MIXIN_BENCH_SIZES=10,30
 TS_MIXIN_BENCH_TSSERVER_SIZES=10,30
 TS_MIXIN_BENCH_EDIT_SIZES=10,30
+TS_MIXIN_BENCH_CONSTRUCTION=plain
 TS_MIXIN_BENCH_PROPERTY_COUNT=1
+TS_MIXIN_BENCH_PROPERTY_VISIBILITY=implicit
 TS_MIXIN_BENCH_DEP_MIN=1
 TS_MIXIN_BENCH_DEP_MAX=3
 TS_MIXIN_BENCH_DEP_WINDOW=8
 TS_MIXIN_BENCH_EDIT_COUNT=8
 ```
+
+`TS_MIXIN_BENCH_SIZES` is the default size list for compile, tsserver, and edit
+fixture groups. `TS_MIXIN_BENCH_TSSERVER_SIZES` and
+`TS_MIXIN_BENCH_EDIT_SIZES` override it for their specific groups.
+
+Use `TS_MIXIN_BENCH_PROPERTY_VISIBILITY=public` to generate explicit `public`
+fields. The default `implicit` mode generates the same fields without an
+accessibility modifier.
+
+Use `TS_MIXIN_BENCH_CONSTRUCTION=base` to make fixture consumers extend
+`ts-mixin-class/base` and call `Consumer.new(...)`, which exercises the
+public-only construction config path.
 
 Large release-style run:
 

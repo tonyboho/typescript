@@ -180,6 +180,37 @@ it("expands a dependent mixin with a typed base and a dependency chain", async (
         "Generated interface extends the dependency")
 })
 
+// needed because of: https://github.com/microsoft/TypeScript/issues/63555
+it("reduces transitive mixin interface heritage", async (t: Test) => {
+    const transformedFile = transformSourceFile(ts, createSourceFile(`
+        import { mixin } from "ts-mixin-class"
+
+        @mixin()
+        class BaseMixin {
+            baseValue: string = "base"
+        }
+
+        @mixin()
+        class ChildMixin implements BaseMixin {
+            childValue: string = "child"
+        }
+
+        @mixin()
+        class LeafMixin implements ChildMixin, BaseMixin {
+            leafValue: string = "leaf"
+        }
+    `))
+    const printed = printSourceFile(ts, transformedFile)
+
+    t.match(printed, "interface LeafMixin extends ChildMixin",
+        "Generated mixin interface keeps only the non-transitive type heritage")
+    t.notMatch(printed, "interface LeafMixin extends ChildMixin, BaseMixin",
+        "Generated mixin interface drops transitive type heritage")
+    t.match(printed, "defineMixinClass(\"LeafMixin\", __LeafMixin$mixin as unknown as MixinFactory, [ChildMixin, BaseMixin])",
+        "Runtime dependency metadata keeps the direct dependency list")
+    t.expect(typecheckText(printed)).toEqual([])
+})
+
 it("keeps non-mixin implements entries on a mixin as type-only contracts", async (t: Test) => {
     const transformedFile = transformSourceFile(ts, createSourceFile(`
         import { mixin } from "ts-mixin-class"

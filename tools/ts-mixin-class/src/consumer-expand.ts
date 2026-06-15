@@ -29,7 +29,8 @@ import {
 import { linearizeDependencies } from "./linearization.js"
 import {
     localMixinHeritageTypes,
-    localMixinRefs
+    localMixinRefs,
+    reduceTransitiveMixinHeritageTypes
 } from "./mixin-refs.js"
 import { getSourceFileFacts } from "./source-file-facts.js"
 import { createStaticCollisionValidations } from "./static-collisions.js"
@@ -142,6 +143,7 @@ export function expandConsumerClass(
         expansion.directMixinRefs,
         mixinHeritage
     )
+    const reducedMixinHeritage = reduceTransitiveMixinHeritageTypes(tsInstance, context, mixinHeritage)
     const facts = getSourceFileFacts(tsInstance, sourceFile, options)
     const staticCollisionValidations = createStaticCollisionValidations(
         tsInstance,
@@ -187,7 +189,7 @@ export function expandConsumerClass(
                 ...(implicitRequiredBase === undefined
                     ? []
                     : [ cloneExpressionWithTypeArguments(tsInstance, implicitRequiredBase) ]),
-                ...mixinHeritage.map((heritageType) => {
+                ...reducedMixinHeritage.map((heritageType) => {
                     return cloneExpressionWithTypeArguments(tsInstance, heritageType)
                 })
             ]
@@ -343,6 +345,7 @@ function expandConsumerClassWithUnsupportedBaseDiagnostic(
     const baseName      = generatedName(name, consumerBaseSuffix)
     const extendsType   = extendsClause(tsInstance, declaration)?.types[0]
     const mixinHeritage = localMixinHeritageTypes(tsInstance, declaration, context)
+    const reducedMixinHeritage = reduceTransitiveMixinHeritageTypes(tsInstance, context, mixinHeritage)
 
     if (extendsType === undefined) {
         throw new MixinTransformError(sourceFile, declaration, "Unsupported base diagnostic requires an extends clause")
@@ -367,7 +370,7 @@ function expandConsumerClassWithUnsupportedBaseDiagnostic(
         checkedTypeParameters,
         [ factory.createHeritageClause(
             tsInstance.SyntaxKind.ExtendsKeyword,
-            mixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+            reducedMixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
         ) ],
         []
     ), generatedRange, declaration)
@@ -433,6 +436,7 @@ function expandConsumerClassWithLinearizationDiagnostic(
     const extendsType    = extendsClause(tsInstance, declaration)?.types[0]
     const emptyBaseName  = extendsType === undefined ? generatedName(name, consumerEmptyBaseSuffix) : undefined
     const mixinHeritage  = localMixinHeritageTypes(tsInstance, declaration, context)
+    const reducedMixinHeritage = reduceTransitiveMixinHeritageTypes(tsInstance, context, mixinHeritage)
     const generatedRange = generatedTextRange(sourceFile, declaration.pos)
     const originalExtendsClause = extendsClause(tsInstance, declaration)
     const generatedHeritageRange = originalExtendsClause ?? generatedTextRange(
@@ -460,7 +464,7 @@ function expandConsumerClassWithLinearizationDiagnostic(
             tsInstance.SyntaxKind.ExtendsKeyword,
             [
                 ...(extendsType?.typeArguments !== undefined ? [ cloneExpressionWithTypeArguments(tsInstance, extendsType) ] : []),
-                ...mixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
+                ...reducedMixinHeritage.map((heritageType) => cloneExpressionWithTypeArguments(tsInstance, heritageType))
             ]
         ) ],
         []

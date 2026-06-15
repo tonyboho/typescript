@@ -2,7 +2,9 @@ import { mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 export type BenchmarkGraphKind = "binary-tree" | "previous-window"
-export type BenchmarkMemberKind = "public-properties"
+export type BenchmarkConstructionMode = "base" | "plain"
+export type BenchmarkMemberKind = "properties"
+export type BenchmarkPropertyVisibility = "implicit" | "public"
 
 export type PreviousWindowGraphOptions = {
     dependencyWindow     : number,
@@ -17,6 +19,8 @@ export type BenchmarkScenario = {
     graph             : BenchmarkGraphKind,
     members           : BenchmarkMemberKind,
     propertyCount     : number,
+    propertyVisibility : BenchmarkPropertyVisibility,
+    construction       : BenchmarkConstructionMode,
     previousWindow?    : PreviousWindowGraphOptions,
     consumerLeafCount : number
 }
@@ -84,64 +88,85 @@ export function defaultPreviousWindowGraphOptions(): PreviousWindowGraphOptions 
 
 export function defaultCompileScenarios(
     propertyCount = 1,
-    graphOptions = defaultPreviousWindowGraphOptions()
+    graphOptions = defaultPreviousWindowGraphOptions(),
+    propertyVisibility: BenchmarkPropertyVisibility = "implicit",
+    construction: BenchmarkConstructionMode = "plain"
 ): BenchmarkScenario[] {
     return [ 10, 30 ].map((size) => {
-        return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
+        return previousWindowPropertiesScenario(size, propertyCount, graphOptions, propertyVisibility, construction)
     })
 }
 
 export function defaultTsServerScenarios(
     propertyCount = 1,
-    graphOptions = defaultPreviousWindowGraphOptions()
+    graphOptions = defaultPreviousWindowGraphOptions(),
+    propertyVisibility: BenchmarkPropertyVisibility = "implicit",
+    construction: BenchmarkConstructionMode = "plain"
 ): BenchmarkScenario[] {
     return [ 10, 30 ].map((size) => {
-        return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
+        return previousWindowPropertiesScenario(size, propertyCount, graphOptions, propertyVisibility, construction)
     })
 }
 
 export function defaultEditScenarios(
     propertyCount = 1,
-    graphOptions = defaultPreviousWindowGraphOptions()
+    graphOptions = defaultPreviousWindowGraphOptions(),
+    propertyVisibility: BenchmarkPropertyVisibility = "implicit",
+    construction: BenchmarkConstructionMode = "plain"
 ): BenchmarkScenario[] {
     return [ 10, 30 ].map((size) => {
-        return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
+        return previousWindowPropertiesScenario(size, propertyCount, graphOptions, propertyVisibility, construction)
     })
 }
 
-export function previousWindowPublicPropertiesScenario(
+export function previousWindowPropertiesScenario(
     size: number,
     propertyCount: number,
-    graphOptions = defaultPreviousWindowGraphOptions()
+    graphOptions = defaultPreviousWindowGraphOptions(),
+    propertyVisibility: BenchmarkPropertyVisibility = "implicit",
+    construction: BenchmarkConstructionMode = "plain"
 ): BenchmarkScenario {
     return {
         name : [
             "previous-window",
             size,
-            "public-properties",
+            `${propertyVisibility}-properties`,
             `${propertyCount}-props`,
+            construction === "plain" ? undefined : `${construction}-construction`,
             `${graphOptions.minDependencyCount}-${graphOptions.maxDependencyCount}-deps`,
             `${graphOptions.dependencyWindow}-window`
-        ].join("-"),
+        ].filter((part) => part !== undefined).join("-"),
         size,
         graph          : "previous-window",
-        members        : "public-properties",
+        members        : "properties",
         propertyCount,
+        propertyVisibility,
+        construction,
         previousWindow : graphOptions,
         consumerLeafCount : Math.min(8, Math.max(1, Math.ceil(size / 32)))
     }
 }
 
-export function binaryTreePublicPropertiesScenario(
+export function binaryTreePropertiesScenario(
     size: number,
-    propertyCount: number
+    propertyCount: number,
+    propertyVisibility: BenchmarkPropertyVisibility = "implicit",
+    construction: BenchmarkConstructionMode = "plain"
 ): BenchmarkScenario {
     return {
-        name              : `binary-tree-${size}-public-properties-${propertyCount}-props`,
+        name              : [
+            "binary-tree",
+            size,
+            `${propertyVisibility}-properties`,
+            `${propertyCount}-props`,
+            construction === "plain" ? undefined : `${construction}-construction`
+        ].filter((part) => part !== undefined).join("-"),
         size,
         graph             : "binary-tree",
-        members           : "public-properties",
+        members           : "properties",
         propertyCount,
+        propertyVisibility,
+        construction,
         consumerLeafCount : Math.min(8, Math.max(1, Math.ceil(size / 32)))
     }
 }
@@ -159,7 +184,7 @@ function generateSourceFiles(scenario: BenchmarkScenario): SourceFile[] {
         throw new Error(`Unsupported benchmark graph: ${scenario.graph}`)
     }
 
-    if (scenario.members !== "public-properties") {
+    if (scenario.members !== "properties") {
         throw new Error(`Unsupported benchmark member kind: ${scenario.members}`)
     }
 
@@ -192,8 +217,9 @@ function mixinSource(scenario: BenchmarkScenario, index: number): string {
     const implementsClause = dependencyIndexes.length === 0
         ? ""
         : ` implements ${dependencyIndexes.map((dependencyIndex) => mixinClassName(dependencyIndex)).join(", ")}`
+    const visibility = scenario.propertyVisibility === "public" ? "public " : ""
     const properties = Array.from({ length : scenario.propertyCount }, (_, propertyIndex) => {
-        return `    value${index}_${propertyIndex}: number = ${index * 1000 + propertyIndex}`
+        return `    ${visibility}value${index}_${propertyIndex}: number = ${index * 1000 + propertyIndex}`
     })
 
     return `${imports.join("\n")}
@@ -242,25 +268,70 @@ function createSeededRandom(seed: number): () => number {
 
 function consumerSource(scenario: BenchmarkScenario): string {
     const leafIndexes = consumerLeafIndexes(scenario.size, scenario.consumerLeafCount)
-    const imports = leafIndexes.map((index) => {
-        return `import { ${mixinClassName(index)} } from "./${mixinModuleName(index)}.js"`
-    })
+    const imports = [
+        ...(scenario.construction === "base" ? [ `import { Base } from "ts-mixin-class/base"` ] : []),
+        ...leafIndexes.map((index) => {
+            return `import { ${mixinClassName(index)} } from "./${mixinModuleName(index)}.js"`
+        })
+    ]
     const implementsClause = leafIndexes.map((index) => mixinClassName(index)).join(", ")
+    const extendsClause = scenario.construction === "base" ? " extends Base" : ""
     const checks = leafIndexes.flatMap((index) => {
         return Array.from({ length : scenario.propertyCount }, (_, propertyIndex) => {
             return `consumer.value${index}_${propertyIndex}`
         })
     })
+    const construction = scenario.construction === "base"
+        ? constructionSource(scenario, leafIndexes)
+        : ""
 
     return `${imports.join("\n")}
 
-export class Consumer implements ${implementsClause} {
+export class Consumer${extendsClause} implements ${implementsClause} {
 }
 
 const consumer = new Consumer()
+${construction}
 
 ${checks.map((check) => `void ${check}`).join("\n")}
 `
+}
+
+function constructionSource(scenario: BenchmarkScenario, leafIndexes: number[]): string {
+    const configProperties = scenario.propertyVisibility === "public"
+        ? [ ...mixinDependencyClosure(scenario, leafIndexes) ].flatMap((index) => {
+            return Array.from({ length : scenario.propertyCount }, (_, propertyIndex) => {
+                return `    value${index}_${propertyIndex}: ${index * 1000 + propertyIndex}`
+            })
+        })
+        : []
+
+    return `
+const configured = Consumer.new({
+${configProperties.join(",\n")}
+})
+void configured`
+}
+
+function mixinDependencyClosure(scenario: BenchmarkScenario, roots: number[]): number[] {
+    const visited = new Set<number>()
+    const visit = (index: number): void => {
+        if (visited.has(index)) {
+            return
+        }
+
+        visited.add(index)
+
+        for (const dependency of mixinDependencyIndexes(scenario, index)) {
+            visit(dependency)
+        }
+    }
+
+    for (const root of roots) {
+        visit(root)
+    }
+
+    return [ ...visited ].sort((left, right) => left - right)
 }
 
 function consumerLeafIndexes(size: number, count: number): number[] {
