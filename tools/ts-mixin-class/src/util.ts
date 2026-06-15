@@ -494,8 +494,17 @@ export function hasModifier(
         (tsInstance.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false)
 }
 
+const printerCache = new WeakMap<TypeScript, ts.Printer>()
+
 export function printSourceFile(tsInstance: TypeScript, sourceFile: ts.SourceFile): string {
-    return tsInstance.createPrinter({ newLine : tsInstance.NewLineKind.LineFeed }).printFile(sourceFile)
+    let printer = printerCache.get(tsInstance)
+
+    if (printer === undefined) {
+        printer = tsInstance.createPrinter({ newLine : tsInstance.NewLineKind.LineFeed })
+        printerCache.set(tsInstance, printer)
+    }
+
+    return printer.printFile(sourceFile)
 }
 
 export function scriptKindFromFileName(tsInstance: TypeScript, fileName: string): ts.ScriptKind {
