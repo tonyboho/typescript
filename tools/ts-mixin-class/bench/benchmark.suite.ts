@@ -4,6 +4,15 @@ import path from "node:path"
 import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
+import tsModule from "typescript"
+import type * as ts from "typescript"
+import { transformSourceFile } from "../src/index.js"
+import {
+    cloneSourceFileForTransform,
+    preserveTopLevelStatementRanges,
+    setParentRecursivePreservingVersion
+} from "../src/util.js"
+import type { TypeScript } from "../src/util.js"
 import {
     createBenchmarkFixture,
     defaultEditScenarios,
@@ -22,12 +31,52 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const generatedRoot = path.join(packageRoot, "bench", "fixtures", "generated")
 const tscFile = path.join(packageRoot, "node_modules", "typescript", "bin", "tsc")
 const tsserverFile = path.join(packageRoot, "node_modules", "typescript", "lib", "tsserver.js")
+const tsInstance = tsModule as unknown as TypeScript
+const transformPassFileName = "/virtual/benchmark-suite-transform-pass.ts"
+const transformPassTarget = tsModule.ScriptTarget.ES2022
 
-type BenchmarkMode = "all" | "compile" | "edit" | "tsserver"
+type BenchmarkMode = "all" | "compile" | "edit" | "transform" | "tsserver"
 
 type BenchmarkResult = {
     scenario   : BenchmarkScenario,
     durations : number[]
+}
+
+type DurationResult = {
+    name      : string,
+    durations : number[]
+}
+
+type TransformPassScenario = {
+    name             : string,
+    mixinCount       : number,
+    propertyCount    : number,
+    dependencyWindow : number,
+    consumerCount    : number
+}
+
+type TransformPassFixture = {
+    nodes      : number,
+    sourceFile : ts.SourceFile,
+    statements : number
+}
+
+type StepTimings = {
+    clone     : number,
+    transform : number,
+    preserve  : number,
+    setParent : number
+}
+
+type TransformPassSample = StepTimings & {
+    total : number,
+    wall  : number
+}
+
+type TransformPassResult = {
+    scenario   : TransformPassScenario,
+    fixture    : TransformPassFixture,
+    samples    : TransformPassSample[]
 }
 
 type TsServerResponse = {
@@ -49,6 +98,7 @@ const iterations = integerEnv("TS_MIXIN_BENCH_ITERATIONS", 3)
 const warmups = integerEnv("TS_MIXIN_BENCH_WARMUPS", 1)
 const propertyCount = integerEnv("TS_MIXIN_BENCH_PROPERTY_COUNT", 1)
 const editCount = integerEnv("TS_MIXIN_BENCH_EDIT_COUNT", 8)
+const transformPassIterations = integerEnv("TS_MIXIN_BENCH_TRANSFORM_ITERATIONS", 80)
 const graphOptions = previousWindowGraphOptions()
 const outputFile = process.env.TS_MIXIN_BENCH_OUTPUT
 const reportLines: string[] = []
@@ -61,9 +111,14 @@ report([
     `propertyCount=${propertyCount}`,
     `deps=${graphOptions.minDependencyCount}-${graphOptions.maxDependencyCount}`,
     `window=${graphOptions.dependencyWindow}`,
+    `transformInnerIterations=${transformPassIterations}`,
     `seed=${graphOptions.seed}`
 ].join(" "))
 report("")
+
+if (mode === "all" || mode === "transform") {
+    runTransformPassBenchmark()
+}
 
 if (mode === "all" || mode === "compile") {
     await runCompileBenchmark()
@@ -78,6 +133,30 @@ if (mode === "all" || mode === "edit") {
 }
 
 await writeBenchmarkOutput()
+
+function runTransformPassBenchmark(): void {
+    const results: TransformPassResult[] = []
+
+    for (const scenario of transformPassScenarios()) {
+        const fixture = createTransformPassFixture(scenario)
+
+        report(`transform ${scenario.name}`)
+
+        for (let index = 0; index < warmups; index++) {
+            runTransformPassSample(fixture.sourceFile, transformPassIterations)
+        }
+
+        const samples: TransformPassSample[] = []
+
+        for (let index = 0; index < iterations; index++) {
+            samples.push(runTransformPassSample(fixture.sourceFile, transformPassIterations))
+        }
+
+        results.push({ scenario, fixture, samples })
+    }
+
+    printTransformPassResults(results)
+}
 
 async function runCompileBenchmark(): Promise<void> {
     const results: BenchmarkResult[] = []
@@ -161,6 +240,105 @@ async function runEditBenchmark(): Promise<void> {
     }
 
     printResults("Tsserver edit processing benchmark", results)
+}
+
+function createTransformPassFixture(scenario: TransformPassScenario): TransformPassFixture {
+    const sourceFile = tsModule.createSourceFile(
+        transformPassFileName,
+        generateTransformPassSource(scenario),
+        transformPassTarget,
+        true,
+        tsModule.ScriptKind.TS
+    )
+
+    return {
+        sourceFile,
+        statements : sourceFile.statements.length,
+        nodes      : countNodes(sourceFile)
+    }
+}
+
+function runTransformPassSample(sourceFile: ts.SourceFile, sampleIterations: number): TransformPassSample {
+    const totals: StepTimings = { clone : 0, transform : 0, preserve : 0, setParent : 0 }
+    const wallStart = performance.now()
+
+    for (let index = 0; index < sampleIterations; index++) {
+        runTransformPassOnce(sourceFile, totals)
+    }
+
+    const wall = performance.now() - wallStart
+    const divisor = Math.max(1, sampleIterations)
+
+    return {
+        clone     : totals.clone / divisor,
+        transform : totals.transform / divisor,
+        preserve  : totals.preserve / divisor,
+        setParent : totals.setParent / divisor,
+        total     : (totals.clone + totals.transform + totals.preserve + totals.setParent) / divisor,
+        wall      : wall / divisor
+    }
+}
+
+function runTransformPassOnce(sourceFile: ts.SourceFile, into: StepTimings): void {
+    let mark = performance.now()
+    const cloned = cloneSourceFileForTransform(tsInstance, sourceFile, transformPassTarget)
+
+    into.clone += performance.now() - mark
+
+    mark = performance.now()
+
+    const transformed = transformSourceFile(tsInstance, cloned, { sourceView : true })
+
+    into.transform += performance.now() - mark
+
+    if (transformed === cloned) {
+        throw new Error("Generated transform-pass file was not transformed -- mixin detection failed")
+    }
+
+    mark = performance.now()
+    preserveTopLevelStatementRanges(tsInstance, transformed)
+    into.preserve += performance.now() - mark
+
+    mark = performance.now()
+    setParentRecursivePreservingVersion(tsInstance, transformed, sourceFile)
+    into.setParent += performance.now() - mark
+}
+
+function generateTransformPassSource(scenario: TransformPassScenario): string {
+    const lines = [ `import { mixin } from "ts-mixin-class"`, "" ]
+
+    for (let index = 0; index < scenario.mixinCount; index++) {
+        const dependencies: string[] = []
+
+        for (let offset = 1; offset <= scenario.dependencyWindow && index - offset >= 0; offset++) {
+            if ((index + offset) % 2 === 0) {
+                dependencies.push(`Mixin${index - offset}`)
+            }
+        }
+
+        const implementsClause = dependencies.length === 0 ? "" : ` implements ${dependencies.join(", ")}`
+
+        lines.push(`@mixin()`)
+        lines.push(`export class Mixin${index}${implementsClause} {`)
+
+        for (let property = 0; property < scenario.propertyCount; property++) {
+            lines.push(`    value${index}_${property}: number = ${index * 1000 + property}`)
+        }
+
+        lines.push(`}`, "")
+    }
+
+    for (let consumer = 0; consumer < scenario.consumerCount; consumer++) {
+        const leaves: string[] = []
+
+        for (let index = scenario.mixinCount - 1 - consumer; index >= 0 && leaves.length < 8; index -= 2) {
+            leaves.push(`Mixin${index}`)
+        }
+
+        lines.push(`export class Consumer${consumer} implements ${leaves.join(", ")} {`, `}`, "")
+    }
+
+    return lines.join("\n")
 }
 
 async function runCleanCompile(tsconfigFile: string, directory: string): Promise<number> {
@@ -390,6 +568,65 @@ function editScenarios(): BenchmarkScenario[] {
         })
 }
 
+function transformPassScenarios(): TransformPassScenario[] {
+    const scenarios = process.env.TS_MIXIN_BENCH_TRANSFORM_SCENARIOS
+
+    if (scenarios === undefined) {
+        return defaultTransformPassScenarios()
+    }
+
+    return scenarios.split(",")
+        .map((scenario) => scenario.trim())
+        .filter((scenario) => scenario.length > 0)
+        .map((scenario) => {
+            const [ mixins, properties, window, consumers ] = scenario.split(":")
+                .map((value) => Number.parseInt(value.trim(), 10))
+
+            if (
+                !Number.isFinite(mixins) || mixins <= 0 ||
+                !Number.isFinite(properties) || properties <= 0 ||
+                !Number.isFinite(window) || window < 0 ||
+                !Number.isFinite(consumers) || consumers <= 0
+            ) {
+                throw new Error(
+                    "Invalid TS_MIXIN_BENCH_TRANSFORM_SCENARIOS entry " +
+                    `${JSON.stringify(scenario)}. Expected mixins:props:window:consumers.`
+                )
+            }
+
+            return transformPassScenario(mixins, properties, window, consumers)
+        })
+}
+
+function defaultTransformPassScenarios(): TransformPassScenario[] {
+    return [
+        transformPassScenario(25, 1, 4, 1),
+        transformPassScenario(80, 3, 4, 1),
+        transformPassScenario(80, 3, 4, 8),
+        transformPassScenario(160, 3, 8, 8)
+    ]
+}
+
+function transformPassScenario(
+    mixinCount: number,
+    propertyCount: number,
+    dependencyWindow: number,
+    consumerCount: number
+): TransformPassScenario {
+    return {
+        name : [
+            `mixins-${mixinCount}`,
+            `props-${propertyCount}`,
+            `window-${dependencyWindow}`,
+            `consumers-${consumerCount}`
+        ].join("-"),
+        mixinCount,
+        propertyCount,
+        dependencyWindow,
+        consumerCount
+    }
+}
+
 function previousWindowGraphOptions(): PreviousWindowGraphOptions {
     const defaults = defaultPreviousWindowGraphOptions()
 
@@ -404,11 +641,17 @@ function previousWindowGraphOptions(): PreviousWindowGraphOptions {
 function benchmarkMode(): BenchmarkMode {
     const modeArgument = process.argv[2] ?? "all"
 
-    if (modeArgument === "all" || modeArgument === "compile" || modeArgument === "edit" || modeArgument === "tsserver") {
+    if (
+        modeArgument === "all" ||
+        modeArgument === "compile" ||
+        modeArgument === "edit" ||
+        modeArgument === "transform" ||
+        modeArgument === "tsserver"
+    ) {
         return modeArgument
     }
 
-    throw new Error(`Unknown benchmark mode ${JSON.stringify(modeArgument)}. Use all, compile, edit, or tsserver.`)
+    throw new Error(`Unknown benchmark mode ${JSON.stringify(modeArgument)}. Use all, compile, edit, transform, or tsserver.`)
 }
 
 function integerEnv(name: string, fallback: number): number {
@@ -424,18 +667,73 @@ function integerEnv(name: string, fallback: number): number {
 }
 
 function printResults(title: string, results: BenchmarkResult[]): void {
+    printDurationResults(title, results.map((result) => {
+        return {
+            name      : scenarioDirectoryName(result.scenario),
+            durations : result.durations
+        }
+    }))
+}
+
+function printDurationResults(title: string, results: DurationResult[]): void {
     report("")
     report(title)
-    report("scenario                              min       median    mean")
+    report([
+        "scenario".padEnd(64),
+        "min".padStart(9),
+        "median".padStart(9),
+        "mean".padStart(9),
+        "max".padStart(9),
+        "samples".padStart(8)
+    ].join(" "))
 
     for (const result of results) {
         const stats = durationStats(result.durations)
 
         report([
-            scenarioDirectoryName(result.scenario).padEnd(36),
-            formatDuration(stats.min).padStart(8),
+            result.name.padEnd(64),
+            formatDuration(stats.min).padStart(9),
             formatDuration(stats.median).padStart(9),
-            formatDuration(stats.mean).padStart(8)
+            formatDuration(stats.mean).padStart(9),
+            formatDuration(stats.max).padStart(9),
+            String(result.durations.length).padStart(8)
+        ].join(" "))
+    }
+}
+
+function printTransformPassResults(results: TransformPassResult[]): void {
+    report("")
+    report("Transform-pass source-view benchmark")
+    report([
+        "scenario".padEnd(38),
+        "nodes".padStart(7),
+        "min".padStart(9),
+        "median".padStart(9),
+        "mean".padStart(9),
+        "max".padStart(9),
+        "clone".padStart(9),
+        "xform".padStart(9),
+        "ranges".padStart(9),
+        "parent".padStart(9),
+        "samples".padStart(8)
+    ].join(" "))
+
+    for (const result of results) {
+        const totals = result.samples.map((sample) => sample.total)
+        const stats = durationStats(totals)
+
+        report([
+            result.scenario.name.padEnd(38),
+            String(result.fixture.nodes).padStart(7),
+            formatDuration(stats.min).padStart(9),
+            formatDuration(stats.median).padStart(9),
+            formatDuration(stats.mean).padStart(9),
+            formatDuration(stats.max).padStart(9),
+            formatDuration(mean(result.samples.map((sample) => sample.clone))).padStart(9),
+            formatDuration(mean(result.samples.map((sample) => sample.transform))).padStart(9),
+            formatDuration(mean(result.samples.map((sample) => sample.preserve))).padStart(9),
+            formatDuration(mean(result.samples.map((sample) => sample.setParent))).padStart(9),
+            String(result.samples.length).padStart(8)
         ].join(" "))
     }
 }
@@ -454,23 +752,37 @@ async function writeBenchmarkOutput(): Promise<void> {
     await writeFile(outputFile, `${reportLines.join("\n")}\n`)
 }
 
-function durationStats(values: number[]): { min: number, median: number, mean: number } {
+function durationStats(values: number[]): { max: number, mean: number, median: number, min: number } {
     const sorted = [ ...values ].sort((a, b) => a - b)
     const middle = Math.floor(sorted.length / 2)
     const median = sorted.length % 2 === 0
         ? (sorted[middle - 1]! + sorted[middle]!) / 2
         : sorted[middle]!
-    const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length
 
     return {
+        max : sorted.at(-1)!,
+        mean : mean(sorted),
         min : sorted[0]!,
-        median,
-        mean
+        median
     }
 }
 
 function formatDuration(value: number): string {
     return `${value.toFixed(1)}ms`
+}
+
+function mean(values: readonly number[]): number {
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function countNodes(node: ts.Node): number {
+    let count = 1
+
+    tsModule.forEachChild(node, (child) => {
+        count += countNodes(child)
+    })
+
+    return count
 }
 
 async function openFile(session: TsServerSession, fileName: string, text: string): Promise<void> {

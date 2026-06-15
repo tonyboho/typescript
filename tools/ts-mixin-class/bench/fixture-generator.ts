@@ -75,9 +75,9 @@ export async function createBenchmarkFixture(options: CreateBenchmarkFixtureOpti
 
 export function defaultPreviousWindowGraphOptions(): PreviousWindowGraphOptions {
     return {
-        dependencyWindow   : 24,
-        maxDependencyCount : 5,
-        minDependencyCount : 2,
+        dependencyWindow   : 8,
+        maxDependencyCount : 3,
+        minDependencyCount : 1,
         seed               : 19_871
     }
 }
@@ -86,7 +86,7 @@ export function defaultCompileScenarios(
     propertyCount = 1,
     graphOptions = defaultPreviousWindowGraphOptions()
 ): BenchmarkScenario[] {
-    return [ 25, 100, 250 ].map((size) => {
+    return [ 10, 30 ].map((size) => {
         return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
     })
 }
@@ -95,7 +95,7 @@ export function defaultTsServerScenarios(
     propertyCount = 1,
     graphOptions = defaultPreviousWindowGraphOptions()
 ): BenchmarkScenario[] {
-    return [ 25, 100 ].map((size) => {
+    return [ 10, 30 ].map((size) => {
         return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
     })
 }
@@ -104,7 +104,7 @@ export function defaultEditScenarios(
     propertyCount = 1,
     graphOptions = defaultPreviousWindowGraphOptions()
 ): BenchmarkScenario[] {
-    return [ 25, 100 ].map((size) => {
+    return [ 10, 30 ].map((size) => {
         return previousWindowPublicPropertiesScenario(size, propertyCount, graphOptions)
     })
 }
