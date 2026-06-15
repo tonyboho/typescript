@@ -140,6 +140,10 @@ export const consumerBaseSuffix = "$base"
 export const consumerEmptyBaseSuffix = "$empty"
 export const mixinValueSuffix = "$mixinValue"
 
+export function staticConflictKeysName(mode: Exclude<StaticCollisionCheckMode, false>): string {
+    return mode === "strict" ? staticStrictConflictKeysName : staticNeverConflictKeysName
+}
+
 export function generatedName(name: string, suffix: string): string {
     return `__${name}${suffix}`
 }
@@ -199,6 +203,14 @@ export function registryKey(fileName: string, name: string): string {
 
 export function normalizePath(fileName: string): string {
     return fileName.replaceAll("\\", "/")
+}
+
+export function shouldSkipFileName(fileName: string): boolean {
+    const normalizedFileName = normalizePath(fileName)
+
+    return normalizedFileName.includes("/node_modules/") ||
+        normalizedFileName.endsWith(".d.ts") ||
+        !/\.[cm]?tsx?$/.test(normalizedFileName)
 }
 
 export function implementsTypes(

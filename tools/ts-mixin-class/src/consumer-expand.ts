@@ -3,6 +3,7 @@ import { rewritePublicOnlyUndefinedInitializers } from "./construction-initializ
 import { isPackageImport } from "./decorators.js"
 import {
     cloneExpressionWithTypeArguments,
+    consumerHeritageClauses,
     createSourceViewConsumerBaseHeadType,
     heritageTypeToTypeReference,
     MixinTransformError,
@@ -45,9 +46,7 @@ import {
     hasModifier,
     preserveGeneratedDeclarationRange,
     preserveSourceViewGeneratedClassLikeRange,
-    preserveSubtreeTextRange,
-    preserveTextRange,
-    zeroWidthRange
+    preserveTextRange
 } from "./util.js"
 import type { TypeScript } from "./util.js"
 
@@ -1803,76 +1802,6 @@ function isSupportedBaseExpression(tsInstance: TypeScript, expression: ts.Expres
     return tsInstance.isPropertyAccessExpression(expression) &&
         tsInstance.isIdentifier(expression.name) &&
         isSupportedBaseExpression(tsInstance, expression.expression)
-}
-
-function consumerHeritageClauses(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    baseName: string,
-    generatedRange: ts.TextRange,
-    generatedTypeRange: ts.TextRange = generatedRange,
-    extraTypeArguments: ts.TypeNode[] = [],
-    keepImplements = true
-): ts.NodeArray<ts.HeritageClause> {
-    const factory = tsInstance.factory
-
-    const ownTypeArguments = declaration.typeParameters !== undefined && declaration.typeParameters.length > 0
-        ? declaration.typeParameters.map((typeParameter): ts.TypeNode => {
-            return factory.createTypeReferenceNode(typeParameter.name.text, undefined)
-        })
-        : []
-    const typeArguments = ownTypeArguments.length > 0 || extraTypeArguments.length > 0
-        ? [ ...ownTypeArguments, ...extraTypeArguments ]
-        : undefined
-
-    const extendsType = preserveTextRange(tsInstance, factory.createExpressionWithTypeArguments(
-        factory.createIdentifier(baseName),
-        typeArguments
-    ), generatedTypeRange)
-
-    if (tsInstance.isExpressionWithTypeArguments(generatedTypeRange as ts.Node)) {
-        const originalGeneratedTypeRange = generatedTypeRange as ts.ExpressionWithTypeArguments
-
-        preserveTextRange(tsInstance, extendsType.expression, originalGeneratedTypeRange.expression)
-
-        if (extendsType.typeArguments !== undefined) {
-            const generatedTypeArgumentRange = zeroWidthRange(originalGeneratedTypeRange.expression.end)
-
-            preserveTextRange(
-                tsInstance,
-                extendsType.typeArguments,
-                originalGeneratedTypeRange.typeArguments ?? generatedTypeArgumentRange
-            )
-
-            extendsType.typeArguments.forEach((typeArgument, index) => {
-                const originalTypeArgument = originalGeneratedTypeRange.typeArguments?.[index]
-
-                if (originalTypeArgument !== undefined) {
-                    preserveSubtreeTextRange(
-                        tsInstance,
-                        typeArgument,
-                        originalTypeArgument
-                    )
-                }
-            })
-        }
-    }
-
-    const extendsHeritage = preserveTextRange(tsInstance, factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-        extendsType
-    ]), generatedRange)
-
-    preserveTextRange(tsInstance, extendsHeritage.types, generatedTypeRange)
-
-    const implementsHeritage = declaration.heritageClauses?.find((heritageClause) => {
-        return heritageClause.token === tsInstance.SyntaxKind.ImplementsKeyword
-    })
-    const clauses = keepImplements && implementsHeritage !== undefined
-        ? [ extendsHeritage, implementsHeritage ]
-        : [ extendsHeritage ]
-    const heritageRange = keepImplements ? declaration.heritageClauses ?? generatedRange : generatedRange
-
-    return preserveTextRange(tsInstance, factory.createNodeArray(clauses), heritageRange)
 }
 
 function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expression): ts.EntityName {

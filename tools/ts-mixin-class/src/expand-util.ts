@@ -2,10 +2,7 @@ import type * as ts from "typescript"
 import {
     anyConstructorName,
     classStaticsName,
-    consumerBaseSuffix,
     generatedName,
-    runtimeMixinClassName,
-    type FileMixinContext,
     type MixinDeclarationDiagnostic,
     type ResolvedMixinRef
 } from "./model.js"
@@ -108,21 +105,6 @@ export function mixinValueIdentifier(tsInstance: TypeScript, ref: ResolvedMixinR
     return tsInstance.factory.createIdentifier(ref.localValueName)
 }
 
-export function createRuntimeMixinClassType(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    requiredBaseType: (tsInstance: TypeScript, declaration: ts.ClassDeclaration) => ts.ExpressionWithTypeArguments | undefined
-): ts.TypeReferenceNode {
-    const requiredBase = requiredBaseType(tsInstance, declaration)
-
-    return tsInstance.factory.createTypeReferenceNode(
-        runtimeMixinClassName,
-        requiredBase === undefined
-            ? undefined
-            : [ heritageTypeToTypeReference(tsInstance, requiredBase) ]
-    )
-}
-
 export function createSourceViewConsumerBaseHeadType(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments | undefined,
@@ -216,12 +198,4 @@ export function consumerHeritageClauses(
     const heritageRange = keepImplements ? declaration.heritageClauses ?? generatedRange : generatedRange
 
     return preserveTextRange(tsInstance, factory.createNodeArray(clauses), heritageRange)
-}
-
-export function sourceViewMixinBaseName(declaration: ts.ClassDeclaration): string {
-    if (declaration.name === undefined) {
-        throw new Error("A mixin class must have a name")
-    }
-
-    return generatedName(declaration.name.text, consumerBaseSuffix)
 }

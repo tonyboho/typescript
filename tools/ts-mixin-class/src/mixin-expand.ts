@@ -23,6 +23,7 @@ import {
     consumerHeritageClauses,
     createSourceViewConsumerBaseHeadType,
     heritageTypeToTypeReference,
+    mixinValueIdentifier,
     MixinTransformError
 } from "./expand-util.js"
 import {
@@ -587,14 +588,6 @@ function directDependencyRefs(
         .map((heritageType) => {
             return context.byLocalName.get((heritageType.expression as ts.Identifier).text)!
         })
-}
-
-function mixinValueIdentifier(tsInstance: TypeScript, ref: ResolvedMixinRef): ts.Identifier {
-    if (ref.localValueName === undefined) {
-        throw new Error(`Mixin value ${ref.className} is not available in the transformed file`)
-    }
-
-    return tsInstance.factory.createIdentifier(ref.localValueName)
 }
 
 function createRuntimeMixinClassType(

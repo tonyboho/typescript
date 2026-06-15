@@ -10,6 +10,7 @@ import {
     registryKey,
     requiredBaseIdentifierName,
     runtimeMixinClassName,
+    shouldSkipFileName,
     uniqueConfigProperties,
     type ConfigProperty,
     type MixinRegistry,
@@ -308,12 +309,4 @@ function runtimeModuleFileNames(declarationFileName: string): string[] {
         declarationFileName.slice(0, -".d.ts".length) + ".mjs",
         declarationFileName.slice(0, -".d.ts".length) + ".cjs"
     ]
-}
-
-function shouldSkipFileName(fileName: string): boolean {
-    const normalizedFileName = normalizePath(fileName)
-
-    return normalizedFileName.includes("/node_modules/") ||
-        normalizedFileName.endsWith(".d.ts") ||
-        !/\.[cm]?tsx?$/.test(normalizedFileName)
 }

@@ -17,10 +17,9 @@ import {
     mixinApplicationName,
     mixinChainName,
     mixinFactoryName,
-    normalizePath,
     runtimeMixinClassName,
-    staticNeverConflictKeysName,
-    staticStrictConflictKeysName,
+    shouldSkipFileName,
+    staticConflictKeysName,
     type CrossFileContext,
     type FileMixinContext,
     type MixinClassTransformerConfig,
@@ -392,10 +391,6 @@ function createHelperTypeImport(
     )
 }
 
-function staticConflictKeysName(mode: Exclude<StaticCollisionCheckMode, false>): string {
-    return mode === "strict" ? staticStrictConflictKeysName : staticNeverConflictKeysName
-}
-
 function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
     return sourceFile.isDeclarationFile || shouldSkipFileName(sourceFile.fileName)
 }
@@ -433,12 +428,4 @@ function isTypeScriptServerProcess(): boolean {
 
         return fileName === "tsserver.js" || fileName === "_tsserver.js"
     })
-}
-
-function shouldSkipFileName(fileName: string): boolean {
-    const normalizedFileName = normalizePath(fileName)
-
-    return normalizedFileName.includes("/node_modules/") ||
-        normalizedFileName.endsWith(".d.ts") ||
-        !/\.[cm]?tsx?$/.test(normalizedFileName)
 }
