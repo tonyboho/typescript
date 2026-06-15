@@ -36,6 +36,7 @@ const transformPassFileName = "/virtual/benchmark-suite-transform-pass.ts"
 const transformPassTarget = tsModule.ScriptTarget.ES2022
 
 type BenchmarkMode = "all" | "compile" | "edit" | "transform" | "tsserver"
+type BenchmarkTableMode = "compact" | "full"
 
 type BenchmarkResult = {
     scenario   : BenchmarkScenario,
@@ -99,6 +100,7 @@ const warmups = integerEnv("TS_MIXIN_BENCH_WARMUPS", 1)
 const propertyCount = integerEnv("TS_MIXIN_BENCH_PROPERTY_COUNT", 1)
 const editCount = integerEnv("TS_MIXIN_BENCH_EDIT_COUNT", 8)
 const transformPassIterations = integerEnv("TS_MIXIN_BENCH_TRANSFORM_ITERATIONS", 80)
+const tableMode = benchmarkTableMode()
 const graphOptions = previousWindowGraphOptions()
 const outputFile = process.env.TS_MIXIN_BENCH_OUTPUT
 const reportLines: string[] = []
@@ -112,6 +114,7 @@ report([
     `deps=${graphOptions.minDependencyCount}-${graphOptions.maxDependencyCount}`,
     `window=${graphOptions.dependencyWindow}`,
     `transformInnerIterations=${transformPassIterations}`,
+    `table=${tableMode}`,
     `seed=${graphOptions.seed}`
 ].join(" "))
 report("")
@@ -654,6 +657,16 @@ function benchmarkMode(): BenchmarkMode {
     throw new Error(`Unknown benchmark mode ${JSON.stringify(modeArgument)}. Use all, compile, edit, transform, or tsserver.`)
 }
 
+function benchmarkTableMode(): BenchmarkTableMode {
+    const modeName = process.env.TS_MIXIN_BENCH_TABLE ?? "compact"
+
+    if (modeName === "compact" || modeName === "full") {
+        return modeName
+    }
+
+    throw new Error(`Unknown TS_MIXIN_BENCH_TABLE ${JSON.stringify(modeName)}. Use compact or full.`)
+}
+
 function integerEnv(name: string, fallback: number): number {
     const value = process.env[name]
 
@@ -678,6 +691,25 @@ function printResults(title: string, results: BenchmarkResult[]): void {
 function printDurationResults(title: string, results: DurationResult[]): void {
     report("")
     report(title)
+
+    if (tableMode === "compact") {
+        report([
+            "scenario".padEnd(64),
+            "median".padStart(9)
+        ].join(" "))
+
+        for (const result of results) {
+            const stats = durationStats(result.durations)
+
+            report([
+                result.name.padEnd(64),
+                formatDuration(stats.median).padStart(9)
+            ].join(" "))
+        }
+
+        return
+    }
+
     report([
         "scenario".padEnd(64),
         "min".padStart(9),
@@ -704,6 +736,26 @@ function printDurationResults(title: string, results: DurationResult[]): void {
 function printTransformPassResults(results: TransformPassResult[]): void {
     report("")
     report("Transform-pass source-view benchmark")
+
+    if (tableMode === "compact") {
+        report([
+            "scenario".padEnd(38),
+            "median".padStart(9)
+        ].join(" "))
+
+        for (const result of results) {
+            const totals = result.samples.map((sample) => sample.total)
+            const stats = durationStats(totals)
+
+            report([
+                result.scenario.name.padEnd(38),
+                formatDuration(stats.median).padStart(9)
+            ].join(" "))
+        }
+
+        return
+    }
+
     report([
         "scenario".padEnd(38),
         "nodes".padStart(7),

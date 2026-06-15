@@ -21,6 +21,14 @@ Each table row is one scenario. The duration columns are per operation:
 - tsserver diagnostics rows report one `semanticDiagnosticsSync` request
 - edit rows report one edit plus one consumer `semanticDiagnosticsSync` request
 
+By default, tables are compact and show only the median duration. Use the full
+table mode for min, median, mean, max, sample count, and transform-pass step
+breakdown:
+
+```bash
+TS_MIXIN_BENCH_TABLE=full pnpm run bench
+```
+
 ## Modes
 
 ```bash
@@ -41,6 +49,7 @@ format.
 ```bash
 TS_MIXIN_BENCH_ITERATIONS=5
 TS_MIXIN_BENCH_WARMUPS=1
+TS_MIXIN_BENCH_TABLE=compact
 TS_MIXIN_BENCH_OUTPUT=bench/baseline-suite-raw.txt
 ```
 
