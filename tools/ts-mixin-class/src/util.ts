@@ -19,7 +19,11 @@ export function preserveTopLevelStatementRanges(tsInstance: TypeScript, sourceFi
     let previousEnd = 0
 
     for (const statement of sourceFile.statements) {
-        const descendantRange = realDescendantRange(tsInstance, statement)
+        const descendantRange = preserveSyntheticDescendantRangesAndGetRealRange(
+            tsInstance,
+            statement,
+            generatedTextRange(sourceFile, previousEnd)
+        )
 
         if (statement.pos < 0 || statement.end < 0) {
             tsInstance.setTextRange(
@@ -48,26 +52,54 @@ export function preserveTopLevelStatementRanges(tsInstance: TypeScript, sourceFi
         })
     }
 
-    preserveSyntheticDescendantRanges(tsInstance, sourceFile, generatedTextRange(sourceFile, 0))
 }
 
-function realDescendantRange(tsInstance: TypeScript, node: ts.Node): ts.TextRange | undefined {
+function preserveSyntheticDescendantRangesAndGetRealRange(
+    tsInstance: TypeScript,
+    node: ts.Node,
+    parentRange: ts.TextRange
+): ts.TextRange | undefined {
+    const currentRange = node.pos >= 0 && node.end >= 0
+        ? {
+            pos : node.pos,
+            end : node.end
+        }
+        : parentRange
     let range: ts.TextRange | undefined
+    const mergeRange = (nextRange: ts.TextRange | undefined): void => {
+        if (nextRange === undefined) {
+            return
+        }
+
+        range = range === undefined
+            ? { pos : nextRange.pos, end : nextRange.end }
+            : {
+                pos : Math.min(range.pos, nextRange.pos),
+                end : Math.max(range.end, nextRange.end)
+            }
+    }
 
     const visit = (child: ts.Node): void => {
         if (child.pos >= 0 && child.end >= 0) {
-            range = range === undefined
-                ? { pos : child.pos, end : child.end }
-                : {
-                    pos : Math.min(range.pos, child.pos),
-                    end : Math.max(range.end, child.end)
-                }
+            mergeRange(child)
         }
 
-        tsInstance.forEachChild(child, visit)
+        mergeRange(preserveSyntheticDescendantRangesAndGetRealRange(tsInstance, child, currentRange))
     }
 
-    tsInstance.forEachChild(node, visit)
+    if (node.pos < 0 || node.end < 0) {
+        tsInstance.setTextRange(node, currentRange)
+    }
+
+    tsInstance.forEachChild(node, visit, (children) => {
+        if (children.pos < 0 || children.end < 0) {
+            tsInstance.setTextRange(children, currentRange)
+        }
+
+        for (const child of children) {
+            visit(child)
+        }
+    })
 
     return range
 }
