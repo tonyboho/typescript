@@ -2,15 +2,17 @@ import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
 
 import {
+    defineMixinClass,
+    mixinChain,
+} from "../src/index.js"
+import {
     base,
     Base as MixinBase,
-    defineMixinClass,
     factory,
-    mixinChain,
     requirements,
     type AnyConstructor,
     type MixinFactory
-} from "../src/index.js"
+} from "../src/base.js"
 
 type NamedInstance = {
     who(): string
@@ -65,6 +67,24 @@ it("caches mixin applications for the same base", async (t: Test) => {
     const B = createNamedMixin("B", [ A ])
 
     t.equal(mixinChain(Base, B), mixinChain(Base, B), "Repeated chain creation returns the cached class")
+})
+
+it("applies a mixin through the static mix property", async (t: Test) => {
+    const A = createNamedMixin("A")
+    const B = createNamedMixin("B", [ A ])
+    const C = createNamedMixin("C", [ A ])
+    const D = createNamedMixin("D", [ B, C ])
+
+    class Consumer extends D.mix(Base) {}
+
+    const instance = new Consumer()
+
+    t.equal(instance.who(), "D>B>C>A>Base", "Manual mix application follows C3 order")
+    t.isInstanceOf(instance, A, "Manual mix application matches transitive mixin A")
+    t.isInstanceOf(instance, B, "Manual mix application matches transitive mixin B")
+    t.isInstanceOf(instance, C, "Manual mix application matches transitive mixin C")
+    t.isInstanceOf(instance, D, "Manual mix application matches direct mixin D")
+    t.equal(D.mix(Base), D.mix(Base), "Manual mix applications are cached for the same base")
 })
 
 it("exposes runtime metadata through exported symbols", async (t: Test) => {

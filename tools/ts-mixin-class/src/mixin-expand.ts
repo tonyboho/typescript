@@ -9,6 +9,7 @@ import {
     generatedName,
     implementsTypes,
     isNamedClassElement,
+    mixinApplicationName,
     mixinFactoryName,
     requiredBaseType,
     runtimeMixinClassName,
@@ -312,6 +313,20 @@ export function expandMixinClass(
                                 factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
                             ])
                         ]),
+                        createMixinApplyType(
+                            tsInstance,
+                            declaration,
+                            typeParameters,
+                            factory.createTypeReferenceNode(
+                                ref.className,
+                                typeParameters?.map((typeParameter) => {
+                                    return factory.createTypeReferenceNode(typeParameter.name, undefined)
+                                })
+                            ),
+                            factory.createTypeReferenceNode("ReturnType", [
+                                factory.createTypeQueryNode(factory.createIdentifier(ref.localFactoryName))
+                            ])
+                        ),
                         createRuntimeMixinClassType(tsInstance, declaration)
                     ])
                 )
@@ -378,7 +393,11 @@ function expandSourceViewMixinClass(
 
     if (dependencyHeritage.length === 0 && requiredBase === undefined) {
         const metadataExtendsClause = preserveTextRange(tsInstance, factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-            preserveTextRange(tsInstance, createSourceViewMixinMetadataBase(tsInstance, declaration, undefined, []), generatedHeritageRange)
+            preserveTextRange(
+                tsInstance,
+                createSourceViewMixinMetadataBase(tsInstance, sourceFile, declaration, undefined, []),
+                generatedHeritageRange
+            )
         ]), generatedHeritageRange)
 
         return [ factory.updateClassDeclaration(
@@ -420,7 +439,7 @@ function expandSourceViewMixinClass(
         baseName,
         cloneTypeParameters(),
         [ factory.createHeritageClause(tsInstance.SyntaxKind.ExtendsKeyword, [
-            createSourceViewMixinMetadataBase(tsInstance, declaration, requiredBase, dependencyRefs)
+            createSourceViewMixinMetadataBase(tsInstance, sourceFile, declaration, requiredBase, dependencyRefs)
         ]) ],
         []
     ), declaration)
@@ -442,6 +461,7 @@ function expandSourceViewMixinClass(
 // typeof MixinClass matches the runtime value.
 function createSourceViewMixinMetadataBase(
     tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
     declaration: ts.ClassDeclaration,
     requiredBase: ts.ExpressionWithTypeArguments | undefined,
     dependencyRefs: ResolvedMixinRef[]
@@ -451,6 +471,15 @@ function createSourceViewMixinMetadataBase(
     const headType = requiredBase === undefined
         ? factory.createTypeReferenceNode(anyConstructorName, undefined)
         : createSourceViewConsumerBaseHeadType(tsInstance, requiredBase, undefined, undefined)
+    const manualMixinApplyTypes = hasManualMixinApplySyntax(sourceFile.text)
+        ? [ createMixinApplyType(
+            tsInstance,
+            declaration,
+            declaration.typeParameters !== undefined ? [ ...declaration.typeParameters ] : undefined,
+            createSourceViewMixinInstanceType(tsInstance, sourceFile, declaration),
+            createSourceViewMixinStaticsType(tsInstance, declaration)
+        ) ]
+        : []
     const castType = factory.createIntersectionTypeNode([
         headType,
         ...dependencyRefs
@@ -460,6 +489,7 @@ function createSourceViewMixinMetadataBase(
                     factory.createTypeQueryNode(factory.createIdentifier(ref.localValueName as string))
                 ])
             }),
+        ...manualMixinApplyTypes,
         createRuntimeMixinClassType(tsInstance, declaration)
     ])
 
@@ -477,6 +507,10 @@ function createSourceViewMixinMetadataBase(
         ),
         undefined
     )
+}
+
+function hasManualMixinApplySyntax(text: string): boolean {
+    return /\.mix\s*(?:<|\()/.test(text)
 }
 
 function createMixinFactoryExpression(
@@ -575,6 +609,189 @@ function createRuntimeMixinClassType(
             ? undefined
             : [ heritageTypeToTypeReference(tsInstance, requiredBase) ]
     )
+}
+
+function createSourceViewMixinInstanceType(
+    tsInstance: TypeScript,
+    sourceFile: ts.SourceFile,
+    declaration: ts.ClassDeclaration
+): ts.TypeNode {
+    const factory = tsInstance.factory
+    const ownType = factory.createTypeLiteralNode(createSourceViewMixinInstanceMembers(tsInstance, declaration))
+    const inheritedTypes = [
+        ...(requiredBaseType(tsInstance, declaration) === undefined
+            ? []
+            : [ heritageTypeToTypeReference(tsInstance, requiredBaseType(tsInstance, declaration)!) ]),
+        ...implementsTypes(tsInstance, declaration).map((heritageType) => {
+            return heritageTypeToTypeReference(tsInstance, heritageType)
+        })
+    ]
+
+    if (inheritedTypes.length === 0) {
+        return ownType
+    }
+
+    return factory.createIntersectionTypeNode([ ...inheritedTypes, ownType ])
+}
+
+function createSourceViewMixinInstanceMembers(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.TypeElement[] {
+    const factory = tsInstance.factory
+
+    return declaration.members.flatMap((member): ts.TypeElement[] => {
+        if (
+            hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) ||
+            member.name === undefined ||
+            tsInstance.isPrivateIdentifier(member.name)
+        ) {
+            return []
+        }
+
+        if (tsInstance.isPropertyDeclaration(member)) {
+            return [ factory.createPropertySignature(
+                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.ReadonlyKeyword)
+                    ? undefined
+                    : [ factory.createToken(tsInstance.SyntaxKind.ReadonlyKeyword) ],
+                deepCloneNode(tsInstance, member.name),
+                member.questionToken === undefined ? undefined : deepCloneNode(tsInstance, member.questionToken),
+                member.type === undefined
+                    ? factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+                    : deepCloneNode(tsInstance, member.type)
+            ) ]
+        }
+
+        if (tsInstance.isMethodDeclaration(member)) {
+            return [ factory.createMethodSignature(
+                undefined,
+                deepCloneNode(tsInstance, member.name),
+                member.questionToken === undefined ? undefined : deepCloneNode(tsInstance, member.questionToken),
+                member.typeParameters?.map((typeParameter) => deepCloneNode(tsInstance, typeParameter)),
+                member.parameters.map((parameter) => createSourceViewSignatureParameter(tsInstance, parameter)),
+                member.type === undefined
+                    ? factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+                    : deepCloneNode(tsInstance, member.type)
+            ) ]
+        }
+
+        return []
+    })
+}
+
+function createSourceViewMixinStaticsType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.TypeLiteralNode {
+    return tsInstance.factory.createTypeLiteralNode(declaration.members.flatMap((member): ts.TypeElement[] => {
+        if (!hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) || member.name === undefined) {
+            return []
+        }
+
+        if (tsInstance.isPropertyDeclaration(member) && !tsInstance.isPrivateIdentifier(member.name)) {
+            return [ tsInstance.factory.createPropertySignature(
+                undefined,
+                deepCloneNode(tsInstance, member.name),
+                member.questionToken === undefined ? undefined : deepCloneNode(tsInstance, member.questionToken),
+                member.type === undefined
+                    ? tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+                    : deepCloneNode(tsInstance, member.type)
+            ) ]
+        }
+
+        if (tsInstance.isMethodDeclaration(member) && !tsInstance.isPrivateIdentifier(member.name)) {
+            return [ tsInstance.factory.createMethodSignature(
+                undefined,
+                deepCloneNode(tsInstance, member.name),
+                member.questionToken === undefined ? undefined : deepCloneNode(tsInstance, member.questionToken),
+                member.typeParameters?.map((typeParameter) => deepCloneNode(tsInstance, typeParameter)),
+                member.parameters.map((parameter) => createSourceViewSignatureParameter(tsInstance, parameter)),
+                member.type === undefined
+                    ? tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+                    : deepCloneNode(tsInstance, member.type)
+            ) ]
+        }
+
+        return []
+    }))
+}
+
+function createSourceViewSignatureParameter(
+    tsInstance: TypeScript,
+    parameter: ts.ParameterDeclaration
+): ts.ParameterDeclaration {
+    return tsInstance.factory.createParameterDeclaration(
+        undefined,
+        parameter.dotDotDotToken === undefined ? undefined : deepCloneNode(tsInstance, parameter.dotDotDotToken),
+        deepCloneNode(tsInstance, parameter.name),
+        parameter.questionToken === undefined ? undefined : deepCloneNode(tsInstance, parameter.questionToken),
+        parameter.type === undefined
+            ? tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+            : deepCloneNode(tsInstance, parameter.type),
+        undefined
+    )
+}
+
+function createMixinApplyType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    typeParameters: ts.TypeParameterDeclaration[] | undefined,
+    instanceType: ts.TypeNode,
+    staticsType: ts.TypeNode
+): ts.TypeLiteralNode {
+    const factory = tsInstance.factory
+    const baseTypeParameterName = mixinApplyBaseTypeParameterName(declaration)
+    const requiredBase = requiredBaseType(tsInstance, declaration)
+    const baseConstraint = factory.createTypeReferenceNode(anyConstructorName, [
+        requiredBase === undefined
+            ? factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
+            : heritageTypeToTypeReference(tsInstance, requiredBase)
+    ])
+    return factory.createTypeLiteralNode([
+        factory.createPropertySignature(
+            [ factory.createToken(tsInstance.SyntaxKind.ReadonlyKeyword) ],
+            "mix",
+            undefined,
+            factory.createFunctionTypeNode(
+                [
+                    ...(typeParameters?.map((typeParameter) => {
+                        return deepCloneNode(tsInstance, typeParameter)
+                    }) ?? []),
+                    factory.createTypeParameterDeclaration(
+                        undefined,
+                        baseTypeParameterName,
+                        baseConstraint,
+                        undefined
+                    )
+                ],
+                [
+                    factory.createParameterDeclaration(
+                        undefined,
+                        undefined,
+                        "base",
+                        undefined,
+                        factory.createTypeReferenceNode(baseTypeParameterName, undefined)
+                    )
+                ],
+                factory.createTypeReferenceNode(mixinApplicationName, [
+                    factory.createTypeReferenceNode(baseTypeParameterName, undefined),
+                    instanceType,
+                    staticsType
+                ])
+            )
+        )
+    ])
+}
+
+function mixinApplyBaseTypeParameterName(declaration: ts.ClassDeclaration): string {
+    const usedNames = new Set(declaration.typeParameters?.map((typeParameter) => typeParameter.name.text) ?? [])
+    let name = "__MixinBase"
+
+    while (usedNames.has(name)) {
+        name = `_${name}`
+    }
+
+    return name
 }
 
 function interfaceHeritageClauses(

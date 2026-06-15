@@ -95,6 +95,37 @@ persisted instanceof ModelBase
 persisted instanceof Persisted
 ```
 
+## Manual Application
+
+Mixin classes can also be applied manually. This is useful when a library publishes
+classes created with this transformer, but the consuming project does not run the
+transformer itself:
+
+```ts
+class UserBase {
+    name: string = "Ada"
+}
+
+class User extends Named.mix(UserBase) {
+}
+
+const user = new User()
+
+user.name
+user.label()
+user instanceof Named
+user instanceof UserBase
+```
+
+For generic mixins, TypeScript cannot infer the base type after explicit mixin type
+arguments in the same call. Provide both the mixin type arguments and the base constructor
+type:
+
+```ts
+class StringBox extends StoredValue.mix<string, typeof UserBase>(UserBase) {
+}
+```
+
 ## Generics
 
 Generics are fully supported for mixins, consumers, `super`, and the resulting instance
@@ -271,7 +302,7 @@ const stringValue: string = inferred.value
 Mixin runtime metadata is available through exported unique symbols:
 
 ```ts
-import { base, factory, requirements } from "ts-mixin-class"
+import { base, factory, requirements } from "ts-mixin-class/base"
 
 SomeMixin[factory]
 SomeMixin[requirements]

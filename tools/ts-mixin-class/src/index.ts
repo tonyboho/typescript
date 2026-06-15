@@ -14,6 +14,7 @@ import {
     extendsClause,
     metadataBaseImportName,
     metadataBaseLocalName,
+    mixinApplicationName,
     mixinChainName,
     mixinFactoryName,
     normalizePath,
@@ -376,6 +377,7 @@ function createHelperTypeImport(
                 factory.createImportSpecifier(false, undefined, factory.createIdentifier(mixinChainName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(anyConstructorName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(classStaticsName)),
+                factory.createImportSpecifier(true, undefined, factory.createIdentifier(mixinApplicationName)),
                 factory.createImportSpecifier(true, undefined, factory.createIdentifier(mixinFactoryName)),
                 ...staticConflictImport,
                 factory.createImportSpecifier(

@@ -1,8 +1,14 @@
 import { C3LinearizationError, mergeC3Linearizations } from "./c3-linearization.js"
-
-export type AnyConstructor<T extends object = object> = new (...args: any[]) => T
-
-export type ClassStatics<C> = Omit<C, "prototype">
+import { base, factory, requirements, type AnyConstructor, type ClassStatics, type MixinFactory } from "./base.js"
+export {
+    base,
+    factory,
+    requirements,
+    type AnyConstructor,
+    type ClassStatics,
+    type MixinApplication,
+    type MixinFactory
+} from "./base.js"
 
 export type StaticNeverConflictKeys<Left, Right> = {
     [Key in Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]:
@@ -20,19 +26,15 @@ export type StaticStrictConflictKeys<Left, Right> = {
             : Key
 }[Extract<keyof ClassStatics<Left>, keyof ClassStatics<Right>>]
 
-export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
-
-export const factory: unique symbol = Symbol.for("ts-mixin-class.factory") as any
-export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements") as any
-export const base: unique symbol = Symbol.for("ts-mixin-class.base") as any
-
 export type RuntimeMixinClass<RequiredBase extends object = object> = {
     readonly [factory]: MixinFactory,
     readonly [requirements]: readonly RuntimeMixinClass[],
     readonly [base]: AnyConstructor<RequiredBase>
 }
 
-type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass
+type RuntimeMixinClassValue = AnyConstructor<any> & RuntimeMixinClass & {
+    readonly mix: <Base extends AnyConstructor<any>>(base: Base) => AnyConstructor<any>
+}
 
 type RuntimeMixinMetadata = {
     factory: MixinFactory,
@@ -74,6 +76,11 @@ export function defineMixinClass(
     Object.defineProperty(mixinClass, factory, { value : mixinFactory })
     Object.defineProperty(mixinClass, requirements, { value : requirementList })
     Object.defineProperty(mixinClass, base, { value : requiredBase })
+    Object.defineProperty(mixinClass, "mix", {
+        value(runtimeBase: AnyConstructor<any>) {
+            return mixinChain(runtimeBase, mixinClass)
+        }
+    })
     Object.defineProperty(mixinClass, Symbol.hasInstance, {
         value(instance: unknown) {
             return hasRuntimeMixinInstance(instance, mixinClass)

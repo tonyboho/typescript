@@ -1,3 +1,22 @@
+export type AnyConstructor<T extends object = object> = new (...args: any[]) => T
+
+export type ClassStatics<C> = Omit<C, "prototype">
+
+export type MixinFactory = (base: AnyConstructor<any>) => AnyConstructor<any>
+
+export type MixinApplication<
+    Base extends AnyConstructor<any>,
+    MixinInstance extends object,
+    MixinStatics
+> =
+    (new (...args: ConstructorParameters<Base>) => InstanceType<Base> & MixinInstance) &
+    ClassStatics<Base> &
+    ClassStatics<MixinStatics>
+
+export const factory: unique symbol = Symbol.for("ts-mixin-class.factory") as any
+export const requirements: unique symbol = Symbol.for("ts-mixin-class.requirements") as any
+export const base: unique symbol = Symbol.for("ts-mixin-class.base") as any
+
 export type NonFunctionPropertyNames<T> = {
     [Key in keyof T]: T[Key] extends (...args: any[]) => any ? never : Key
 }[keyof T]

@@ -62,7 +62,7 @@ it("expands an imported class-level @mixin() class into interface + factory + co
     t.match(
         printed,
         "import { defineMixinClass, mixinChain, type AnyConstructor, type ClassStatics, " +
-            "type MixinFactory, type StaticNeverConflictKeys, type base as __mixinBase, " +
+            "type MixinApplication, type MixinFactory, type StaticNeverConflictKeys, type base as __mixinBase, " +
             "type RuntimeMixinClass } from \"ts-mixin-class\"",
         "Helper import is added"
     )
@@ -76,7 +76,10 @@ it("expands an imported class-level @mixin() class into interface + factory + co
         printed,
         "defineMixinClass(\"SourceClass\", __SourceClass$mixin as unknown as MixinFactory, []) as unknown as " +
             "(new <T>(...args: any[]) => SourceClass<T>) & " +
-            "ClassStatics<ReturnType<typeof __SourceClass$mixin>> & RuntimeMixinClass",
+            "ClassStatics<ReturnType<typeof __SourceClass$mixin>> & {\n" +
+            "    readonly mix: <T, __MixinBase extends AnyConstructor<any>>(base: __MixinBase) => " +
+            "MixinApplication<__MixinBase, SourceClass<T>, ReturnType<typeof __SourceClass$mixin>>;\n" +
+            "} & RuntimeMixinClass",
         "Value const registers the factory with the runtime helper and keeps the declarative cast"
     )
 })
@@ -145,7 +148,7 @@ it("supports custom package and decorator options", async (t: Test) => {
     t.match(
         printSourceFile(ts, transformedFile),
         "import { defineMixinClass, mixinChain, type AnyConstructor, type ClassStatics, " +
-            "type MixinFactory, type StaticNeverConflictKeys, type base as __mixinBase, " +
+            "type MixinApplication, type MixinFactory, type StaticNeverConflictKeys, type base as __mixinBase, " +
             "type RuntimeMixinClass } from \"custom-mixin-package\"",
         "Helper import uses the custom package name"
     )

@@ -1,4 +1,5 @@
-import { base, factory, mixin, requirements } from "ts-mixin-class"
+import { mixin } from "ts-mixin-class"
+import { base, factory, requirements } from "ts-mixin-class/base"
 
 import { it } from "@bryntum/siesta/nodejs.js"
 import type { Test } from "@bryntum/siesta/nodejs.js"
