@@ -19,11 +19,55 @@ import type { TypeScript } from "./util.js"
 export function buildImportedNameMap(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
-    resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined
+    resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined,
+    facts?: SourceFileFacts
 ): Map<string, ImportedNameBinding> {
     const importMap = new Map<string, ImportedNameBinding>()
 
     if (resolveModuleFileName === undefined) {
+        return importMap
+    }
+
+    const addImport = (statement: ts.ImportDeclaration, specifier: string, localNamesLength: number): void => {
+        if (localNamesLength === 0) {
+            return
+        }
+
+        const importClause = statement.importClause
+        const namedBindings = importClause?.namedBindings
+
+        const resolvedFileName = resolveModuleFileName(specifier, sourceFile.fileName)
+
+        if (resolvedFileName === undefined) {
+            return
+        }
+
+        if (importClause?.name !== undefined) {
+            importMap.set(importClause.name.text, {
+                resolvedFileName,
+                importedName : "default",
+                typeOnly     : importClause.isTypeOnly
+            })
+        }
+
+        if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
+            return
+        }
+
+        for (const element of namedBindings.elements) {
+            importMap.set(element.name.text, {
+                resolvedFileName,
+                importedName : element.propertyName?.text ?? element.name.text,
+                typeOnly     : importClause?.isTypeOnly === true || element.isTypeOnly
+            })
+        }
+    }
+
+    if (facts !== undefined) {
+        for (const importFacts of facts.imports) {
+            addImport(importFacts.declaration, importFacts.specifier, importFacts.localNames.length)
+        }
+
         return importMap
     }
 
@@ -36,32 +80,10 @@ export function buildImportedNameMap(
 
         const importClause = statement.importClause
         const namedBindings = importClause?.namedBindings
+        const localNamesLength = (importClause?.name === undefined ? 0 : 1) +
+            (namedBindings !== undefined && tsInstance.isNamedImports(namedBindings) ? namedBindings.elements.length : 0)
 
-        const resolvedFileName = resolveModuleFileName(statement.moduleSpecifier.text, sourceFile.fileName)
-
-        if (resolvedFileName === undefined) {
-            continue
-        }
-
-        if (importClause?.name !== undefined) {
-            importMap.set(importClause.name.text, {
-                resolvedFileName,
-                importedName : "default",
-                typeOnly     : importClause.isTypeOnly
-            })
-        }
-
-        if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
-            continue
-        }
-
-        for (const element of namedBindings.elements) {
-            importMap.set(element.name.text, {
-                resolvedFileName,
-                importedName : element.propertyName?.text ?? element.name.text,
-                typeOnly     : importClause?.isTypeOnly === true || element.isTypeOnly
-            })
-        }
+        addImport(statement, statement.moduleSpecifier.text, localNamesLength)
     }
 
     return importMap
@@ -110,7 +132,7 @@ export function buildFileMixinContext(
     addLocalMixinRefs(sourceFile, imports, facts, context)
 
     if (crossFile !== undefined) {
-        addImportedMixinRefs(tsInstance, sourceFile, crossFile, context)
+        addImportedMixinRefs(tsInstance, sourceFile, crossFile, facts, context)
     }
 
     addSameFileDependencies(facts, context)
@@ -158,31 +180,17 @@ function addImportedMixinRefs(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile,
     crossFile: CrossFileContext,
+    facts: SourceFileFacts,
     context: FileMixinContext
 ): void {
-    const importMap = buildImportedNameMap(tsInstance, sourceFile, crossFile.resolveModuleFileName)
+    const importMap = buildImportedNameMap(tsInstance, sourceFile, crossFile.resolveModuleFileName, facts)
 
-    for (const statement of sourceFile.statements) {
-        if (!tsInstance.isImportDeclaration(statement) ||
-            !tsInstance.isStringLiteral(statement.moduleSpecifier)
-        ) {
+    for (const importFacts of facts.imports) {
+        if (importFacts.localNames.length === 0) {
             continue
         }
 
-        const importClause = statement.importClause
-        const namedBindings = importClause?.namedBindings
-        const localNames = [
-            ...(importClause?.name === undefined ? [] : [ importClause.name.text ]),
-            ...(namedBindings !== undefined && tsInstance.isNamedImports(namedBindings)
-                ? namedBindings.elements.map((element) => element.name.text)
-                : [])
-        ]
-
-        if (localNames.length === 0) {
-            continue
-        }
-
-        for (const localName of localNames) {
+        for (const localName of importFacts.localNames) {
             const imported  = importMap.get(localName)
 
             if (imported === undefined || context.byLocalName.has(localName)) {
@@ -202,9 +210,9 @@ function addImportedMixinRefs(
                 const importedValueName = registered.defaultExport ? "default" : registered.name
 
                 context.usedFactoryImports.set(
-                    `${statement.moduleSpecifier.text}:${importedValueName}:${localValueName}`,
+                    `${importFacts.specifier}:${importedValueName}:${localValueName}`,
                     {
-                        specifier    : statement.moduleSpecifier.text,
+                        specifier    : importFacts.specifier,
                         importedName : importedValueName,
                         localName    : localValueName
                     }
@@ -216,7 +224,7 @@ function addImportedMixinRefs(
                 : importedRequiredBaseRef(
                     importMap,
                     imported.resolvedFileName,
-                    statement.moduleSpecifier.text,
+                    importFacts.specifier,
                     registered.requiredBaseName,
                     localName + "$requiredBase"
                 )
@@ -227,7 +235,7 @@ function addImportedMixinRefs(
                 localValueName,
                 localFactoryName : generatedName(localName, mixinFactorySuffix),
                 factoryImport    : {
-                    specifier    : statement.moduleSpecifier.text,
+                    specifier    : importFacts.specifier,
                     importedName : generatedName(registered.name, mixinFactorySuffix)
                 },
                 requiredBase,
@@ -236,7 +244,7 @@ function addImportedMixinRefs(
                 configProperties : registered.configProperties,
                 missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
                     ? {
-                        specifier    : statement.moduleSpecifier.text,
+                        specifier    : importFacts.specifier,
                         importedName : registered.defaultExport ? "default" : registered.name
                     }
                     : undefined
@@ -293,13 +301,15 @@ function addTransitiveRegistryClosure(
             continue
         }
 
+        const specifier = relativeImportSpecifier(sourceFile.fileName, registered.fileName)
+
         context.byKey.set(key, {
             key,
             className        : registered.name,
             localValueName   : undefined,
             localFactoryName : generatedName(registered.name, mixinFactorySuffix),
             factoryImport    : {
-                specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                specifier,
                 importedName : generatedName(registered.name, mixinFactorySuffix)
             },
             requiredBase     : registered.requiredBaseName === undefined
@@ -307,7 +317,7 @@ function addTransitiveRegistryClosure(
                 : {
                     localName : registered.name + "$requiredBase",
                     import    : {
-                        specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                        specifier,
                         importedName : registered.requiredBaseName,
                         localName    : registered.name + "$requiredBase"
                     }
@@ -317,7 +327,7 @@ function addTransitiveRegistryClosure(
             configProperties : registered.configProperties,
             missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
                 ? {
-                    specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
+                    specifier,
                     importedName : registered.defaultExport ? "default" : registered.name
                 }
                 : undefined

@@ -7,7 +7,7 @@ import { buildFileMixinContext } from "./context.js"
 import { createMixinDeclarationDiagnosticAliases } from "./expand-util.js"
 import { expandMixinClass } from "./mixin-expand.js"
 import { localMixinHeritageTypes } from "./mixin-refs.js"
-import { getSourceFileFacts } from "./source-file-facts.js"
+import { getSourceFileFacts, type SourceFileFacts } from "./source-file-facts.js"
 import {
     anyConstructorName,
     classStaticsName,
@@ -266,6 +266,11 @@ export function transformSourceFile(
     }
 
     const facts                 = getSourceFileFacts(tsInstance, sourceFile, resolvedOptions)
+
+    if (!shouldTransformSourceFile(facts, resolvedOptions, crossFile)) {
+        return sourceFile
+    }
+
     const mixinDecoratorImports = facts.mixinDecoratorImports
     const context               = buildFileMixinContext(
         tsInstance, sourceFile, mixinDecoratorImports, resolvedOptions, crossFile, facts
@@ -473,6 +478,25 @@ function createHelperTypeImport(
         ),
         factory.createStringLiteral(options.packageName)
     )
+}
+
+function shouldTransformSourceFile(
+    facts: SourceFileFacts,
+    options: TransformOptions,
+    crossFile: CrossFileContext | undefined
+): boolean {
+    const hasMixinDecoratorImports = facts.mixinDecoratorImports.identifiers.size > 0 ||
+        facts.mixinDecoratorImports.namespaces.size > 0
+    const hasMixinDeclaration = hasMixinDecoratorImports &&
+        facts.classes.some((classFacts) => classFacts.hasMixinDecorator)
+    const hasPotentialConsumer = facts.classes.some((classFacts) => {
+        return classFacts.implementsIdentifierNames.length > 0
+    }) && (hasMixinDecoratorImports || crossFile !== undefined)
+    const hasPotentialConstructionRewrite = options.constructionConfig === "public-only" &&
+        options.allowUndefinedForRequiredProperties &&
+        facts.classes.some((classFacts) => classFacts.extendsType !== undefined)
+
+    return hasMixinDeclaration || hasPotentialConsumer || hasPotentialConstructionRewrite
 }
 
 function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {

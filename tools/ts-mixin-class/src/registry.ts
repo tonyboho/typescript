@@ -71,7 +71,12 @@ export function buildMixinRegistry(
         let importMap = importMaps.get(fileName)
 
         if (importMap === undefined) {
-            importMap = buildImportedNameMap(tsInstance, candidate.sourceFile, resolveModuleFileName)
+            importMap = buildImportedNameMap(
+                tsInstance,
+                candidate.sourceFile,
+                resolveModuleFileName,
+                getSourceFileFacts(tsInstance, candidate.sourceFile, resolvedOptions)
+            )
             importMaps.set(fileName, importMap)
         }
 
