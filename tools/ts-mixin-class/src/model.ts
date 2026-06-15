@@ -1,0 +1,242 @@
+import type * as ts from "typescript"
+import type { PluginConfig } from "ts-patch"
+import { hasModifier } from "./util.js"
+import type { TypeScript } from "./util.js"
+
+export type MixinClassTransformerConfig = PluginConfig & {
+    packageName? : string,
+    decoratorName? : string,
+    mode? : MixinClassTransformerMode,
+    staticCollisionCheck? : StaticCollisionCheckMode | boolean,
+    constructionConfig? : ConstructionConfigMode
+}
+
+export type MixinClassTransformerMode = "emit" | "ide"
+export type StaticCollisionCheckMode = false | "never" | "strict"
+export type ConstructionConfigMode = "public-only" | "instance-type"
+
+export type TransformOptions = {
+    packageName : string,
+    decoratorName : string,
+    sourceView : boolean,
+    staticCollisionCheck : StaticCollisionCheckMode,
+    constructionConfig : ConstructionConfigMode
+}
+
+export type MixinDecoratorImports = {
+    identifiers : Set<string>,
+    namespaces  : Set<string>
+}
+
+export type RegisteredMixin = {
+    fileName     : string,
+    name         : string,
+    defaultExport : boolean,
+    // Dependency registry keys (mixin entries from implements)
+    dependencies : string[],
+    requiredBaseName : string | undefined,
+    configProperties : ConfigProperty[]
+}
+
+export type MixinRegistry = Map<string, RegisteredMixin>
+
+export type CrossFileContext = {
+    registry : MixinRegistry,
+    resolveModuleFileName : (specifier: string, containingFile: string) => string | undefined
+    canImportRuntimeValue? : (resolvedFileName: string) => boolean
+}
+
+export type ImportedNameBinding = {
+    resolvedFileName : string,
+    importedName     : string,
+    typeOnly         : boolean
+}
+
+// Mixin reference from the transformed file's point of view
+export type ResolvedMixinRef = {
+    key              : string,
+    className        : string,
+    // Mixin value name in this file (same-file or imported); undefined for a
+    // transitive dependency the file does not import.
+    localValueName   : string | undefined,
+    localFactoryName : string,
+    factoryImport    : { specifier: string, importedName: string } | undefined,
+    requiredBase     : {
+        localName : string,
+        import    : { specifier: string, importedName: string, localName: string } | undefined
+    } | undefined,
+    dependencies     : string[],
+    declaration      : ts.ClassDeclaration | undefined
+    configProperties : ConfigProperty[]
+    missingRuntimeImport : {
+        specifier : string,
+        importedName : string
+    } | undefined
+}
+
+export type FileMixinContext = {
+    byLocalName : Map<string, ResolvedMixinRef>,
+    byKey       : Map<string, ResolvedMixinRef>,
+    // Factories actually used in generated chains.
+    usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>
+}
+
+export type RequiredBaseValidation = {
+    typeParameter : ts.TypeParameterDeclaration,
+    typeArgument  : ts.TypeNode
+}
+
+export type RequiredBaseRequirement = {
+    typeNode : ts.TypeNode,
+    name     : string
+}
+
+export type StaticSource = {
+    name : string,
+    typeNode : ts.TypeNode,
+    staticNames : Set<string> | undefined
+}
+
+export type ConfigProperty = {
+    name     : string,
+    optional : boolean
+}
+
+export type MixinDeclarationDiagnostic = {
+    node    : ts.Node,
+    message : string
+}
+
+export class DependencyLinearizationError extends Error {
+    constructor(readonly pendingSequences: readonly string[][]) {
+        super("Cannot linearize mixin classes: inconsistent requirements")
+    }
+}
+
+export const defaultTransformOptions: TransformOptions = {
+    packageName          : "ts-mixin-class",
+    decoratorName        : "mixin",
+    sourceView           : false,
+    staticCollisionCheck : "never",
+    constructionConfig   : "public-only"
+}
+
+export const anyConstructorName = "AnyConstructor"
+export const classStaticsName   = "ClassStatics"
+export const defineMixinClassName = "defineMixinClass"
+export const mixinChainName = "mixinChain"
+export const mixinFactoryName = "MixinFactory"
+export const runtimeMixinClassName = "RuntimeMixinClass"
+export const staticNeverConflictKeysName = "StaticNeverConflictKeys"
+export const staticStrictConflictKeysName = "StaticStrictConflictKeys"
+export const metadataBaseImportName = "base"
+export const metadataBaseLocalName = "__mixinBase"
+export const mixinFactorySuffix = "$mixin"
+export const consumerBaseSuffix = "$base"
+export const consumerEmptyBaseSuffix = "$empty"
+export const mixinValueSuffix = "$mixinValue"
+
+export function generatedName(name: string, suffix: string): string {
+    return `__${name}${suffix}`
+}
+
+export function instanceConfigProperties(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration,
+    requirePublicModifier = false
+): ConfigProperty[] {
+    return uniqueConfigProperties(declaration.members
+        .filter((member): member is ts.PropertyDeclaration => {
+            return tsInstance.isPropertyDeclaration(member) &&
+                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) &&
+                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) &&
+                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) &&
+                (!requirePublicModifier || hasModifier(tsInstance, member, tsInstance.SyntaxKind.PublicKeyword))
+        })
+        .flatMap((member) => {
+            const name = propertyNameText(tsInstance, member.name)
+
+            return name === undefined
+                ? []
+                : [ {
+                    name,
+                    optional : member.questionToken !== undefined
+                } ]
+        })
+    )
+}
+
+export function propertyNameText(tsInstance: TypeScript, name: ts.PropertyName): string | undefined {
+    if (tsInstance.isIdentifier(name) || tsInstance.isStringLiteral(name) || tsInstance.isNumericLiteral(name)) {
+        return name.text
+    }
+
+    return undefined
+}
+
+export function uniqueConfigProperties(values: ConfigProperty[]): ConfigProperty[] {
+    const byName = new Map<string, ConfigProperty>()
+
+    for (const value of values) {
+        const existing = byName.get(value.name)
+
+        byName.set(value.name, {
+            name     : value.name,
+            optional : (existing?.optional ?? true) && value.optional
+        })
+    }
+
+    return [ ...byName.values() ]
+}
+
+export function registryKey(fileName: string, name: string): string {
+    return `${normalizePath(fileName)}::${name}`
+}
+
+export function normalizePath(fileName: string): string {
+    return fileName.replaceAll("\\", "/")
+}
+
+export function implementsTypes(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.ExpressionWithTypeArguments[] {
+    const clause = declaration.heritageClauses?.find((heritageClause) => {
+        return heritageClause.token === tsInstance.SyntaxKind.ImplementsKeyword
+    })
+
+    return clause === undefined ? [] : [ ...clause.types ]
+}
+
+export function requiredBaseType(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.ExpressionWithTypeArguments | undefined {
+    return extendsClause(tsInstance, declaration)?.types[0]
+}
+
+export function requiredBaseIdentifierName(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): string | undefined {
+    const requiredBase = requiredBaseType(tsInstance, declaration)
+
+    return requiredBase !== undefined && tsInstance.isIdentifier(requiredBase.expression)
+        ? requiredBase.expression.text
+        : undefined
+}
+
+export function extendsClause(
+    tsInstance: TypeScript,
+    declaration: ts.ClassDeclaration
+): ts.HeritageClause | undefined {
+    return declaration.heritageClauses?.find((heritageClause) => {
+        return heritageClause.token === tsInstance.SyntaxKind.ExtendsKeyword
+    })
+}
+
+export function isNamedClassElement(
+    member: ts.ClassElement
+): member is ts.ClassElement & { name: ts.PropertyName } {
+    return member.name !== undefined
+}

@@ -1,10 +1,52 @@
-import path from "node:path"
 import type * as ts from "typescript"
-import type { PluginConfig, ProgramTransformerExtras } from "ts-patch"
+import type { ProgramTransformerExtras } from "ts-patch"
+import { buildFileMixinContext } from "./context.js"
+import { collectMixinDecoratorImports, hasMixinDecorator, isPackageImport } from "./decorators.js"
+import { buildInterfaceMembers, interfaceDeclarationRange } from "./interface-members.js"
+import { linearizeDependencies } from "./linearization.js"
+import {
+    anyConstructorName,
+    classStaticsName,
+    consumerBaseSuffix,
+    consumerEmptyBaseSuffix,
+    defaultTransformOptions,
+    defineMixinClassName,
+    DependencyLinearizationError,
+    extendsClause,
+    generatedName,
+    implementsTypes,
+    instanceConfigProperties,
+    isNamedClassElement,
+    metadataBaseImportName,
+    metadataBaseLocalName,
+    mixinChainName,
+    mixinFactoryName,
+    mixinFactorySuffix,
+    normalizePath,
+    propertyNameText,
+    requiredBaseIdentifierName,
+    requiredBaseType,
+    runtimeMixinClassName,
+    staticNeverConflictKeysName,
+    staticStrictConflictKeysName,
+    uniqueConfigProperties,
+    type ConfigProperty,
+    type ConstructionConfigMode,
+    type CrossFileContext,
+    type FileMixinContext,
+    type MixinClassTransformerConfig,
+    type MixinDeclarationDiagnostic,
+    type RequiredBaseRequirement,
+    type RequiredBaseValidation,
+    type ResolvedMixinRef,
+    type StaticCollisionCheckMode,
+    type StaticSource,
+    type TransformOptions
+} from "./model.js"
+import { buildMixinRegistry, hasRuntimeModuleForDeclaration } from "./registry.js"
 import {
     cloneNode,
     cloneOptionalNode,
-    cloneOptionalNodeArray,
     cloneSourceFileForTransform,
     deepCloneNode,
     generatedTextRange,
@@ -22,147 +64,18 @@ import {
 import type { TypeScript } from "./util.js"
 
 export * from "./runtime.js"
+export type {
+    ConstructionConfigMode,
+    CrossFileContext,
+    MixinClassTransformerConfig,
+    MixinClassTransformerMode,
+    MixinRegistry,
+    RegisteredMixin,
+    StaticCollisionCheckMode
+} from "./model.js"
+export { hasMixinDecorator } from "./decorators.js"
+export { buildMixinRegistry } from "./registry.js"
 export { printSourceFile } from "./util.js"
-
-export type MixinClassTransformerConfig = PluginConfig & {
-    packageName? : string,
-    decoratorName? : string,
-    mode? : MixinClassTransformerMode,
-    staticCollisionCheck? : StaticCollisionCheckMode | boolean,
-    constructionConfig? : ConstructionConfigMode
-}
-
-export type MixinClassTransformerMode = "emit" | "ide"
-export type StaticCollisionCheckMode = false | "never" | "strict"
-export type ConstructionConfigMode = "public-only" | "instance-type"
-
-type TransformOptions = {
-    packageName : string,
-    decoratorName : string,
-    sourceView : boolean,
-    staticCollisionCheck : StaticCollisionCheckMode,
-    constructionConfig : ConstructionConfigMode
-}
-
-type MixinDecoratorImports = {
-    identifiers : Set<string>,
-    namespaces  : Set<string>
-}
-
-// ---------------------------------------------------------------------------
-// Program-wide mixin class registry (cross-file support)
-
-export type RegisteredMixin = {
-    fileName     : string,
-    name         : string,
-    defaultExport : boolean,
-    // Dependency registry keys (mixin entries from implements)
-    dependencies : string[],
-    requiredBaseName : string | undefined,
-    configProperties : ConfigProperty[]
-}
-
-export type MixinRegistry = Map<string, RegisteredMixin>
-
-export type CrossFileContext = {
-    registry : MixinRegistry,
-    resolveModuleFileName : (specifier: string, containingFile: string) => string | undefined
-    canImportRuntimeValue? : (resolvedFileName: string) => boolean
-}
-
-type ImportedNameBinding = {
-    resolvedFileName : string,
-    importedName     : string,
-    typeOnly         : boolean
-}
-
-// Mixin reference from the transformed file's point of view
-type ResolvedMixinRef = {
-    key              : string,
-    className        : string,
-    // Mixin value name in this file (same-file or imported); undefined for a
-    // transitive dependency the file does not import.
-    localValueName   : string | undefined,
-    localFactoryName : string,
-    factoryImport    : { specifier: string, importedName: string } | undefined,
-    requiredBase     : {
-        localName : string,
-        import    : { specifier: string, importedName: string, localName: string } | undefined
-    } | undefined,
-    dependencies     : string[],
-    declaration      : ts.ClassDeclaration | undefined
-    configProperties : ConfigProperty[]
-    missingRuntimeImport : {
-        specifier : string,
-        importedName : string
-    } | undefined
-}
-
-type FileMixinContext = {
-    byLocalName : Map<string, ResolvedMixinRef>,
-    byKey       : Map<string, ResolvedMixinRef>,
-    // Factories actually used in generated chains.
-    usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>
-}
-
-type RequiredBaseValidation = {
-    typeParameter : ts.TypeParameterDeclaration,
-    typeArgument  : ts.TypeNode
-}
-
-type RequiredBaseRequirement = {
-    typeNode : ts.TypeNode,
-    name     : string
-}
-
-type StaticSource = {
-    name : string,
-    typeNode : ts.TypeNode,
-    staticNames : Set<string> | undefined
-}
-
-type ConfigProperty = {
-    name     : string,
-    optional : boolean
-}
-
-type MixinDeclarationDiagnostic = {
-    node    : ts.Node,
-    message : string
-}
-
-class DependencyLinearizationError extends Error {
-    constructor(readonly pendingSequences: readonly string[][]) {
-        super("Cannot linearize mixin classes: inconsistent requirements")
-    }
-}
-
-const defaultTransformOptions: TransformOptions = {
-    packageName          : "ts-mixin-class",
-    decoratorName        : "mixin",
-    sourceView           : false,
-    staticCollisionCheck : "never",
-    constructionConfig   : "public-only"
-}
-
-const anyConstructorName = "AnyConstructor"
-const classStaticsName   = "ClassStatics"
-const defineMixinClassName = "defineMixinClass"
-const mixinChainName = "mixinChain"
-const mixinFactoryName = "MixinFactory"
-const runtimeMixinClassName = "RuntimeMixinClass"
-const staticNeverConflictKeysName = "StaticNeverConflictKeys"
-const staticStrictConflictKeysName = "StaticStrictConflictKeys"
-const metadataBaseImportName = "base"
-const metadataBaseLocalName = "__mixinBase"
-const mixinFactorySuffix = "$mixin"
-const consumerBaseSuffix = "$base"
-const consumerEmptyBaseSuffix = "$empty"
-const mixinValueSuffix = "$mixinValue"
-
-function generatedName(name: string, suffix: string): string {
-    return `__${name}${suffix}`
-}
 
 // ---------------------------------------------------------------------------
 // ts-patch ProgramTransformer
@@ -270,440 +183,6 @@ export function createMixinClassCompilerHost(
                 true,
                 scriptKindFromFileName(tsInstance, fileName)
             )
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Building the mixin class registry from all program files
-
-export function buildMixinRegistry(
-    tsInstance: TypeScript,
-    program: ts.Program,
-    options: Partial<TransformOptions> = {},
-    resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined
-): MixinRegistry {
-    const resolvedOptions = {
-        ...defaultTransformOptions,
-        ...options
-    }
-
-    const candidates: Candidate[] = []
-
-    for (const sourceFile of program.getSourceFiles()) {
-        if (shouldSkipRegistrySourceFile(sourceFile)) {
-            continue
-        }
-
-        if (sourceFile.isDeclarationFile) {
-            candidates.push(...collectDeclarationFileMixinCandidates(tsInstance, sourceFile))
-            continue
-        }
-
-        if (!sourceFile.text.includes(resolvedOptions.packageName)) {
-            continue
-        }
-
-        const imports = collectMixinDecoratorImports(tsInstance, sourceFile, resolvedOptions)
-
-        if (imports.identifiers.size === 0 && imports.namespaces.size === 0) {
-            continue
-        }
-
-        for (const statement of sourceFile.statements) {
-            if (!tsInstance.isClassDeclaration(statement) ||
-                statement.name === undefined ||
-                !hasMixinDecorator(tsInstance, statement, imports, resolvedOptions)
-            ) {
-                continue
-            }
-
-            candidates.push({
-                sourceFile,
-                name                 : statement.name.text,
-                dependencyNames      : implementsTypes(tsInstance, statement)
-                    .map((heritageType) => heritageType.expression)
-                    .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
-                    .map((expression) => expression.text),
-                requiredBaseName     : requiredBaseIdentifierName(tsInstance, statement),
-                configProperties     : instanceConfigProperties(tsInstance, statement, true),
-                declarationHeritage  : false,
-                defaultExport        : hasModifier(tsInstance, statement, tsInstance.SyntaxKind.DefaultKeyword)
-            })
-        }
-    }
-
-    const registry: MixinRegistry = new Map()
-
-    for (const candidate of candidates) {
-        registry.set(registryKey(candidate.sourceFile.fileName, candidate.name), {
-            fileName          : candidate.sourceFile.fileName,
-            name              : candidate.name,
-            defaultExport     : candidate.defaultExport,
-            dependencies      : [],
-            requiredBaseName  : candidate.requiredBaseName,
-            configProperties    : candidate.configProperties
-        })
-
-        if (candidate.defaultExport) {
-            registry.set(registryKey(candidate.sourceFile.fileName, "default"), registry.get(
-                registryKey(candidate.sourceFile.fileName, candidate.name)
-            )!)
-        }
-    }
-
-    const importMaps = new Map<string, Map<string, { resolvedFileName: string, importedName: string }>>()
-
-    for (const candidate of candidates) {
-        const fileName = candidate.sourceFile.fileName
-        const entry    = registry.get(registryKey(fileName, candidate.name))
-
-        if (entry === undefined) {
-            continue
-        }
-
-        let importMap = importMaps.get(fileName)
-
-        if (importMap === undefined) {
-            importMap = buildImportedNameMap(tsInstance, candidate.sourceFile, resolveModuleFileName)
-            importMaps.set(fileName, importMap)
-        }
-
-        for (const dependencyName of candidate.dependencyNames) {
-            const sameFileKey = registryKey(fileName, dependencyName)
-
-            if (registry.has(sameFileKey)) {
-                entry.dependencies.push(sameFileKey)
-                continue
-            }
-
-            const imported = importMap.get(dependencyName)
-
-            if (imported !== undefined) {
-                const importedKey = registryKey(imported.resolvedFileName, imported.importedName)
-
-                if (registry.has(importedKey)) {
-                    entry.dependencies.push(importedKey)
-                    continue
-                }
-            }
-
-            if (candidate.declarationHeritage && entry.requiredBaseName === undefined) {
-                entry.requiredBaseName = dependencyName
-            }
-        }
-    }
-
-    return registry
-}
-
-type Candidate = {
-    sourceFile           : ts.SourceFile,
-    name                 : string,
-    dependencyNames      : string[],
-    requiredBaseName     : string | undefined,
-    configProperties     : ConfigProperty[],
-    declarationHeritage  : boolean,
-    defaultExport        : boolean
-}
-
-function shouldSkipRegistrySourceFile(sourceFile: ts.SourceFile): boolean {
-    if (sourceFile.isDeclarationFile) {
-        return !/\.[cm]?tsx?$/.test(normalizePath(sourceFile.fileName))
-    }
-
-    return shouldSkipFileName(sourceFile.fileName)
-}
-
-function collectDeclarationFileMixinCandidates(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile
-): Candidate[] {
-    const candidates: Candidate[] = []
-    const interfaces = new Map<string, ts.InterfaceDeclaration>()
-    const defaultExportNames = new Set<string>()
-
-    for (const statement of sourceFile.statements) {
-        if (tsInstance.isInterfaceDeclaration(statement)) {
-            interfaces.set(statement.name.text, statement)
-            continue
-        }
-
-        if (tsInstance.isExportAssignment(statement) && tsInstance.isIdentifier(statement.expression)) {
-            defaultExportNames.add(statement.expression.text)
-        }
-    }
-
-    for (const statement of sourceFile.statements) {
-        if (!tsInstance.isVariableStatement(statement)) {
-            continue
-        }
-
-        const exportedStatement = hasModifier(tsInstance, statement, tsInstance.SyntaxKind.ExportKeyword)
-
-        for (const declaration of statement.declarationList.declarations) {
-            if (!tsInstance.isIdentifier(declaration.name) ||
-                declaration.type === undefined ||
-                !typeReferencesRuntimeMixinClass(tsInstance, declaration.type)
-            ) {
-                continue
-            }
-
-            const defaultExport = defaultExportNames.has(declaration.name.text)
-
-            if (!exportedStatement && !defaultExport) {
-                continue
-            }
-
-            candidates.push({
-                sourceFile,
-                name                 : declaration.name.text,
-                dependencyNames      : interfaceExtendsNames(tsInstance, interfaces.get(declaration.name.text)),
-                requiredBaseName     : undefined,
-                configProperties     : interfaceConfigProperties(tsInstance, interfaces.get(declaration.name.text)),
-                declarationHeritage  : true,
-                defaultExport
-            })
-        }
-    }
-
-    return candidates
-}
-
-function typeReferencesRuntimeMixinClass(tsInstance: TypeScript, typeNode: ts.TypeNode): boolean {
-    if (tsInstance.isTypeReferenceNode(typeNode) &&
-        tsInstance.isIdentifier(typeNode.typeName) &&
-        typeNode.typeName.text === runtimeMixinClassName
-    ) {
-        return true
-    }
-
-    if (tsInstance.isIntersectionTypeNode(typeNode) || tsInstance.isUnionTypeNode(typeNode)) {
-        return typeNode.types.some((type) => typeReferencesRuntimeMixinClass(tsInstance, type))
-    }
-
-    if (tsInstance.isParenthesizedTypeNode(typeNode)) {
-        return typeReferencesRuntimeMixinClass(tsInstance, typeNode.type)
-    }
-
-    return false
-}
-
-function interfaceExtendsNames(
-    tsInstance: TypeScript,
-    declaration: ts.InterfaceDeclaration | undefined
-): string[] {
-    const clause = declaration?.heritageClauses?.find((heritageClause) => {
-        return heritageClause.token === tsInstance.SyntaxKind.ExtendsKeyword
-    })
-
-    if (clause === undefined) {
-        return []
-    }
-
-    return clause.types
-        .map((heritageType) => heritageType.expression)
-        .filter((expression): expression is ts.Identifier => tsInstance.isIdentifier(expression))
-        .map((expression) => expression.text)
-}
-
-function interfaceConfigProperties(
-    tsInstance: TypeScript,
-    declaration: ts.InterfaceDeclaration | undefined
-): ConfigProperty[] {
-    if (declaration === undefined) {
-        return []
-    }
-
-    return uniqueConfigProperties(declaration.members
-        .filter((member): member is ts.PropertySignature => {
-            return tsInstance.isPropertySignature(member) && member.name !== undefined
-        })
-        .flatMap((member) => {
-            const name = propertyNameText(tsInstance, member.name)
-
-            return name === undefined
-                ? []
-                : [ {
-                    name,
-                    optional : member.questionToken !== undefined
-                } ]
-        })
-    )
-}
-
-function instanceConfigProperties(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration,
-    requirePublicModifier = false
-): ConfigProperty[] {
-    return uniqueConfigProperties(declaration.members
-        .filter((member): member is ts.PropertyDeclaration => {
-            return tsInstance.isPropertyDeclaration(member) &&
-                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) &&
-                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) &&
-                !hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) &&
-                (!requirePublicModifier || hasModifier(tsInstance, member, tsInstance.SyntaxKind.PublicKeyword))
-        })
-        .flatMap((member) => {
-            const name = propertyNameText(tsInstance, member.name)
-
-            return name === undefined
-                ? []
-                : [ {
-                    name,
-                    optional : member.questionToken !== undefined
-                } ]
-        })
-    )
-}
-
-function propertyNameText(tsInstance: TypeScript, name: ts.PropertyName): string | undefined {
-    if (tsInstance.isIdentifier(name) || tsInstance.isStringLiteral(name) || tsInstance.isNumericLiteral(name)) {
-        return name.text
-    }
-
-    return undefined
-}
-
-function uniqueStrings(values: string[]): string[] {
-    return [ ...new Set(values) ]
-}
-
-function uniqueConfigProperties(values: ConfigProperty[]): ConfigProperty[] {
-    const byName = new Map<string, ConfigProperty>()
-
-    for (const value of values) {
-        const existing = byName.get(value.name)
-
-        byName.set(value.name, {
-            name     : value.name,
-            optional : (existing?.optional ?? true) && value.optional
-        })
-    }
-
-    return [ ...byName.values() ]
-}
-
-function registryKey(fileName: string, name: string): string {
-    return `${normalizePath(fileName)}::${name}`
-}
-
-function normalizePath(fileName: string): string {
-    return fileName.replaceAll("\\", "/")
-}
-
-function hasRuntimeModuleForDeclaration(
-    tsInstance: TypeScript,
-    compilerHost: ts.CompilerHost,
-    fileName: string
-): boolean {
-    if (!fileName.endsWith(".d.ts") && !fileName.endsWith(".d.mts") && !fileName.endsWith(".d.cts")) {
-        return true
-    }
-
-    return runtimeModuleFileNames(fileName).some((runtimeFileName) => {
-        return compilerHost.fileExists(runtimeFileName) ||
-            tsInstance.sys.fileExists(runtimeFileName)
-    })
-}
-
-function runtimeModuleFileNames(declarationFileName: string): string[] {
-    if (declarationFileName.endsWith(".d.mts")) {
-        return [
-            declarationFileName.slice(0, -".d.mts".length) + ".mjs",
-            declarationFileName.slice(0, -".d.mts".length) + ".js"
-        ]
-    }
-
-    if (declarationFileName.endsWith(".d.cts")) {
-        return [
-            declarationFileName.slice(0, -".d.cts".length) + ".cjs",
-            declarationFileName.slice(0, -".d.cts".length) + ".js"
-        ]
-    }
-
-    return [
-        declarationFileName.slice(0, -".d.ts".length) + ".js",
-        declarationFileName.slice(0, -".d.ts".length) + ".mjs",
-        declarationFileName.slice(0, -".d.ts".length) + ".cjs"
-    ]
-}
-
-// localName -> import source (only successfully resolved named imports)
-function buildImportedNameMap(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    resolveModuleFileName?: (specifier: string, containingFile: string) => string | undefined
-): Map<string, ImportedNameBinding> {
-    const importMap = new Map<string, ImportedNameBinding>()
-
-    if (resolveModuleFileName === undefined) {
-        return importMap
-    }
-
-    for (const statement of sourceFile.statements) {
-        if (!tsInstance.isImportDeclaration(statement) ||
-            !tsInstance.isStringLiteral(statement.moduleSpecifier)
-        ) {
-            continue
-        }
-
-        const importClause = statement.importClause
-        const namedBindings = importClause?.namedBindings
-
-        const resolvedFileName = resolveModuleFileName(statement.moduleSpecifier.text, sourceFile.fileName)
-
-        if (resolvedFileName === undefined) {
-            continue
-        }
-
-        if (importClause?.name !== undefined) {
-            importMap.set(importClause.name.text, {
-                resolvedFileName,
-                importedName : "default",
-                typeOnly     : importClause.isTypeOnly
-            })
-        }
-
-        if (namedBindings === undefined || !tsInstance.isNamedImports(namedBindings)) {
-            continue
-        }
-
-        for (const element of namedBindings.elements) {
-            importMap.set(element.name.text, {
-                resolvedFileName,
-                importedName : element.propertyName?.text ?? element.name.text,
-                typeOnly     : importClause?.isTypeOnly === true || element.isTypeOnly
-            })
-        }
-    }
-
-    return importMap
-}
-
-function importedRequiredBaseRef(
-    importMap: Map<string, ImportedNameBinding>,
-    resolvedFileName: string,
-    specifier: string,
-    importedName: string,
-    fallbackLocalName: string
-): ResolvedMixinRef["requiredBase"] {
-    for (const [ localName, imported ] of importMap) {
-        if (imported.resolvedFileName === resolvedFileName && imported.importedName === importedName) {
-            return {
-                localName,
-                import : undefined
-            }
-        }
-    }
-
-    return {
-        localName : fallbackLocalName,
-        import    : {
-            specifier,
-            importedName,
-            localName : fallbackLocalName
         }
     }
 }
@@ -869,226 +348,6 @@ function insertGeneratedImports(
         ...generatedImports,
         ...statements.slice(lastImportIndex + 1)
     ]
-}
-
-// ---------------------------------------------------------------------------
-// Mixin context for the transformed file
-
-function buildFileMixinContext(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    imports: MixinDecoratorImports,
-    options: TransformOptions,
-    crossFile?: CrossFileContext
-): FileMixinContext {
-    const context: FileMixinContext = {
-        byLocalName        : new Map(),
-        byKey              : new Map(),
-        usedFactoryImports : new Map()
-    }
-
-    // 1. Mixin classes from this file.
-    if (imports.identifiers.size > 0 || imports.namespaces.size > 0) {
-        for (const statement of sourceFile.statements) {
-            if (!tsInstance.isClassDeclaration(statement) ||
-                !hasMixinDecorator(tsInstance, statement, imports, options)
-            ) {
-                continue
-            }
-
-            if (statement.name === undefined) {
-                continue
-            }
-
-            const name = statement.name.text
-            const ref: ResolvedMixinRef = {
-                key              : registryKey(sourceFile.fileName, name),
-                className        : name,
-                localValueName   : name,
-                localFactoryName : generatedName(name, mixinFactorySuffix),
-                factoryImport    : undefined,
-                requiredBase     : undefined,
-                dependencies     : [],
-                declaration      : statement,
-                configProperties : instanceConfigProperties(tsInstance, statement, true),
-                missingRuntimeImport : undefined
-            }
-
-            context.byLocalName.set(name, ref)
-            context.byKey.set(ref.key, ref)
-        }
-    }
-
-    // 2. Imported mixin classes (from the registry).
-    if (crossFile !== undefined) {
-        const importMap = buildImportedNameMap(tsInstance, sourceFile, crossFile.resolveModuleFileName)
-
-        for (const statement of sourceFile.statements) {
-            if (!tsInstance.isImportDeclaration(statement) ||
-                !tsInstance.isStringLiteral(statement.moduleSpecifier)
-            ) {
-                continue
-            }
-
-            const importClause = statement.importClause
-            const namedBindings = importClause?.namedBindings
-            const localNames = [
-                ...(importClause?.name === undefined ? [] : [ importClause.name.text ]),
-                ...(namedBindings !== undefined && tsInstance.isNamedImports(namedBindings)
-                    ? namedBindings.elements.map((element) => element.name.text)
-                    : [])
-            ]
-
-            if (localNames.length === 0) {
-                continue
-            }
-
-            for (const localName of localNames) {
-                const imported  = importMap.get(localName)
-
-                if (imported === undefined || context.byLocalName.has(localName)) {
-                    continue
-                }
-
-                const key        = registryKey(imported.resolvedFileName, imported.importedName)
-                const registered = crossFile.registry.get(key)
-
-                if (registered === undefined) {
-                    continue
-                }
-                const localValueName = imported.typeOnly ? generatedName(localName, mixinValueSuffix) : localName
-
-                if (imported.typeOnly) {
-                    const importedValueName = registered.defaultExport ? "default" : registered.name
-
-                    context.usedFactoryImports.set(
-                        `${statement.moduleSpecifier.text}:${importedValueName}:${localValueName}`,
-                        {
-                            specifier    : statement.moduleSpecifier.text,
-                            importedName : importedValueName,
-                            localName    : localValueName
-                        }
-                    )
-                }
-
-                const requiredBase = registered.requiredBaseName === undefined
-                    ? undefined
-                    : importedRequiredBaseRef(
-                        importMap,
-                        imported.resolvedFileName,
-                        statement.moduleSpecifier.text,
-                        registered.requiredBaseName,
-                        localName + "$requiredBase"
-                    )
-
-                const ref: ResolvedMixinRef = {
-                    key,
-                    className        : registered.name,
-                    localValueName,
-                    localFactoryName : generatedName(localName, mixinFactorySuffix),
-                    factoryImport    : {
-                        specifier    : statement.moduleSpecifier.text,
-                        importedName : generatedName(registered.name, mixinFactorySuffix)
-                    },
-                    requiredBase,
-                    dependencies     : registered.dependencies,
-                    declaration      : undefined,
-                    configProperties : registered.configProperties,
-                    missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
-                        ? {
-                            specifier    : statement.moduleSpecifier.text,
-                            importedName : registered.defaultExport ? "default" : registered.name
-                        }
-                        : undefined
-                }
-
-                context.byLocalName.set(localName, ref)
-                context.byKey.set(key, ref)
-            }
-        }
-    }
-
-    // 3. Same-file mixin dependencies (by local names from implements).
-    for (const ref of context.byLocalName.values()) {
-        if (ref.declaration === undefined) {
-            continue
-        }
-
-        for (const heritageType of implementsTypes(tsInstance, ref.declaration)) {
-            if (tsInstance.isIdentifier(heritageType.expression)) {
-                const dependency = context.byLocalName.get(heritageType.expression.text)
-
-                if (dependency !== undefined) {
-                    ref.dependencies.push(dependency.key)
-                }
-            }
-        }
-    }
-
-    // 4. Transitive registry closure: dependencies the file does not import.
-    if (crossFile !== undefined) {
-        const queue = [ ...context.byKey.values() ].flatMap((ref) => ref.dependencies)
-
-        while (queue.length > 0) {
-            const key = queue.pop()
-
-            if (key === undefined || context.byKey.has(key)) {
-                continue
-            }
-
-            const registered = crossFile.registry.get(key)
-
-            if (registered === undefined) {
-                continue
-            }
-
-            context.byKey.set(key, {
-                key,
-                className        : registered.name,
-                localValueName   : undefined,
-                localFactoryName : generatedName(registered.name, mixinFactorySuffix),
-                factoryImport    : {
-                    specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
-                    importedName : generatedName(registered.name, mixinFactorySuffix)
-                },
-                requiredBase     : registered.requiredBaseName === undefined
-                    ? undefined
-                    : {
-                        localName : registered.name + "$requiredBase",
-                        import    : {
-                            specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
-                            importedName : registered.requiredBaseName,
-                            localName    : registered.name + "$requiredBase"
-                        }
-                },
-                dependencies     : registered.dependencies,
-                declaration      : undefined,
-                configProperties : registered.configProperties,
-                missingRuntimeImport : crossFile.canImportRuntimeValue?.(registered.fileName) === false
-                    ? {
-                        specifier    : relativeImportSpecifier(sourceFile.fileName, registered.fileName),
-                        importedName : registered.defaultExport ? "default" : registered.name
-                    }
-                    : undefined
-            })
-
-            queue.push(...registered.dependencies)
-        }
-    }
-
-    return context
-}
-
-function relativeImportSpecifier(fromFileName: string, toFileName: string): string {
-    const relative = path.posix.relative(
-        path.posix.dirname(normalizePath(fromFileName)),
-        normalizePath(toFileName)
-    )
-
-    const withoutExtension = relative
-        .replace(/\.[cm]?tsx?$/, "")
-
-    return withoutExtension.startsWith(".") ? withoutExtension : "./" + withoutExtension
 }
 
 function collectMixinClassDiagnostics(
@@ -2502,6 +1761,23 @@ function linearizationDiagnosticMessage(
         "Fix it by changing the implements order, removing one conflicting mixin, or splitting the incompatible mixins."
 }
 
+function createMixinChainExpression(
+    tsInstance: TypeScript,
+    mixinRefs: ResolvedMixinRef[],
+    baseExpression: ts.Expression
+): ts.Expression {
+    const factory = tsInstance.factory
+
+    return factory.createCallExpression(
+        factory.createIdentifier(mixinChainName),
+        undefined,
+        [
+            baseExpression,
+            ...mixinRefs.map((ref) => mixinValueIdentifier(tsInstance, ref))
+        ]
+    )
+}
+
 function unsupportedBaseConsumerHeritage(
     tsInstance: TypeScript,
     extendsType: ts.ExpressionWithTypeArguments,
@@ -3435,284 +2711,6 @@ function expressionToEntityName(tsInstance: TypeScript, expression: ts.Expressio
 }
 
 // ---------------------------------------------------------------------------
-// Linearization and runtime-chain construction
-
-function linearizeDependencies(
-    dependencyKeys: string[],
-    context: FileMixinContext
-): ResolvedMixinRef[] {
-    return linearizeDependencyKeys(dependencyKeys, context).map((key) => {
-        return context.byKey.get(key)!
-    })
-}
-
-function linearizeDependencyKeys(
-    dependencyKeys: string[],
-    context: FileMixinContext,
-    cache: Map<string, string[]> = new Map()
-): string[] {
-    if (dependencyKeys.length === 0) {
-        return []
-    }
-
-    return mergeDependencyLinearizations([
-        ...dependencyKeys.map((key) => linearizeDependencyKey(key, context, cache)),
-        [ ...dependencyKeys ]
-    ])
-}
-
-function linearizeDependencyKey(
-    key: string,
-    context: FileMixinContext,
-    cache: Map<string, string[]>
-): string[] {
-    const cached = cache.get(key)
-
-    if (cached !== undefined) {
-        return cached
-    }
-
-    const ref = context.byKey.get(key)
-
-    if (ref === undefined) {
-        return [ key ]
-    }
-
-    const linearized = [
-        key,
-        ...linearizeDependencyKeys(ref.dependencies, context, cache)
-    ]
-
-    cache.set(key, linearized)
-
-    return linearized
-}
-
-function mergeDependencyLinearizations(sequences: string[][]): string[] {
-    const result: string[] = []
-    const pending = sequences
-        .map((sequence) => sequence.filter((key, index) => sequence.indexOf(key) === index))
-        .filter((sequence) => sequence.length > 0)
-
-    while (pending.length > 0) {
-        const candidate = pending
-            .map((sequence) => sequence[0])
-            .find((head) => {
-                return pending.every((sequence) => !sequence.slice(1).includes(head))
-            })
-
-        if (candidate === undefined) {
-            throw new DependencyLinearizationError(pending.map((sequence) => [ ...sequence ]))
-        }
-
-        result.push(candidate)
-
-        for (let index = pending.length - 1; index >= 0; index--) {
-            if (pending[index][0] === candidate) {
-                pending[index].shift()
-            }
-
-            if (pending[index].length === 0) {
-                pending.splice(index, 1)
-            }
-        }
-    }
-
-    return result
-}
-
-function createMixinChainExpression(
-    tsInstance: TypeScript,
-    mixinRefs: ResolvedMixinRef[],
-    baseExpression: ts.Expression
-): ts.Expression {
-    const factory = tsInstance.factory
-
-    return factory.createCallExpression(
-        factory.createIdentifier(mixinChainName),
-        undefined,
-        [
-            baseExpression,
-            ...mixinRefs.map((ref) => mixinValueIdentifier(tsInstance, ref))
-        ]
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Instance member signatures for the generated interface
-
-function buildInterfaceMembers(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    declaration: ts.ClassDeclaration
-): ts.NodeArray<ts.TypeElement> {
-    const factory = tsInstance.factory
-    const members: ts.TypeElement[] = []
-
-    const getters = new Map<string, ts.GetAccessorDeclaration>()
-    const setters = new Map<string, ts.SetAccessorDeclaration>()
-
-    for (const member of declaration.members) {
-        if (hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword)) {
-            continue
-        }
-
-        if (tsInstance.isGetAccessorDeclaration(member)) {
-            getters.set(memberNameText(tsInstance, sourceFile, member), member)
-        }
-
-        if (tsInstance.isSetAccessorDeclaration(member)) {
-            setters.set(memberNameText(tsInstance, sourceFile, member), member)
-        }
-    }
-
-    const emittedAccessors = new Set<string>()
-
-    for (const member of declaration.members) {
-        if (hasModifier(tsInstance, member, tsInstance.SyntaxKind.StaticKeyword) ||
-            tsInstance.isSemicolonClassElement(member)
-        ) {
-            continue
-        }
-
-        if (tsInstance.isConstructorDeclaration(member) ||
-            hasModifier(tsInstance, member, tsInstance.SyntaxKind.AbstractKeyword) ||
-            hasModifier(tsInstance, member, tsInstance.SyntaxKind.PrivateKeyword) ||
-            hasModifier(tsInstance, member, tsInstance.SyntaxKind.ProtectedKeyword) ||
-            isNamedClassElement(member) && tsInstance.isPrivateIdentifier(member.name)
-        ) {
-            continue
-        }
-
-        if (tsInstance.isPropertyDeclaration(member)) {
-            members.push(preserveTextRange(tsInstance, factory.createPropertySignature(
-                hasModifier(tsInstance, member, tsInstance.SyntaxKind.ReadonlyKeyword)
-                    ? [ factory.createToken(tsInstance.SyntaxKind.ReadonlyKeyword) ]
-                    : undefined,
-                cloneNode(tsInstance, member.name),
-                cloneOptionalNode(tsInstance, member.questionToken),
-                cloneOptionalNode(tsInstance, member.type) ??
-                    factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
-            ), interfaceMemberRange(member)))
-            continue
-        }
-
-        if (tsInstance.isMethodDeclaration(member)) {
-            members.push(preserveTextRange(tsInstance, factory.createMethodSignature(
-                undefined,
-                cloneNode(tsInstance, member.name),
-                cloneOptionalNode(tsInstance, member.questionToken),
-                cloneOptionalNodeArray(tsInstance, member.typeParameters),
-                member.parameters.map((parameter) => signatureParameter(tsInstance, sourceFile, parameter)),
-                cloneOptionalNode(tsInstance, member.type) ??
-                    factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
-            ), interfaceMemberRange(member)))
-            continue
-        }
-
-        if (tsInstance.isGetAccessorDeclaration(member) || tsInstance.isSetAccessorDeclaration(member)) {
-            const name = memberNameText(tsInstance, sourceFile, member)
-
-            if (emittedAccessors.has(name)) {
-                continue
-            }
-
-            emittedAccessors.add(name)
-
-            members.push(accessorSignature(tsInstance, sourceFile, member, getters.get(name), setters.get(name)))
-            continue
-        }
-
-        continue
-    }
-
-    const membersRange = members.length === 0
-        ? zeroWidthRange(declaration.name?.end ?? declaration.end)
-        : {
-            pos : members[0].pos,
-            end : members.at(-1)!.end
-        }
-
-    return preserveTextRange(tsInstance, factory.createNodeArray(members), membersRange)
-}
-
-function interfaceDeclarationRange(
-    declaration: ts.ClassDeclaration,
-    members: ts.NodeArray<ts.TypeElement>
-): ts.TextRange {
-    return {
-        pos : declaration.pos,
-        end : Math.max(declaration.name?.end ?? declaration.end, members.end)
-    }
-}
-
-function accessorSignature(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    member: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-    getter: ts.GetAccessorDeclaration | undefined,
-    setter: ts.SetAccessorDeclaration | undefined
-): ts.PropertySignature {
-    const factory = tsInstance.factory
-
-    const type =
-        getter?.type ??
-        (setter !== undefined && setter.parameters.length > 0 ? setter.parameters[0].type : undefined)
-
-    return preserveTextRange(tsInstance, factory.createPropertySignature(
-        setter === undefined ? [ factory.createToken(tsInstance.SyntaxKind.ReadonlyKeyword) ] : undefined,
-        cloneNode(tsInstance, member.name),
-        undefined,
-        cloneOptionalNode(tsInstance, type) ??
-            factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword)
-    ), interfaceMemberRange(member))
-}
-
-function signatureParameter(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    parameter: ts.ParameterDeclaration
-): ts.ParameterDeclaration {
-    // A signature parameter with an initializer becomes optional.
-    return preserveTextRange(tsInstance, tsInstance.factory.createParameterDeclaration(
-        undefined,
-        cloneOptionalNode(tsInstance, parameter.dotDotDotToken),
-        cloneNode(tsInstance, parameter.name),
-        parameter.initializer === undefined
-            ? cloneOptionalNode(tsInstance, parameter.questionToken)
-            : tsInstance.factory.createToken(tsInstance.SyntaxKind.QuestionToken),
-        cloneOptionalNode(tsInstance, parameter.type) ??
-            tsInstance.factory.createKeywordTypeNode(tsInstance.SyntaxKind.AnyKeyword),
-        undefined
-    ), parameterSignatureRange(parameter))
-}
-
-function interfaceMemberRange(member: ts.ClassElement): ts.TextRange {
-    if (isTypedClassElement(member)) {
-        return {
-            pos : member.pos,
-            end : member.type.end
-        }
-    }
-
-    return {
-        pos : member.pos,
-        end : member.end
-    }
-}
-
-function isTypedClassElement(member: ts.ClassElement): member is ts.ClassElement & { type: ts.TypeNode } {
-    return "type" in member && member.type !== undefined
-}
-
-function parameterSignatureRange(parameter: ts.ParameterDeclaration): ts.TextRange {
-    return {
-        pos : parameter.pos,
-        end : parameter.type?.end ?? parameter.name.end
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Helper builders
 
 function createHelperTypeImport(
@@ -3784,44 +2782,6 @@ function heritageTypeToTypeReference(
     )
 }
 
-function implementsTypes(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
-): ts.ExpressionWithTypeArguments[] {
-    const clause = declaration.heritageClauses?.find((heritageClause) => {
-        return heritageClause.token === tsInstance.SyntaxKind.ImplementsKeyword
-    })
-
-    return clause === undefined ? [] : [ ...clause.types ]
-}
-
-function requiredBaseType(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
-): ts.ExpressionWithTypeArguments | undefined {
-    return extendsClause(tsInstance, declaration)?.types[0]
-}
-
-function requiredBaseIdentifierName(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
-): string | undefined {
-    const requiredBase = requiredBaseType(tsInstance, declaration)
-
-    return requiredBase !== undefined && tsInstance.isIdentifier(requiredBase.expression)
-        ? requiredBase.expression.text
-        : undefined
-}
-
-function extendsClause(
-    tsInstance: TypeScript,
-    declaration: ts.ClassDeclaration
-): ts.HeritageClause | undefined {
-    return declaration.heritageClauses?.find((heritageClause) => {
-        return heritageClause.token === tsInstance.SyntaxKind.ExtendsKeyword
-    })
-}
-
 function exportModifiersOf(
     tsInstance: TypeScript,
     declaration: ts.ClassDeclaration
@@ -3833,36 +2793,6 @@ function exportModifiersOf(
     }
 
     return [ tsInstance.factory.createToken(tsInstance.SyntaxKind.ExportKeyword) ]
-}
-
-function isNamedClassElement(
-    member: ts.ClassElement
-): member is ts.ClassElement & { name: ts.PropertyName } {
-    return member.name !== undefined
-}
-
-function memberNameText(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    member: ts.ClassElement
-): string {
-    const name = member.name
-
-    if (name !== undefined && (tsInstance.isIdentifier(name) || tsInstance.isStringLiteral(name))) {
-        return name.text
-    }
-
-    return memberNameForDiagnostic(tsInstance, sourceFile, member)
-}
-
-function isPackageImport(
-    tsInstance: TypeScript,
-    statement: ts.Statement,
-    options: TransformOptions
-): boolean {
-    return tsInstance.isImportDeclaration(statement) &&
-        tsInstance.isStringLiteral(statement.moduleSpecifier) &&
-        statement.moduleSpecifier.text === options.packageName
 }
 
 class MixinTransformError extends Error {
@@ -3883,97 +2813,6 @@ function nodePosition(sourceFile: ts.SourceFile, node: ts.Node): string {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(start)
 
     return `(${line + 1},${character + 1})`
-}
-
-// ---------------------------------------------------------------------------
-// Import-aware marker decorator detection
-
-export function hasMixinDecorator(
-    tsInstance: TypeScript,
-    node: ts.HasDecorators,
-    imports: MixinDecoratorImports,
-    options: Partial<TransformOptions> = {}
-): boolean {
-    const resolvedOptions = {
-        ...defaultTransformOptions,
-        ...options
-    }
-
-    return tsInstance.getDecorators(node)?.some((decorator) => {
-        return isMixinDecorator(tsInstance, decorator, imports, resolvedOptions)
-    }) ?? false
-}
-
-function isMixinDecorator(
-    tsInstance: TypeScript,
-    decorator: ts.Decorator,
-    imports: MixinDecoratorImports,
-    options: TransformOptions
-): boolean {
-    const expression = decorator.expression
-
-    if (tsInstance.isCallExpression(expression)) {
-        return isMixinDecoratorExpression(tsInstance, expression.expression, imports, options)
-    }
-
-    return isMixinDecoratorExpression(tsInstance, expression, imports, options)
-}
-
-function isMixinDecoratorExpression(
-    tsInstance: TypeScript,
-    expression: ts.Expression,
-    imports: MixinDecoratorImports,
-    options: TransformOptions
-): boolean {
-    if (tsInstance.isIdentifier(expression)) {
-        return imports.identifiers.has(expression.text)
-    }
-
-    if (!tsInstance.isPropertyAccessExpression(expression)) {
-        return false
-    }
-
-    return tsInstance.isIdentifier(expression.expression) &&
-        imports.namespaces.has(expression.expression.text) &&
-        expression.name.text === options.decoratorName
-}
-
-function collectMixinDecoratorImports(
-    tsInstance: TypeScript,
-    sourceFile: ts.SourceFile,
-    options: TransformOptions
-): MixinDecoratorImports {
-    const imports = {
-        identifiers : new Set<string>(),
-        namespaces  : new Set<string>()
-    }
-
-    for (const statement of sourceFile.statements) {
-        if (!isPackageImport(tsInstance, statement, options)) {
-            continue
-        }
-
-        const namedBindings = (statement as ts.ImportDeclaration).importClause?.namedBindings
-
-        if (namedBindings === undefined) {
-            continue
-        }
-
-        if (tsInstance.isNamespaceImport(namedBindings)) {
-            imports.namespaces.add(namedBindings.name.text)
-            continue
-        }
-
-        for (const element of namedBindings.elements) {
-            const importedName = element.propertyName?.text ?? element.name.text
-
-            if (importedName === options.decoratorName) {
-                imports.identifiers.add(element.name.text)
-            }
-        }
-    }
-
-    return imports
 }
 
 function shouldSkipSourceFile(sourceFile: ts.SourceFile): boolean {
