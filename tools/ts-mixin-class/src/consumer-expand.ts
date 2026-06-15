@@ -29,9 +29,9 @@ import {
 import { linearizeDependencies } from "./linearization.js"
 import {
     localMixinHeritageTypes,
-    localMixinRefs,
-    reduceTransitiveMixinHeritageTypes
+    localMixinRefs
 } from "./mixin-refs.js"
+import { reduceTransitiveMixinHeritageTypes } from "./transitive-heritage-workaround.js"
 import { getSourceFileFacts } from "./source-file-facts.js"
 import { createStaticCollisionValidations } from "./static-collisions.js"
 import {

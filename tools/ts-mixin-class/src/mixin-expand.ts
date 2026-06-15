@@ -36,9 +36,9 @@ import {
 } from "./mixin-diagnostics.js"
 import {
     localMixinHeritageTypes,
-    localMixinRefs,
-    reduceTransitiveMixinHeritageTypes
+    localMixinRefs
 } from "./mixin-refs.js"
+import { reduceTransitiveMixinHeritageTypes } from "./transitive-heritage-workaround.js"
 import {
     cloneNode,
     deepCloneNode,

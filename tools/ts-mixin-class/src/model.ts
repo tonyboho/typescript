@@ -50,10 +50,6 @@ export type CrossFileContext = {
     // depends only on the registry graph, so it is shared across every consumer
     // and file in the program instead of being rebuilt per linearizeDependencies.
     linearizationCache : Map<string, string[]>
-    // Per-mixin transitive dependency reachability (registry key -> all keys
-    // reachable through dependencies). Like linearizationCache, a static property
-    // of the registry graph, shared program-wide.
-    reachabilityCache : Map<string, Set<string>>
 }
 
 export type ImportedNameBinding = {
@@ -91,9 +87,7 @@ export type FileMixinContext = {
     usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>,
     // Shared with the program-wide cache via CrossFileContext when available, so
     // per-mixin C3 linearizations are reused across consumers and files.
-    linearizationCache : Map<string, string[]>,
-    // Same sharing as linearizationCache, for transitive dependency reachability.
-    reachabilityCache : Map<string, Set<string>>
+    linearizationCache : Map<string, string[]>
 }
 
 export type RequiredBaseValidation = {
