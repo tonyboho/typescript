@@ -46,6 +46,10 @@ export type CrossFileContext = {
     cacheKey : string,
     resolveModuleFileName : (specifier: string, containingFile: string) => string | undefined
     canImportRuntimeValue? : (resolvedFileName: string) => boolean
+    // Per-mixin C3 linearizations (registry key -> linearized keys). The result
+    // depends only on the registry graph, so it is shared across every consumer
+    // and file in the program instead of being rebuilt per linearizeDependencies.
+    linearizationCache : Map<string, string[]>
 }
 
 export type ImportedNameBinding = {
@@ -80,7 +84,10 @@ export type FileMixinContext = {
     byLocalName : Map<string, ResolvedMixinRef>,
     byKey       : Map<string, ResolvedMixinRef>,
     // Factories actually used in generated chains.
-    usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>
+    usedFactoryImports : Map<string, { specifier: string, importedName: string, localName: string }>,
+    // Shared with the program-wide cache via CrossFileContext when available, so
+    // per-mixin C3 linearizations are reused across consumers and files.
+    linearizationCache : Map<string, string[]>
 }
 
 export type RequiredBaseValidation = {

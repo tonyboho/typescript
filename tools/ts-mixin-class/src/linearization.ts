@@ -9,7 +9,10 @@ export function linearizeDependencies(
     dependencyKeys: string[],
     context: FileMixinContext
 ): ResolvedMixinRef[] {
-    return linearizeDependencyKeys(dependencyKeys, context).map((key) => {
+    // Per-mixin linearizations come from the program-wide cache, so each mixin's
+    // linearization is computed once instead of per consumer. Only the consumer's
+    // own merge (below) is recomputed each call.
+    return linearizeDependencyKeys(dependencyKeys, context, context.linearizationCache).map((key) => {
         return context.byKey.get(key)!
     })
 }

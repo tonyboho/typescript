@@ -150,7 +150,11 @@ export function buildFileMixinContext(
     const context: FileMixinContext = {
         byLocalName        : new Map(),
         byKey              : new Map(),
-        usedFactoryImports : new Map()
+        usedFactoryImports : new Map(),
+        // Share the program-wide linearization index when cross-file context is
+        // available; otherwise fall back to a file-local cache (still reused
+        // across multiple consumers in the same file).
+        linearizationCache : crossFile?.linearizationCache ?? new Map()
     }
 
     addLocalMixinRefs(sourceFile, imports, facts, context)
