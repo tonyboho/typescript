@@ -1,119 +1,121 @@
 # Benchmarks
 
-The base benchmark suite is the default entry point:
-
-```bash
-pnpm run bench
-```
-
-For output without pnpm's command echo, run:
+One command, one set of metrics:
 
 ```bash
 pnpm --silent run bench
 ```
 
-It builds the package and prints one transform-pass table plus end-to-end
-fixture tables:
+It builds the package and runs every scenario, printing one table each. Use
+`--silent` to drop pnpm's command echo.
 
-- `Transform-pass source-view benchmark`
-- `Compile benchmark`
-- `Tsserver semantic diagnostics benchmark`
-- `Tsserver edit processing benchmark`
+## Scenarios
 
-Each table row is one scenario. The duration columns are per operation:
+Each scenario maps to one way the transformer is actually used:
 
-- transform-pass rows report one source-view transform pass
-- compile rows report one clean `tsc -p` run
-- tsserver diagnostics rows report one `semanticDiagnosticsSync` request
-- edit rows report one edit plus one consumer `semanticDiagnosticsSync` request
+| Scenario | Command | What it measures | Transformer path |
+| --- | --- | --- | --- |
+| `transform` | `pnpm run bench:transform` | the per-file transform pipeline, no compiler around it | source-view + emit |
+| `compile` | `pnpm run bench:compile` | one clean `tsc -p` over a generated project | emit, cross-file |
+| `tsserver` | `pnpm run bench:tsserver` | one `semanticDiagnosticsSync` request in a real tsserver | source-view |
+| `edit` | `pnpm run bench:edit` | edit a mixin + re-request consumer diagnostics (hottest IDE path) | source-view, incremental |
 
-By default, tables are compact and show only the median duration. Use the full
-table mode for min, median, mean, max, sample count, and transform-pass step
-breakdown:
+`pnpm run bench` runs all four. `node dist/bench/index.js <scenario>` runs one.
+
+The `transform` scenario is in-process and fast (no `tsc`/`tsserver` fork), so it
+is the right place to judge a transformer change before writing it. The other
+three are end-to-end regression guards where the transformer's own cost is
+diluted by TypeScript's bind + check.
+
+## Compare a change (measure, change, measure, compare)
+
+Save a baseline, make the source change, re-run against the baseline:
 
 ```bash
-TS_MIXIN_BENCH_TABLE=full pnpm run bench
+# before the change
+pnpm --silent run bench -- --save base
+
+# ... edit src/ ...
+
+# after the change: same metrics plus a Δ column vs the saved baseline
+pnpm --silent run bench -- --baseline base
 ```
 
-## Modes
+Baselines are JSON snapshots in `bench/results/` (gitignored). `--save`/
+`--baseline` take a name with or without the `.json` suffix. The Δ column
+compares each row's median against the baseline's.
+
+## Output detail
+
+The default table is compact (median only). For min / median / mean / max,
+sample count, and the transform-pass step breakdown:
 
 ```bash
-pnpm run bench
-pnpm run bench:transform
-pnpm run bench:compile
-pnpm run bench:tsserver
-pnpm run bench:edit
-pnpm run bench:transform-pass
+pnpm --silent run bench -- --full
 ```
 
-`bench:transform-pass` runs the older focused transform-pass step breakdown.
-`bench:transform` runs the transform-pass scenarios inside the base suite table
-format.
-
-## Common settings
+## Common settings (environment)
 
 ```bash
-TS_MIXIN_BENCH_ITERATIONS=5
-TS_MIXIN_BENCH_WARMUPS=1
-TS_MIXIN_BENCH_TABLE=compact
-TS_MIXIN_BENCH_OUTPUT=bench/baseline-suite-raw.txt
+TS_MIXIN_BENCH_ITERATIONS=3        # samples per row
+TS_MIXIN_BENCH_WARMUPS=1           # warmup samples (not recorded)
+TS_MIXIN_BENCH_TABLE=compact|full  # same as --full
 ```
 
-## Transform-pass scenarios
-
-The base suite accepts transform-pass scenarios as:
+### `transform` scenario
 
 ```bash
-TS_MIXIN_BENCH_TRANSFORM_SCENARIOS=mixins:props:window:consumers,...
-TS_MIXIN_BENCH_TRANSFORM_ITERATIONS=80
+TS_MIXIN_BENCH_PASS_MODE=both|source-view|emit   # which pipelines to time
+TS_MIXIN_BENCH_TRANSFORM_ITERATIONS=80           # inner passes per sample
+TS_MIXIN_BENCH_TRANSFORM_SCENARIOS=80:3:4:8,...  # mixins:props:window:consumers
 ```
 
-Example:
+`TS_MIXIN_BENCH_TRANSFORM_ITERATIONS` is the number of transform passes inside
+each measured sample; raising it steadies the per-pass timing.
+
+### `compile`, `tsserver`, `edit` scenarios (generated fixtures)
 
 ```bash
-env TS_MIXIN_BENCH_TRANSFORM_SCENARIOS=80:3:4:8,300:5:8:8 \
-    TS_MIXIN_BENCH_TRANSFORM_ITERATIONS=120 \
-    pnpm run bench:transform
-```
-
-`TS_MIXIN_BENCH_TRANSFORM_ITERATIONS` is the number of internal transform passes
-inside each measured sample. Increasing it makes the per-pass timing steadier.
-
-## End-to-end fixture scenarios
-
-```bash
-TS_MIXIN_BENCH_SIZES=10,30
-TS_MIXIN_BENCH_TSSERVER_SIZES=10,30
-TS_MIXIN_BENCH_EDIT_SIZES=10,30
-TS_MIXIN_BENCH_CONSTRUCTION=plain
+TS_MIXIN_BENCH_SIZES=10,30              # default size list for all three groups
+TS_MIXIN_BENCH_TSSERVER_SIZES=10,30     # override for tsserver
+TS_MIXIN_BENCH_EDIT_SIZES=10,30         # override for edit
 TS_MIXIN_BENCH_PROPERTY_COUNT=1
-TS_MIXIN_BENCH_PROPERTY_VISIBILITY=implicit
+TS_MIXIN_BENCH_PROPERTY_VISIBILITY=implicit|public
+TS_MIXIN_BENCH_CONSTRUCTION=plain|base  # base: consumers extend Base and call .new(...)
 TS_MIXIN_BENCH_DEP_MIN=1
 TS_MIXIN_BENCH_DEP_MAX=3
 TS_MIXIN_BENCH_DEP_WINDOW=8
-TS_MIXIN_BENCH_EDIT_COUNT=8
+TS_MIXIN_BENCH_EDIT_COUNT=8             # edits per edit-scenario sample
 ```
 
-`TS_MIXIN_BENCH_SIZES` is the default size list for compile, tsserver, and edit
-fixture groups. `TS_MIXIN_BENCH_TSSERVER_SIZES` and
-`TS_MIXIN_BENCH_EDIT_SIZES` override it for their specific groups.
+`public` generates explicit `public` fields; `implicit` (default) generates the
+same fields without an accessibility modifier. `base` construction makes
+consumers extend `ts-mixin-class/base` and call `Consumer.new(...)`, exercising
+the public-only construction config path.
 
-Use `TS_MIXIN_BENCH_PROPERTY_VISIBILITY=public` to generate explicit `public`
-fields. The default `implicit` mode generates the same fields without an
-accessibility modifier.
-
-Use `TS_MIXIN_BENCH_CONSTRUCTION=base` to make fixture consumers extend
-`ts-mixin-class/base` and call `Consumer.new(...)`, which exercises the
-public-only construction config path.
-
-Large release-style run:
+Larger release-style run:
 
 ```bash
 env TS_MIXIN_BENCH_SIZES=25,100,250 \
     TS_MIXIN_BENCH_TSSERVER_SIZES=25,100 \
     TS_MIXIN_BENCH_EDIT_SIZES=25,100 \
-    TS_MIXIN_BENCH_DEP_MIN=2 \
-    TS_MIXIN_BENCH_DEP_MAX=5 \
     TS_MIXIN_BENCH_DEP_WINDOW=24 \
-    pnpm run bench
+    pnpm --silent run bench -- --full
 ```
+
+## Layout
+
+```
+bench/
+  index.ts                 # orchestrator: CLI flags, runs scenarios, renders report + Δ
+  lib/                     # env config, paths, table rendering + baseline, tsserver session
+  scenarios/               # one file per scenario
+  fixtures/generator.ts    # generated multi-file projects for the end-to-end scenarios
+  fixtures/generated/      # generated output (gitignored)
+  results/                 # saved baselines (gitignored)
+  diagnostics/             # upstream-bug repros, not perf scenarios (see bench:ts-repro)
+```
+
+`bench:ts-repro` runs `diagnostics/typescript-interface-repro.ts`, a standalone
+reproduction of the upstream TypeScript issue worked around in
+`src/transitive-heritage-workaround.ts`. It is not part of `pnpm run bench`.
