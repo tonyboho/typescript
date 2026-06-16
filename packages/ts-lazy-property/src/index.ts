@@ -15,16 +15,16 @@ type MutableNode = ts.Node & {
 export type LazyPropertyTransformerMode = "emit" | "ide"
 
 export type LazyPropertyTransformerConfig = PluginConfig & {
-    packageName? : string,
+    packageName?   : string,
     decoratorName? : string,
     backingPrefix? : string,
-    mode? : LazyPropertyTransformerMode
+    mode?          : LazyPropertyTransformerMode
 }
 
 type TransformOptions = {
-    packageName : string,
-    decoratorName : string,
-    backingPrefix : string,
+    packageName           : string,
+    decoratorName         : string,
+    backingPrefix         : string,
     preserveLazyDecorator : boolean
 }
 
@@ -70,8 +70,8 @@ export function createLazyPropertyCompilerHost(
     config: LazyPropertyTransformerConfig,
     baseProgram?: ts.Program
 ): ts.CompilerHost {
-    const options = resolveTransformOptions(config)
-    const sourceCache = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
+    const options              = resolveTransformOptions(config)
+    const sourceCache          = new WeakMap<ts.SourceFile, Map<string, ts.SourceFile>>()
     const usePrintedSourceFile = resolveUsePrintedSourceFile(config, compilerOptions)
 
     return {
@@ -79,7 +79,7 @@ export function createLazyPropertyCompilerHost(
 
         getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) {
             const layeredSourceFile = baseProgram?.getSourceFile(fileName)
-            const preserveCacheKey = usePrintedSourceFile
+            const preserveCacheKey  = usePrintedSourceFile
                 ? undefined
                 : preserveSourceCacheKey(options, languageVersionOrOptions)
 
@@ -99,7 +99,7 @@ export function createLazyPropertyCompilerHost(
                 return result
             }
 
-            const hostSourceFile = compilerHost.getSourceFile(
+            const hostSourceFile       = compilerHost.getSourceFile(
                 fileName,
                 languageVersionOrOptions,
                 onError,
@@ -110,7 +110,7 @@ export function createLazyPropertyCompilerHost(
                     hostSourceFile === undefined ||
                     layeredSourceFile !== hostSourceFile && hasDifferentAstShape(tsInstance, layeredSourceFile, hostSourceFile)
                 )
-            const sourceFile = useLayeredSourceFile ? layeredSourceFile : hostSourceFile
+            const sourceFile           = useLayeredSourceFile ? layeredSourceFile : hostSourceFile
 
             if (sourceFile === undefined) {
                 return sourceFile
@@ -138,7 +138,7 @@ export function createLazyPropertyCompilerHost(
                     return sourceFile
                 }
 
-                const transformedText = printSourceFile(tsInstance, transformedSourceFile)
+                const transformedText   = printSourceFile(tsInstance, transformedSourceFile)
                 const printedSourceFile = tsInstance.createSourceFile(
                     fileName,
                     transformedText,
@@ -189,7 +189,7 @@ export function transformSourceFile(
     options: TransformSourceFileOptions = {}
 ): ts.SourceFile {
     const { trustSourceText = false, ...transformOptions } = options
-    const resolvedOptions: TransformOptions = {
+    const resolvedOptions: TransformOptions                = {
         ...defaultTransformOptions,
         ...transformOptions
     }
@@ -303,11 +303,11 @@ function hasDifferentAstShape(
     left: ts.SourceFile,
     right: ts.SourceFile
 ): boolean {
-    const leftStack: ts.Node[] = [ left ]
-    const rightStack: ts.Node[] = [ right ]
-    const leftChildren: ts.Node[] = []
+    const leftStack: ts.Node[]     = [ left ]
+    const rightStack: ts.Node[]    = [ right ]
+    const leftChildren: ts.Node[]  = []
     const rightChildren: ts.Node[] = []
-    const collectChildren = (node: ts.Node, children: ts.Node[]): void => {
+    const collectChildren          = (node: ts.Node, children: ts.Node[]): void => {
         children.length = 0
 
         tsInstance.forEachChild(node, (child) => {
@@ -316,7 +316,7 @@ function hasDifferentAstShape(
     }
 
     while (leftStack.length > 0) {
-        const leftNode = leftStack.pop() as ts.Node
+        const leftNode  = leftStack.pop() as ts.Node
         const rightNode = rightStack.pop()
 
         if (rightNode === undefined) {
@@ -347,7 +347,7 @@ function cloneLayeredSourceFileForTransform(
     tsInstance: TypeScript,
     sourceFile: ts.SourceFile
 ): ts.SourceFile {
-    const cloneNode = (tsInstance.factory as NodeFactoryWithCloneNode).cloneNode.bind(tsInstance.factory)
+    const cloneNode   = (tsInstance.factory as NodeFactoryWithCloneNode).cloneNode.bind(tsInstance.factory)
     const transformed = tsInstance.transform(sourceFile, [
         (context) => {
             const visit: ts.Visitor = (node) => {
@@ -388,26 +388,26 @@ function createLazyMembers(
         throw new Error(`@lazy property "${property.name.text}" must have an initializer.`)
     }
 
-    const factory       = tsInstance.factory
-    const propertyName  = property.name.text
-    const backingName   = `${options.backingPrefix}${propertyName}`
-    const memberRange   = lazyMemberRange(sourceFile, property)
-    const getterMemberRange = memberRange
-    const nameStart     = property.name.getStart(sourceFile)
-    const nameEnd       = property.name.getEnd()
-    const typeEnd       = property.type.end
-    const bodyRange     = {
+    const factory                 = tsInstance.factory
+    const propertyName            = property.name.text
+    const backingName             = `${options.backingPrefix}${propertyName}`
+    const memberRange             = lazyMemberRange(sourceFile, property)
+    const getterMemberRange       = memberRange
+    const nameStart               = property.name.getStart(sourceFile)
+    const nameEnd                 = property.name.getEnd()
+    const typeEnd                 = property.type.end
+    const bodyRange               = {
         pos : typeEnd,
         end : property.end
     }
-    const lazyRemovedModifiers = removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
-    const backingMemberRange = options.preserveLazyDecorator
+    const lazyRemovedModifiers    = removeLazyDecoratorModifiers(tsInstance, property.modifiers, lazyDecoratorImports, options)
+    const backingMemberRange      = options.preserveLazyDecorator
         ? {
             pos : property.pos,
             end : property.name.pos
         }
         : memberRange
-    const backingModifiers = options.preserveLazyDecorator
+    const backingModifiers        = options.preserveLazyDecorator
         ? property.modifiers
         : lazyRemovedModifiers
     const createAccessorModifiers = () => options.preserveLazyDecorator
@@ -417,16 +417,16 @@ function createLazyMembers(
             zeroWidthRange(nameStart)
         )
         : lazyRemovedModifiers
-    const setterMemberRange = options.preserveLazyDecorator
+    const setterMemberRange       = options.preserveLazyDecorator
         ? zeroWidthRange(property.end)
         : memberRange
-    const generatedMemberRange = options.preserveLazyDecorator
+    const generatedMemberRange    = options.preserveLazyDecorator
         ? memberRange
         : property
-    const backingAccess = () => preserveTextRange(tsInstance, createThisPropertyAccess(tsInstance, backingName), generatedMemberRange)
-    const getterParameters = preserveTextRange(tsInstance, factory.createNodeArray([]), zeroWidthRange(nameEnd))
-    const isReadonly  = hasReadonlyModifier(tsInstance, property)
-    const backingType = options.preserveLazyDecorator
+    const backingAccess           = () => preserveTextRange(tsInstance, createThisPropertyAccess(tsInstance, backingName), generatedMemberRange)
+    const getterParameters        = preserveTextRange(tsInstance, factory.createNodeArray([]), zeroWidthRange(nameEnd))
+    const isReadonly              = hasReadonlyModifier(tsInstance, property)
+    const backingType             = options.preserveLazyDecorator
         ? preserveTextRange(tsInstance, createOptionalLazyValueType(tsInstance, property.type), zeroWidthRange(nameStart))
         : createOptionalLazyValueType(tsInstance, property.type)
 
@@ -469,7 +469,7 @@ function createLazyMembers(
     ]
 
     if (!isReadonly) {
-        const valueParameter = preserveTextRange(tsInstance, factory.createParameterDeclaration(
+        const valueParameter   = preserveTextRange(tsInstance, factory.createParameterDeclaration(
             undefined,
             undefined,
             preserveTextRange(tsInstance, factory.createIdentifier("value"), zeroWidthRange(nameEnd)),
@@ -477,7 +477,7 @@ function createLazyMembers(
             property.type
         ), zeroWidthRange(nameEnd))
         const setterParameters = preserveTextRange(tsInstance, factory.createNodeArray([ valueParameter ]), zeroWidthRange(nameEnd))
-        const setter = preserveTextRange(tsInstance, factory.createSetAccessorDeclaration(
+        const setter           = preserveTextRange(tsInstance, factory.createSetAccessorDeclaration(
             createAccessorModifiers(),
             preserveNodeNameLocation(tsInstance, factory.createIdentifier(propertyName), sourceFile, property.name),
             setterParameters,
@@ -523,7 +523,7 @@ function createClassMembersNodeArray(
     members: ts.ClassElement[],
     original: ts.NodeArray<ts.ClassElement>
 ): ts.NodeArray<ts.ClassElement> {
-    const nodeArray = tsInstance.factory.createNodeArray(members)
+    const nodeArray   = tsInstance.factory.createNodeArray(members)
     const firstMember = members.find((member) => {
         return member.pos >= 0
     })
