@@ -1,0 +1,14 @@
+{
+    "name": "tonyboho-typescript",
+    "private": true,
+    "type": "module",
+    "packageManager": "pnpm@11.7.0",
+    "scripts": {
+        "changeset": "changeset",
+        "version-packages": "changeset version",
+        "release": "changeset publish"
+    },
+    "devDependencies": {
+        "@changesets/cli": "^2.27.10"
+    }
+}
