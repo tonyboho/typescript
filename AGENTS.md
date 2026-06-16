@@ -51,3 +51,7 @@ This is to match only the intended directory and not any other.
 ## Usage of @bryntum/siesta testing library
 
 For internal launches, add `--no-color` option to disable coloring and visual effects in terminal output.
+
+Siesta tests are regular Node.js executables, if you need to launch a single test, you can just launch its file with Node:
+
+    node path/to/test.t.js
