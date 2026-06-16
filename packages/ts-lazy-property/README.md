@@ -114,10 +114,14 @@ If a lazy property has a `readonly` modifier, only a getter is generated for it,
 
 ## Setup
 
-Include `ts-patch` as a dev dependency:
+Include `ts-lazy-property` as a regular dependency and `ts-patch` as a dev
+dependency:
 
 ```json
 {
+    "dependencies": {
+        "ts-lazy-property": "0.0.1"
+    },
     "devDependencies": {
         "ts-patch": "4.0.1"
     }
