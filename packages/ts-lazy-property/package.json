@@ -30,7 +30,6 @@
         "lazy"
     ],
     "license": "MIT",
-    "private": true,
     "peerDependencies": {
         "typescript": "6.0.3"
     },
