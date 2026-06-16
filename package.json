@@ -6,7 +6,9 @@
     "scripts": {
         "changeset": "changeset",
         "version-packages": "changeset version",
-        "release": "changeset publish"
+        "release": "changeset publish",
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix"
     },
     "devDependencies": {
         "@changesets/cli": "2.31.0",
