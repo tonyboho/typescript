@@ -6,16 +6,26 @@
     "scripts": {
         "changeset": "changeset",
         "version-packages": "changeset version",
-        "release": "changeset publish",
+        "clean": "pnpm --filter \"./packages/*\" run clean",
+        "typecheck": "pnpm --filter \"./packages/*\" run typecheck",
+        "build": "pnpm --filter \"./packages/*\" run build",
+        "test": "pnpm --filter \"./packages/*\" run test",
         "lint": "eslint .",
-        "lint:fix": "eslint . --fix"
+        "lint:fix": "eslint . --fix",
+        "lint:check": "eslint . --max-warnings 0",
+        "publint": "pnpm --filter \"./packages/*\" exec publint",
+        "attw": "pnpm --filter \"./packages/*\" exec attw --pack . --profile esm-only",
+        "release:check": "pnpm run clean && pnpm run typecheck && pnpm run build && pnpm run lint:check && pnpm run test && pnpm run publint && pnpm run attw",
+        "release": "pnpm run release:check && changeset publish"
     },
     "devDependencies": {
+        "@arethetypeswrong/cli": "0.18.3",
         "@changesets/cli": "2.31.0",
         "@stylistic/eslint-plugin": "5.10.0",
         "@typescript-eslint/eslint-plugin": "8.61.0",
         "@typescript-eslint/parser": "8.61.0",
         "eslint": "9.39.4",
-        "eslint-plugin-align-assignments": "1.1.2"
+        "eslint-plugin-align-assignments": "1.1.2",
+        "publint": "0.3.21"
     }
 }

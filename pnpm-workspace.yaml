@@ -6,6 +6,9 @@ packages:
   - "packages/ts-mixin-class/tests/fixture-suite"
 allowBuilds:
 
+overrides:
+  "ts-patch>typescript": "6.0.3"
+
 catalog:
   "@bryntum/siesta": "6.0.0-beta-1"
   "@types/node": "25.6.0"
