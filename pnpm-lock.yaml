@@ -4,21 +4,36 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@bryntum/siesta':
+      specifier: 6.0.0-beta-1
+      version: 6.0.0-beta-1
+    '@types/node':
+      specifier: 25.6.0
+      version: 25.6.0
+    ts-patch:
+      specifier: 4.0.1
+      version: 4.0.1
+    typescript:
+      specifier: 6.0.3
+      version: 6.0.3
+
 importers:
 
   packages/ts-lazy-property:
     devDependencies:
       '@bryntum/siesta':
-        specifier: 6.0.0-beta-1
+        specifier: 'catalog:'
         version: 6.0.0-beta-1
       '@types/node':
-        specifier: 25.6.0
+        specifier: 'catalog:'
         version: 25.6.0
       ts-patch:
-        specifier: 4.0.1
+        specifier: 'catalog:'
         version: 4.0.1
       typescript:
-        specifier: 6.0.3
+        specifier: 'catalog:'
         version: 6.0.3
 
   packages/ts-lazy-property/tests/fixture-suite:
@@ -28,28 +43,28 @@ importers:
         version: link:../..
     devDependencies:
       '@bryntum/siesta':
-        specifier: 6.0.0-beta-1
+        specifier: 'catalog:'
         version: 6.0.0-beta-1
       ts-patch:
-        specifier: 4.0.1
+        specifier: 'catalog:'
         version: 4.0.1
       typescript:
-        specifier: 6.0.3
+        specifier: 'catalog:'
         version: 6.0.3
 
   packages/ts-mixin-class:
     devDependencies:
       '@bryntum/siesta':
-        specifier: 6.0.0-beta-1
+        specifier: 'catalog:'
         version: 6.0.0-beta-1
       '@types/node':
-        specifier: 25.6.0
+        specifier: 'catalog:'
         version: 25.6.0
       ts-patch:
-        specifier: 4.0.1
+        specifier: 'catalog:'
         version: 4.0.1
       typescript:
-        specifier: 6.0.3
+        specifier: 'catalog:'
         version: 6.0.3
 
   packages/ts-mixin-class/tests/declaration-fixture-suite:
@@ -62,13 +77,13 @@ importers:
         version: link:../fixture-suite
     devDependencies:
       '@bryntum/siesta':
-        specifier: 6.0.0-beta-1
+        specifier: 'catalog:'
         version: 6.0.0-beta-1
       ts-patch:
-        specifier: 4.0.1
+        specifier: 'catalog:'
         version: 4.0.1
       typescript:
-        specifier: 6.0.3
+        specifier: 'catalog:'
         version: 6.0.3
 
   packages/ts-mixin-class/tests/fixture-suite:
@@ -78,13 +93,13 @@ importers:
         version: link:../..
     devDependencies:
       '@bryntum/siesta':
-        specifier: 6.0.0-beta-1
+        specifier: 'catalog:'
         version: 6.0.0-beta-1
       ts-patch:
-        specifier: 4.0.1
+        specifier: 'catalog:'
         version: 4.0.1
       typescript:
-        specifier: 6.0.3
+        specifier: 'catalog:'
         version: 6.0.3
 
 packages:

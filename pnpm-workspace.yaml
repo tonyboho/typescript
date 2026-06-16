@@ -5,3 +5,9 @@ packages:
   - "packages/ts-mixin-class/tests/declaration-fixture-suite"
   - "packages/ts-mixin-class/tests/fixture-suite"
 allowBuilds:
+
+catalog:
+  "@bryntum/siesta": "6.0.0-beta-1"
+  "@types/node": "25.6.0"
+  "ts-patch": "4.0.1"
+  "typescript": "6.0.3"
