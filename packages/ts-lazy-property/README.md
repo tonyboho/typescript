@@ -4,7 +4,7 @@ TypeScript transformer that expands `@lazy()` class properties.
 
 ## Intro
 
-Some properties can be costly to initialize and rarely needed, or not needed at all. In such cases, it is useful to turn the property into a lazy property, with initialization delayed until the first access. This involves a certain amount of boilerplate, which this package aims to remove.
+Some properties can be costly to initialize and are rarely needed, or not needed at all. In such cases, it is useful to turn the property into a lazy property, with initialization delayed until the first access. This involves a certain amount of boilerplate, which this package aims to remove.
 
 For example:
 
@@ -35,9 +35,9 @@ class SourceClass {
 }
 ```
 
-The evaluation of `init_expression` is delayed and performed only during the first access to the property.
+The evaluation of `init_expression` is delayed and performed only on the first access to the property.
 
-## Example
+## Usage
 
 A more practical example:
 
@@ -76,6 +76,8 @@ class SourceClass {
 }
 ```
 
+### Re-initialize
+
 To refresh the value of the lazy property and re-evaluate its initializer, assign `undefined` to the backing `$lazyProperty` member. The next access to the property will run the initializer again. If you need to check whether the property already has a value without triggering the initializer, access `$lazyProperty` directly.
 
 ```ts
@@ -106,6 +108,9 @@ class SourceClass {
 }
 ```
 
+### Readonly
+
+If a lazy property has a `readonly` modifier, only a getter is generated for it, so assigning to it is not possible. Re-initialization, however, still works the same way.
 
 ## Setup
 
@@ -152,7 +157,7 @@ pnpm run prepare
 
 ## Details
 
-The expansion happens before type checking, not in the emitter. This allows the transformer to create the backing `$lazyProperty` member early enough for direct access to typecheck.
+The expansion happens before type checking, not in the emitter. This allows the transformer to create the backing `$lazyProperty` member early enough for direct access to type-check.
 
 The exported `lazy()` decorator is a runtime no-op. It is used only as a marker for the transformer, and both standard decorators and legacy `experimentalDecorators` are supported.
 
@@ -160,7 +165,7 @@ The generated backing property, getter, and setter are created in the virtual in
 
 ## Options
 
-Additional option `backingPrefix` is supported - prefix of the generated backing property, default `"$"`
+The additional `backingPrefix` option is supported. It controls the prefix of the generated backing property and defaults to `"$"`.
 
 ```json
 {
