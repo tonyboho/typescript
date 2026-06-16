@@ -131,7 +131,7 @@ never require previous virtual nodes to exist in source text.
 Run:
 
 ```bash
-pnpm --dir tools/ts-lazy-property test
+pnpm --dir packages/ts-lazy-property test
 ```
 
 Important test groups:
