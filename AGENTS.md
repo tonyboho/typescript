@@ -47,3 +47,7 @@ instead of
     dist
 
 This is to match only the intended directory and not any other.
+
+## Usage of @bryntum/siesta testing library
+
+For internal launches, add `--no-color` option to disable coloring and visual effects in terminal output.
