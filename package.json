@@ -5,7 +5,7 @@
     "packageManager": "pnpm@11.7.0",
     "scripts": {
         "changeset": "changeset",
-        "bump": "changeset version",
+        "bump": "changeset version && node scripts/changelog-date.ts",
         "clean": "pnpm --filter \"./packages/*\" run clean",
         "typecheck": "pnpm --filter \"./packages/*\" run typecheck",
         "build": "pnpm --filter \"./packages/*\" run build",
