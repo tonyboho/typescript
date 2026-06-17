@@ -1,5 +1,9 @@
 # Project workflow rules
 
+## TypeScript
+
+If you write any code that is supposed to be stored in the source control, it should be written in TypeScript. Only use JavaScript if you really have to and for throw-away scripts.
+
 ## Private and protected class members in mixins
 
 Do not use `private` and `protected` modifiers for members of the mixin classes (created with `ts-mixin-class` facilities). They do not work well for mixins. Just declare a regular member of the class.
