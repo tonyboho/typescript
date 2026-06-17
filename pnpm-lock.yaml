@@ -50,6 +50,12 @@ importers:
       publint:
         specifier: 0.3.21
         version: 0.3.21
+      ts-patch:
+        specifier: 'catalog:'
+        version: 4.0.1
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
 
   packages/ts-lazy-property:
     devDependencies:
