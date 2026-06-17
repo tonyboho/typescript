@@ -5,6 +5,7 @@
     "packageManager": "pnpm@11.7.0",
     "scripts": {
         "changeset": "changeset",
+        "prepare": "ts-patch install",
         "bump": "changeset version && node scripts/changelog-date.ts",
         "clean": "pnpm --filter \"./packages/*\" run clean",
         "typecheck": "pnpm --filter \"./packages/*\" run typecheck",
@@ -26,6 +27,8 @@
         "@typescript-eslint/parser": "8.61.0",
         "eslint": "9.39.4",
         "eslint-plugin-align-assignments": "1.1.2",
-        "publint": "0.3.21"
+        "publint": "0.3.21",
+        "ts-patch": "catalog:",
+        "typescript": "catalog:"
     }
 }
