@@ -8,7 +8,8 @@
         "prepare": "ts-patch install",
         "bump": "changeset version && node scripts/changelog-date.ts",
         "clean": "pnpm --filter \"./packages/*\" run clean",
-        "typecheck": "pnpm --filter \"./packages/*\" run typecheck",
+        "typecheck": "pnpm --filter \"./packages/*\" run typecheck && pnpm run typecheck:scripts",
+        "typecheck:scripts": "tsc -p scripts/tsconfig.json",
         "build": "pnpm --filter \"./packages/*\" run build",
         "test": "pnpm --filter \"./packages/*\" run test",
         "lint": "eslint .",
@@ -23,6 +24,7 @@
     "devDependencies": {
         "@arethetypeswrong/cli": "0.18.3",
         "@changesets/cli": "2.31.0",
+        "@types/node": "catalog:",
         "@stylistic/eslint-plugin": "5.10.0",
         "@typescript-eslint/eslint-plugin": "8.61.0",
         "@typescript-eslint/parser": "8.61.0",
