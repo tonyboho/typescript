@@ -1,0 +1,376 @@
+import { Base, mixin } from "ts-mixin-class"
+import { ArbitraryObject, AsyncFunction, typeOf } from "./Helpers.js"
+import { Mapper, Mutator } from "./Visitor.js"
+
+export type JsonReferenceId = number
+
+type DynamicRecord = Record<PropertyKey, any>
+type JsonReference = { $ref: JsonReferenceId }
+type JsonReferenceEntry = { $refId: JsonReferenceId, value: unknown }
+
+@mixin()
+export class Collapser extends Base implements Mapper {
+    public layer? : SerializationLayer = SerializationLayer.new()
+
+    isVisited(value: unknown): boolean {
+        return this.layer!.hasObject(value)
+    }
+
+    markPreVisited(value: unknown): void {
+        this.layer!.registerObject(value)
+    }
+
+    markPostVisited(value: unknown, depth: number, visitResult: unknown): unknown {
+        const nativeSerializationEntry = nativeSerializableClassesByStringTag.get(typeOf(value))
+        const res                      = nativeSerializationEntry
+            ? nativeSerializationEntry.toJSON(visitResult as object)
+            : visitResult
+
+        return { $refId: this.layer!.refIdOf(value), value: res }
+    }
+
+    visitAlreadyVisited(value: unknown, depth: number): JsonReference {
+        return { $ref: this.layer!.refIdOf(value) }
+    }
+
+    collapse(value: unknown): any {
+        return this.visit(value)
+    }
+}
+
+@mixin()
+class ExpanderPhase1 extends Base implements Mapper {
+    public layer? : SerializationLayer = SerializationLayer.new()
+
+    markPostVisited(value: unknown, depth: number, visitResult: any): unknown {
+        let resolved = visitResult
+
+        if (resolved?.$refId !== undefined) {
+            this.layer!.registerObject(resolved.value, resolved.$refId)
+
+            resolved = resolved.value
+        }
+
+        return super.markPostVisited(value, depth, resolved)
+    }
+}
+
+@mixin()
+export class Expander extends Base implements Mutator {
+    $expander1? : ExpanderPhase1 = undefined
+
+    public mappingVisitSymbol? : symbol = undefined
+
+    public layer? : SerializationLayer = SerializationLayer.new()
+
+    get expander1(): ExpanderPhase1 {
+        if (this.$expander1 !== undefined) return this.$expander1
+
+        this.$expander1 = ExpanderPhase1.new({ internalVisitSymbol: this.mappingVisitSymbol })
+
+        return this.$expander1
+    }
+
+    markPostVisited(value: unknown, depth: number, visitResult: any): unknown {
+        let resolved = visitResult
+
+        if (resolved?.$ref !== undefined) {
+            resolved = this.expander1.layer!.objectOf(resolved.$ref)
+        }
+
+        return super.markPostVisited(value, depth, resolved)
+    }
+
+    expand(value: unknown): any {
+        this.expander1.layer = this.layer
+
+        const expanded = this.expander1.visit(value)
+
+        return this.visit(expanded)
+    }
+}
+
+export class SerializationLayer extends Base {
+    refIdSource : JsonReferenceId = 0
+
+    objectToRefId : Map<unknown, JsonReferenceId> = new Map()
+
+    refIdToObject : Map<JsonReferenceId, unknown> = new Map()
+
+    hasObject(object: unknown): boolean {
+        return this.objectToRefId.has(object)
+    }
+
+    registerObject(object: unknown, id?: JsonReferenceId): void {
+        if (id === undefined) id = this.refIdSource++
+
+        this.objectToRefId.set(object, id)
+        this.refIdToObject.set(id, object)
+    }
+
+    refIdOf(object: unknown): JsonReferenceId {
+        const refId = this.objectToRefId.get(object)
+
+        if (refId === undefined) throw new Error("Object has not been registered in the serialization layer.")
+
+        return refId
+    }
+
+    objectOf(refId: JsonReferenceId): unknown {
+        return this.refIdToObject.get(refId)
+    }
+}
+
+export class SerializationScope extends Base {
+    public currentLayer? : SerializationLayer = SerializationLayer.new()
+
+    stringify(value: unknown, space?: string | number): string {
+        const collapser = Collapser.new({ layer: this.currentLayer })
+        const decycled  = collapser.collapse(value)
+
+        return JSON.stringify(decycled, null, space)
+    }
+
+    parse(text: string): any {
+        const decycled = JSON.parse(text, reviver)
+        const expander = Expander.new({ layer: this.currentLayer })
+
+        return expander.expand(decycled)
+    }
+}
+
+export const stringify = (value: any, options?: { collapserVisitSymbol?: symbol, space?: string | number }): string => {
+    const decycled = Collapser.new({ internalVisitSymbol: options?.collapserVisitSymbol }).collapse(value)
+
+    return JSON.stringify(decycled, null, options?.space)
+}
+
+export const parse = (text: string, options?: { mappingVisitSymbol?: symbol }): any => {
+    const decycled = JSON.parse(text, reviver)
+
+    return Expander.new(options).expand(decycled)
+}
+
+@mixin()
+export class Serializable extends Base {
+    $class : string
+    $mode  : SerializationMode
+
+    $includedProperties : DynamicRecord
+    $excludedProperties : DynamicRecord
+
+    toJSON(key: string): unknown {
+        if (!this.$class) throw new Error(`Missing serializable class id: ${this.constructor}`)
+
+        const json: DynamicRecord = {}
+
+        if (this.$mode === "optOut") {
+            for (const [ propertyKey, propValue ] of Object.entries(this)) {
+                if (!this.$excludedProperties || !this.$excludedProperties[propertyKey]) json[propertyKey] = propValue
+            }
+        }
+        else if (this.$includedProperties) {
+            for (const propertyKey in this.$includedProperties) {
+                json[propertyKey] = (this as DynamicRecord)[propertyKey]
+            }
+        }
+
+        json.$class = this.$class
+
+        return json
+    }
+
+    static fromJSON(json: object): Serializable {
+        const instance: Serializable = Object.create(this.prototype)
+
+        for (const [ key, value ] of Object.entries(json)) {
+            if (key !== "$class") (instance as DynamicRecord)[key] = value
+        }
+
+        return instance
+    }
+}
+
+@mixin()
+export class SerializableCustom extends Base implements Serializable {
+}
+
+const serializableClasses = new Map<string, typeof Serializable>()
+
+const registerSerializableClass = (options: { id: string, mode: SerializationMode }, cls: typeof Serializable): void => {
+    const id = options.id
+
+    cls.prototype.$class = id
+    cls.prototype.$mode  = options.mode
+
+    if (serializableClasses.has(id) && serializableClasses.get(id) !== cls) {
+        throw new Error(`Serializable class with id: [${id}] already registered`)
+    }
+
+    serializableClasses.set(id, cls)
+}
+
+export const lookupSerializableClass = (id: string): typeof Serializable | undefined => {
+    return serializableClasses.get(id)
+}
+
+type NativeSerializationEntry<T extends object> = { toJSON: (native: object) => T, fromJSON: (json: T) => object }
+
+const nativeSerializableClassesByStringTag = new Map<string, NativeSerializationEntry<object>>()
+const nativeSerializableClassesById        = new Map<string, NativeSerializationEntry<object>>()
+
+const registerNativeSerializableClass = <T extends object>(cls: Function, entry: NativeSerializationEntry<T>): void => {
+    nativeSerializableClassesByStringTag.set(cls.name, entry as NativeSerializationEntry<object>)
+    nativeSerializableClassesById.set(cls.name, entry as NativeSerializationEntry<object>)
+}
+
+export type SerializationMode = "optIn" | "optOut"
+
+export const serializable = (opts?: { id?: string, mode?: SerializationMode }): ClassDecorator => {
+    return (<T extends typeof Serializable>(target: T): T => {
+        if (!(target.prototype instanceof Serializable)) {
+            throw new Error(`The class [${target.name}] is decorated with @serializable, but does not include the Serializable mixin.`)
+        }
+
+        registerSerializableClass(
+            { id: opts?.id ?? target.name, mode: opts?.mode ?? "optOut" },
+            target
+        )
+
+        return target
+    }) as ClassDecorator
+}
+
+export const exclude = (): PropertyDecorator => {
+    return function(target: Serializable, propertyKey: string | symbol): void {
+        if (!Object.prototype.hasOwnProperty.call(target, "$excludedProperties")) {
+            target.$excludedProperties = Object.create(target.$excludedProperties || null)
+        }
+
+        target.$excludedProperties[propertyKey] = true
+    }
+}
+
+export const include = (): PropertyDecorator => {
+    return function(target: Serializable, propertyKey: string | symbol): void {
+        if (!Object.prototype.hasOwnProperty.call(target, "$includedProperties")) {
+            target.$includedProperties = Object.create(target.$includedProperties || null)
+        }
+
+        target.$includedProperties[propertyKey] = true
+    }
+}
+
+export const reviver = function(key: string | number, value: number | string | boolean | ArbitraryObject): unknown {
+    if (typeof value === "object" && value !== null) {
+        const $class = value.$class as string | undefined
+
+        if ($class !== undefined) {
+            const cls = lookupSerializableClass($class)
+
+            if (!cls) throw new Error(`Unknown serializable class id: ${$class}`)
+
+            return cls.fromJSON(value)
+        }
+
+        const $$class = value.$$class as string | undefined
+
+        if ($$class !== undefined) {
+            const entry = nativeSerializableClassesById.get($$class)
+
+            if (!entry) throw new Error(`Unknown native serializable class id: ${$$class}`)
+
+            return entry.fromJSON(value)
+        }
+    }
+
+    return value
+}
+
+registerNativeSerializableClass(Function, {
+    toJSON : (func: Function) => {
+        return {
+            $$class : "Function",
+            source  : `(${func.toString()})`
+        }
+    },
+    fromJSON : data => {
+        return globalThis.eval(data.source)
+    }
+})
+
+registerNativeSerializableClass(AsyncFunction, {
+    toJSON : (func: Function) => {
+        return {
+            $$class : "AsyncFunction",
+            source  : `(${func.toString()})`
+        }
+    },
+    fromJSON : data => {
+        return globalThis.eval(data.source)
+    }
+})
+
+registerNativeSerializableClass(Map, {
+    toJSON : (map: Map<unknown, unknown>) => {
+        return {
+            $$class : "Map",
+            entries : Array.from(map.entries())
+        }
+    },
+    fromJSON : data => {
+        return new Map(data.entries)
+    }
+})
+
+registerNativeSerializableClass(Set, {
+    toJSON : (set: Set<unknown>) => {
+        return {
+            $$class : "Set",
+            entries : Array.from(set)
+        }
+    },
+    fromJSON : data => {
+        return new Set(data.entries)
+    }
+})
+
+registerNativeSerializableClass(Date, {
+    toJSON : (date: Date) => {
+        return {
+            $$class : "Date",
+            time    : date.getTime()
+        }
+    },
+    fromJSON : data => {
+        return new Date(data.time)
+    }
+})
+
+const errorClasses = [ Error, TypeError, RangeError, EvalError, ReferenceError, SyntaxError, URIError ]
+
+errorClasses.forEach(cls =>
+    registerNativeSerializableClass(cls, {
+        toJSON : (error: Error) => {
+            return Object.assign({}, error, {
+                $$class : cls.name,
+                stack   : error.stack,
+                message : error.message,
+                name    : error.name
+            })
+        },
+        fromJSON : data => {
+            const error = Object.create(cls.prototype) as Error & DynamicRecord
+
+            Object.assign(error, data)
+
+            delete error.$$class
+
+            error.stack   = data.stack
+            error.message = data.message
+            error.name    = data.name
+
+            return error
+        }
+    })
+)

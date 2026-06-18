@@ -1,0 +1,51 @@
+{
+    "name": "ts-serializable",
+    "version": "0.0.1",
+    "description": "TypeScript serialization helpers with cyclic reference support.",
+    "type": "module",
+    "packageManager": "pnpm@11.7.0",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/tonyboho/typescript.git",
+        "directory": "packages/ts-serializable"
+    },
+    "main": "dist/src/index.js",
+    "types": "dist/src/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/src/index.d.ts",
+            "default": "./dist/src/index.js"
+        }
+    },
+    "files": [
+        "dist/src",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+        "pretest": "pnpm run build",
+        "test": "siesta dist/tests/index.js",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "prepare": "ts-patch install"
+    },
+    "keywords": [
+        "typescript",
+        "serialization",
+        "mixin",
+        "cyclic"
+    ],
+    "license": "MIT",
+    "dependencies": {
+        "ts-mixin-class": "workspace:"
+    },
+    "peerDependencies": {
+        "typescript": "catalog:"
+    },
+    "devDependencies": {
+        "@bryntum/siesta": "catalog:",
+        "@types/node": "catalog:",
+        "ts-patch": "catalog:",
+        "typescript": "catalog:"
+    }
+}

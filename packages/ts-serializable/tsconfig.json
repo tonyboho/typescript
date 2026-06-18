@@ -1,0 +1,34 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "lib": [
+            "ES2022"
+        ],
+        "types": [
+            "node"
+        ],
+        "strict": true,
+        "strictPropertyInitialization": false,
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "skipLibCheck": true,
+        "outDir": "dist",
+        "rootDir": ".",
+        "declaration": true,
+        "sourceMap": false,
+        "experimentalDecorators": true,
+        "plugins": [
+            {
+                "transform": "ts-mixin-class",
+                "transformProgram": true,
+                "allowUndefinedForRequiredProperties": true
+            }
+        ]
+    },
+    "include": [
+        "src/**/*.ts",
+        "tests/**/*.ts"
+    ]
+}
