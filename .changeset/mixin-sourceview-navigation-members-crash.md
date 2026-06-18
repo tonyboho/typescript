@@ -1,0 +1,5 @@
+---
+"ts-mixin-class": patch
+---
+
+Fix tsserver crashing (`Cannot read properties of undefined (reading 'members'/'flags')`) on go-to-definition, rename and quickinfo for many source-view symbols — generic mixin/consumer type parameters, base classes in mixin heritage, and the constructor of an implements-only consumer (`new Box<…>()`). The source-view tree is built from a throwaway clone the program never binds; generated nodes keep `.original` links into that unbound clone, and tsserver navigation (`getParseTreeNode`, whose `isParseTreeNode` test looks only at the `Synthesized` flag) followed them into the clone and crashed the checker. After re-parenting, the transform now clears the `Synthesized` flag on the generated class-likes / identifiers / type parameters / type references / heritage expressions / constructors whose `.original` escapes the bound tree (their preserved positive ranges already make them "real" to the position-based synthetic check). `.original` is kept, so declaration emit and the generated `$base` required-base/linearization diagnostics — which depend on it — keep working.
