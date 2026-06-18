@@ -1,7 +1,7 @@
 import { it } from "@bryntum/siesta/nodejs.js"
 import { Base } from "ts-mixin-class"
-import { AsyncFunction } from "../../src/Helpers.js"
-import { Collapser, Expander, parse, serializable, Serializable, stringify } from "../../src/Serializable.js"
+import { AsyncFunction } from "../src/Helpers.js"
+import { Collapser, Expander, parse, serializable, Serializable, stringify } from "../src/Serializable.js"
 
 it('Should be able to collapse cyclic structures', async t => {
     const a             = { a : undefined }

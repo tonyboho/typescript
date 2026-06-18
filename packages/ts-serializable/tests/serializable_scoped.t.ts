@@ -1,5 +1,5 @@
 import { it } from "@bryntum/siesta/nodejs.js"
-import { Collapser, Expander } from "../../src/Serializable.js"
+import { Collapser, Expander } from "../src/Serializable.js"
 
 
 it('Should be able to collapse with layer', async t => {
