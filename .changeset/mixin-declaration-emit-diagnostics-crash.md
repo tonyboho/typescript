@@ -1,0 +1,5 @@
+---
+"ts-mixin-class": patch
+---
+
+Fix the IDE showing **no errors at all** for a file with a mixin class when the project's tsconfig has `"declaration": true`. tsserver's semantic diagnostics also compute declaration diagnostics, which ran TypeScript's declaration-emit transform over the source-view tree and crashed (`isDeclarationAndNotVisible` reading `getParseTreeNode(node).kind` on `undefined`) on a fully-synthetic generated member — the construction `static new`, which carries no `.original`. The whole `semanticDiagnosticsSync` request then failed, so the editor received an error response and rendered no diagnostics while `tsc` still reported the real type errors. `alignGeneratedNavigableNodesWithParseTree` now also clears the `Synthesized` flag on generated members (the construction `static new` and generated property/accessor) that have no resolvable parse-tree node, so they resolve to themselves and declaration emit no longer crashes. The flag-clearing for navigable kinds (heritage references etc.) is unchanged, so find-all-references / rename on a base name are unaffected.
