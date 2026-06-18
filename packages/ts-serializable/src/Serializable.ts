@@ -214,14 +214,18 @@ export const lookupSerializableClass = (id: string): typeof Serializable | undef
     return serializableClasses.get(id)
 }
 
-type NativeSerializationEntry<T extends object> = { toJSON: (native: object) => T, fromJSON: (json: T) => object }
+type JSONObject = Record<string, unknown>
+type NativeSerializationEntry<T extends JSONObject, Class extends AnyConstructor> = {
+    toJSON   : (native: InstanceType<Class>) => T,
+    fromJSON : (json: T) => InstanceType<Class>
+}
 
-const nativeSerializableClassesByStringTag = new Map<string, NativeSerializationEntry<object>>()
-const nativeSerializableClassesById        = new Map<string, NativeSerializationEntry<object>>()
+const nativeSerializableClassesByStringTag = new Map<string, NativeSerializationEntry<JSONObject, AnyConstructor>>()
+const nativeSerializableClassesById        = new Map<string, NativeSerializationEntry<JSONObject, AnyConstructor>>()
 
-const registerNativeSerializableClass = <T extends object>(cls: Function, entry: NativeSerializationEntry<T>): void => {
-    nativeSerializableClassesByStringTag.set(cls.name, entry as NativeSerializationEntry<object>)
-    nativeSerializableClassesById.set(cls.name, entry as NativeSerializationEntry<object>)
+const registerNativeSerializableClass = <T extends JSONObject, Class extends AnyConstructor>(cls: Class, entry: NativeSerializationEntry<T, Class>): void => {
+    nativeSerializableClassesByStringTag.set(cls.name, entry as NativeSerializationEntry<JSONObject, AnyConstructor>)
+    nativeSerializableClassesById.set(cls.name, entry as NativeSerializationEntry<JSONObject, AnyConstructor>)
 }
 
 export type SerializationMode = "optIn" | "optOut"
@@ -352,7 +356,7 @@ const errorClasses = [ Error, TypeError, RangeError, EvalError, ReferenceError, 
 errorClasses.forEach(cls =>
     registerNativeSerializableClass(cls, {
         toJSON : (error: Error) => {
-            return Object.assign({}, error, {
+            return Object.assign({}, error as unknown as JSONObject, {
                 $$class : cls.name,
                 stack   : error.stack,
                 message : error.message,
