@@ -10,6 +10,10 @@
         "url": "git+https://github.com/tonyboho/typescript.git",
         "directory": "packages/ts-serializable"
     },
+    "homepage": "https://github.com/tonyboho/typescript/tree/main/packages/ts-serializable#readme",
+    "bugs": {
+        "url": "https://github.com/tonyboho/typescript/issues"
+    },
     "main": "dist/src/index.js",
     "types": "dist/src/index.d.ts",
     "exports": {

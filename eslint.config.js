@@ -1,48 +1,25 @@
-import stylistic from "@stylistic/eslint-plugin"
-import tseslint from "@typescript-eslint/eslint-plugin"
-import tsParser from "@typescript-eslint/parser"
-import alignAssignments from "eslint-plugin-align-assignments"
+import base from "./eslint.config.base.js"
+import tsMixinClass from "./packages/ts-mixin-class/eslint.config.js"
+import tsLazyProperty from "./packages/ts-lazy-property/eslint.config.js"
+import tsSerializable from "./packages/ts-serializable/eslint.config.js"
 
+// Whole-repository config: every package (each brings its own paths) plus the repo-level
+// scripts, all sharing the base settings.
 export default [
     {
         ignores: [
             "**/dist/**",
-            "**/node_modules/**"
+            "**/node_modules/**",
+            "**/tests/fixture-suite/**",
+            "**/tests/declaration-fixture-suite/**",
+            "**/bench/fixtures/generated/**"
         ]
     },
+    tsMixinClass,
+    tsLazyProperty,
+    tsSerializable,
     {
-        files: [ "packages/*/src/**/*.{ts,tsx}" ],
-        languageOptions: {
-            parser: tsParser,
-            parserOptions: {
-                ecmaVersion: "latest",
-                sourceType: "module"
-            }
-        },
-        plugins: {
-            "@stylistic": stylistic,
-            "@typescript-eslint": tseslint,
-            "align-assignments": alignAssignments
-        },
-        rules: {
-            "max-len": [ "warn", { code: 180 } ],
-            "@stylistic/semi": [ "error", "never" ],
-            "no-trailing-spaces": "warn",
-            "@stylistic/comma-dangle": [ "warn", "never" ],
-            "align-assignments/align-assignments": "warn",
-            "@stylistic/key-spacing": [ "warn", {
-                singleLine: { beforeColon: false, afterColon: true },
-                multiLine: {
-                    beforeColon: true,
-                    afterColon: true,
-                    align: "colon"
-                }
-            } ],
-            "@stylistic/member-delimiter-style": [ "warn", {
-                multiline: { delimiter: "comma", requireLast: false },
-                singleline: { delimiter: "comma", requireLast: false }
-            } ],
-            "array-bracket-spacing": [ "error", "always" ]
-        }
+        ...base,
+        files: [ "scripts/**/*.ts" ]
     }
 ]

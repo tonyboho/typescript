@@ -10,6 +10,7 @@
             "node"
         ],
         "strict": true,
+        "noUnusedLocals": true,
         "strictPropertyInitialization": false,
         "esModuleInterop": true,
         "forceConsistentCasingInFileNames": true,
