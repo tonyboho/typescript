@@ -7,7 +7,7 @@ import type { TsServerResponse } from "./tsserver-util.js"
 
 type RenameResponseBody = {
     info? : {
-        canRename? : boolean,
+        canRename?   : boolean,
         displayName? : string
     },
     locs? : RenameFileLocation[]
@@ -20,11 +20,11 @@ type RenameFileLocation = {
 
 type RenameLocation = {
     start : TextPosition,
-    end : TextPosition
+    end   : TextPosition
 }
 
 type TextPosition = {
-    line : number,
+    line   : number,
     offset : number
 }
 
@@ -533,7 +533,7 @@ function applyRenameLocations(
 }
 
 function positionToIndex(source: string, position: TextPosition): number {
-    const lines = source.split("\n")
+    const lines      = source.split("\n")
     const beforeLine = lines
         .slice(0, position.line - 1)
         .reduce((sum, line) => sum + line.length + 1, 0)

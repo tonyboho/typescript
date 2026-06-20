@@ -9,7 +9,7 @@ import {
     textRangeFromIndices
 } from "./tsserver-util.js"
 
-const sourceFileName = "source.ts"
+const sourceFileName   = "source.ts"
 const lazyPropertyLine = 5
 
 const validSourceText = trimIndent(`

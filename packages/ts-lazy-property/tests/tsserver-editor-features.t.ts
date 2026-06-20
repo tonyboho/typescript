@@ -11,13 +11,13 @@ import {
 import type { TsServerResponse } from "./tsserver-util.js"
 
 type TextPosition = {
-    line : number,
+    line   : number,
     offset : number
 }
 
 type TextSpan = {
     start : TextPosition,
-    end : TextPosition
+    end   : TextPosition
 }
 
 type DefinitionInfo = TextSpan & {
@@ -30,13 +30,13 @@ type QuickInfoBody = TextSpan & {
 
 type ReferencesBody = {
     refs? : Array<TextSpan & {
-        file : string,
+        file          : string,
         isDefinition? : boolean
     }>
 }
 
 type DocumentHighlightsBody = Array<{
-    file : string,
+    file           : string,
     highlightSpans : TextSpan[]
 }>
 
@@ -59,7 +59,7 @@ it("tsserver definition resolves lazy property usages", async (t: Test) => {
     const { sourceFile, dispose } = await createEditorFixture()
 
     try {
-        const response = await request(sourceFile, "definition", publicUsageArgs(sourceFile))
+        const response    = await request(sourceFile, "definition", publicUsageArgs(sourceFile))
         const definitions = assertResponseBody<DefinitionInfo[]>(t, response)
 
         t.true(definitions.some((definition) => {
@@ -95,7 +95,7 @@ it("tsserver quickinfo reports public and backing lazy property types", async (t
     const { sourceFile, dispose } = await createEditorFixture()
 
     try {
-        const publicQuickInfo = assertResponseBody<QuickInfoBody>(
+        const publicQuickInfo  = assertResponseBody<QuickInfoBody>(
             t,
             await request(sourceFile, "quickinfo", publicUsageArgs(sourceFile))
         )
@@ -153,7 +153,7 @@ it("tsserver quickinfo and definition recover for backing property after a lazy 
                 fixedDiagnostics.map((diagnostic) => `TS${diagnostic.code} ${diagnostic.text}`).join("\n")
             )
 
-            const quickInfo = assertResponseBody<QuickInfoBody>(
+            const quickInfo   = assertResponseBody<QuickInfoBody>(
                 t,
                 await session.request("quickinfo", backingUsageArgs(sourceFile))
             )
@@ -181,7 +181,7 @@ it("tsserver references for lazyProperty exclude generated backing usages", asyn
     const { sourceFile, dispose } = await createEditorFixture()
 
     try {
-        const body = assertResponseBody<ReferencesBody>(
+        const body           = assertResponseBody<ReferencesBody>(
             t,
             await request(sourceFile, "references", publicUsageArgs(sourceFile))
         )
@@ -201,14 +201,14 @@ it("tsserver document highlights for lazyProperty exclude generated backing usag
     const { sourceFile, dispose } = await createEditorFixture()
 
     try {
-        const body = assertResponseBody<DocumentHighlightsBody>(
+        const body           = assertResponseBody<DocumentHighlightsBody>(
             t,
             await request(sourceFile, "documentHighlights", {
                 ...publicUsageArgs(sourceFile),
                 filesToSearch : [ sourceFile ]
             })
         )
-        const spans = body.flatMap((item) => {
+        const spans          = body.flatMap((item) => {
             return item.file === sourceFile ? item.highlightSpans : []
         })
         const highlightTexts = uniqueLocalSpanTexts(sourceFile, spans)
@@ -224,10 +224,10 @@ it("tsserver document highlights for lazyProperty exclude generated backing usag
 })
 
 async function createEditorFixture(): Promise<{
-    dispose : () => Promise<void>,
+    dispose    : () => Promise<void>,
     sourceFile : string
 }> {
-    const fixture = await createTypeScriptFixture({
+    const fixture    = await createTypeScriptFixture({
         experimentalDecorators : false,
         sourceFiles            : [
             {
@@ -304,7 +304,7 @@ function sourceSlice(source: string, span: TextSpan): string {
 }
 
 function positionToIndex(source: string, position: TextPosition): number {
-    const lines = source.split("\n")
+    const lines      = source.split("\n")
     const beforeLine = lines
         .slice(0, position.line - 1)
         .reduce((sum, line) => sum + line.length + 1, 0)

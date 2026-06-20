@@ -67,7 +67,7 @@ it("does not share cached source files between different transform options", asy
     const baseProgram = ts.createProgram([ sourceFileName ], preserveCompilerOptions, memoryHost)
 
     const defaultPrefix = getTransformedSourceFile(t, memoryHost, preserveCompilerOptions, {}, baseProgram)
-    const customPrefix  = getTransformedSourceFile(t, memoryHost, preserveCompilerOptions, { backingPrefix : "__" }, baseProgram)
+    const customPrefix  = getTransformedSourceFile(t, memoryHost, preserveCompilerOptions, { backingPrefix: "__" }, baseProgram)
 
     t.true(defaultPrefix !== customPrefix, "Different transform options produce different cache entries")
     t.true(
@@ -85,10 +85,10 @@ it('mode "ide" overrides the emit heuristic', async (t: Test) => {
         ...preserveCompilerOptions,
         noEmit : false
     }
-    const files       = new Map([ [ sourceFileName, sourceText ] ])
-    const memoryHost  = createMemoryCompilerHost(files, emitCapableOptions)
-    const baseProgram = ts.createProgram([ sourceFileName ], emitCapableOptions, memoryHost)
-    const sourceFile  = getTransformedSourceFile(t, memoryHost, emitCapableOptions, { mode : "ide" }, baseProgram)
+    const files                                  = new Map([ [ sourceFileName, sourceText ] ])
+    const memoryHost                             = createMemoryCompilerHost(files, emitCapableOptions)
+    const baseProgram                            = ts.createProgram([ sourceFileName ], emitCapableOptions, memoryHost)
+    const sourceFile                             = getTransformedSourceFile(t, memoryHost, emitCapableOptions, { mode: "ide" }, baseProgram)
 
     t.is(sourceFile.text, sourceText, 'mode "ide" keeps the original source text despite emit-capable compiler options')
     t.true(
@@ -101,7 +101,7 @@ it('mode "emit" overrides the noEmit heuristic', async (t: Test) => {
     const files       = new Map([ [ sourceFileName, sourceText ] ])
     const memoryHost  = createMemoryCompilerHost(files, preserveCompilerOptions)
     const baseProgram = ts.createProgram([ sourceFileName ], preserveCompilerOptions, memoryHost)
-    const sourceFile  = getTransformedSourceFile(t, memoryHost, preserveCompilerOptions, { mode : "emit" }, baseProgram)
+    const sourceFile  = getTransformedSourceFile(t, memoryHost, preserveCompilerOptions, { mode: "emit" }, baseProgram)
 
     t.true(sourceFile.text !== sourceText, 'mode "emit" replaces the source text despite noEmit')
     t.true(
@@ -116,7 +116,7 @@ it("unknown mode option throws", async (t: Test) => {
     let error: Error | undefined
 
     try {
-        createLazyPropertyCompilerHost(ts, memoryHost, preserveCompilerOptions, { mode : "watch" } as unknown as LazyPropertyTransformerConfig)
+        createLazyPropertyCompilerHost(ts, memoryHost, preserveCompilerOptions, { mode: "watch" } as unknown as LazyPropertyTransformerConfig)
     } catch (caught) {
         error = caught as Error
     }
@@ -131,7 +131,7 @@ function createMemoryCompilerHost(
     files: Map<string, string>,
     compilerOptions: ts.CompilerOptions
 ): ts.CompilerHost {
-    const host = ts.createCompilerHost(compilerOptions, true)
+    const host                  = ts.createCompilerHost(compilerOptions, true)
     const originalGetSourceFile = host.getSourceFile.bind(host)
 
     host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {

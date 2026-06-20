@@ -4,37 +4,37 @@ import { AsyncFunction } from "../src/Helpers.js"
 import { Collapser, Expander, parse, serializable, Serializable, stringify } from "../src/Serializable.js"
 
 it('Should be able to collapse cyclic structures', async t => {
-    const a             = { a : undefined }
-    a.a                 = a
+    const a = { a: undefined }
+    a.a     = a
 
     //---------------------
     t.isDeeply(
         Collapser.new().collapse(a),
         {
-            $refId  : 0,
-            value   : { a : { $ref : 0 } }
+            $refId : 0,
+            value  : { a: { $ref: 0 } }
         }
     )
 
     //---------------------
-    const b             = []
+    const b = []
     b.push(b)
 
     t.isDeeply(
         Collapser.new().collapse(b),
         {
-            $refId  : 0,
-            value   : [ { $ref : 0 } ]
+            $refId : 0,
+            value  : [ { $ref: 0 } ]
         }
     )
 })
 
 
 it('Collapse/expand on cyclic structure should re-create it', async t => {
-    const a             = { a : undefined }
-    a.a                 = a
+    const a = { a: undefined }
+    a.a     = a
 
-    const revived : typeof a    = Expander.new().expand(Collapser.new().collapse(a)) as any
+    const revived : typeof a = Expander.new().expand(Collapser.new().collapse(a)) as any
 
     t.isNot(revived, a)
 
@@ -46,8 +46,8 @@ it('Should throw exception if `@serializable` class does not include Serializabl
     t.throws(() => {
         @serializable()
         class SomeClass {
-            prop1       : number    = 1
-            prop2       : string    = '2'
+            prop1 : number    = 1
+            prop2 : string    = '2'
         }
     })
 
@@ -66,38 +66,38 @@ it('Should throw exception if `@serializable` class does not include Serializabl
 
 
 it('Basic serialization should work', async t => {
-    @serializable({ id : 'someclass' })
+    @serializable({ id: 'someclass' })
     class SomeClass extends Serializable {
-        prop1       : number    = 1
-        prop2       : string    = '2'
+        prop1 : number    = 1
+        prop2 : string    = '2'
     }
 
-    const someClass     = new SomeClass()
+    const someClass = new SomeClass()
 
-    t.isDeeply(parse(stringify(someClass)), { prop1 : 1, prop2 : '2' })
+    t.isDeeply(parse(stringify(someClass)), { prop1: 1, prop2: '2' })
 
-    const revived       = parse(stringify(someClass))
+    const revived = parse(stringify(someClass))
 
     t.isInstanceOf(revived, SomeClass)
 })
 
 
 it('Nested basic serialization should work', async t => {
-    @serializable({ id : 'someclass1' })
+    @serializable({ id: 'someclass1' })
     class SomeClass1 extends Serializable {
-        prop1       : number    = 1
+        prop1 : number    = 1
     }
 
-    @serializable({ id : 'someclass2' })
+    @serializable({ id: 'someclass2' })
     class SomeClass2 extends Serializable {
-        prop2       : SomeClass1    = new SomeClass1()
+        prop2 : SomeClass1    = new SomeClass1()
     }
 
-    const someClass2    = new SomeClass2()
+    const someClass2 = new SomeClass2()
 
-    t.isDeeply(parse(stringify(someClass2)), { prop2 : { prop1 : 1 } })
+    t.isDeeply(parse(stringify(someClass2)), { prop2: { prop1: 1 } })
 
-    const revived : SomeClass2      = parse(stringify(someClass2))
+    const revived : SomeClass2 = parse(stringify(someClass2))
 
     t.isInstanceOf(revived, SomeClass2)
     t.isInstanceOf(revived.prop2, SomeClass1)
@@ -107,21 +107,21 @@ it('Nested basic serialization should work', async t => {
 
 
 it('Serialization of nested array property should work', async t => {
-    @serializable({ id : 'someclass11' })
+    @serializable({ id: 'someclass11' })
     class SomeClass1 extends Serializable {
-        prop1       : number    = 1
+        prop1 : number    = 1
     }
 
-    @serializable({ id : 'someclass22' })
+    @serializable({ id: 'someclass22' })
     class SomeClass2 extends Serializable {
-        prop2       : SomeClass1[]      = [ new SomeClass1() ]
+        prop2 : SomeClass1[]      = [ new SomeClass1() ]
     }
 
-    const someClass     = new SomeClass2()
+    const someClass = new SomeClass2()
 
-    t.isDeeply(parse(stringify(someClass)), { prop2 : [ { prop1 : 1 } ] })
+    t.isDeeply(parse(stringify(someClass)), { prop2: [ { prop1: 1 } ] })
 
-    const revived : SomeClass2      = parse(stringify(someClass))
+    const revived : SomeClass2 = parse(stringify(someClass))
 
     t.isInstanceOf(revived, SomeClass2)
     t.isInstanceOf(revived.prop2, Array)
@@ -132,23 +132,23 @@ it('Serialization of nested array property should work', async t => {
 
 
 it('Serialization of cyclic data structures should work', async t => {
-    @serializable({ id : 'someclass111' })
+    @serializable({ id: 'someclass111' })
     class SomeClass1 extends Serializable {
-        another         : SomeClass2    = undefined
+        another : SomeClass2    = undefined
     }
 
-    @serializable({ id : 'someclass222' })
+    @serializable({ id: 'someclass222' })
     class SomeClass2 extends Serializable {
-        another         : SomeClass1    = undefined
+        another : SomeClass1    = undefined
     }
 
-    const someClass1    = new SomeClass1()
-    const someClass2    = new SomeClass2()
+    const someClass1 = new SomeClass1()
+    const someClass2 = new SomeClass2()
 
-    someClass1.another  = someClass2
-    someClass2.another  = someClass1
+    someClass1.another = someClass2
+    someClass2.another = someClass1
 
-    const revived : SomeClass1      = parse(stringify(someClass1))
+    const revived : SomeClass1 = parse(stringify(someClass1))
 
     t.isInstanceOf(revived, SomeClass1)
     t.isInstanceOf(revived.another, SomeClass2)
@@ -158,9 +158,9 @@ it('Serialization of cyclic data structures should work', async t => {
 
 
 it('Serialization of native data structures should work - Date', async t => {
-    const date  = new Date(2020, 1, 1)
+    const date = new Date(2020, 1, 1)
 
-    const revived : Date   = parse(stringify(date))
+    const revived : Date = parse(stringify(date))
 
     t.isInstanceOf(revived, Date)
 
@@ -171,9 +171,9 @@ it('Serialization of native data structures should work - Date', async t => {
 
 
 it('Serialization of native data structures should work - Function', async t => {
-    const func      = () => 1
+    const func = () => 1
 
-    const revived : Function   = parse(stringify(func))
+    const revived : Function = parse(stringify(func))
 
     t.isInstanceOf(revived, Function)
 
@@ -184,9 +184,9 @@ it('Serialization of native data structures should work - Function', async t => 
 
 
 it('Serialization of native data structures should work - Error', async t => {
-    const error     = new Error("message")
+    const error = new Error("message")
 
-    const revived : Error   = parse(stringify(error))
+    const revived : Error = parse(stringify(error))
 
     t.isInstanceOf(revived, Error)
 
@@ -196,9 +196,9 @@ it('Serialization of native data structures should work - Error', async t => {
 
 
 it('Serialization of native data structures should work - AsyncFunction', async t => {
-    const func      = async () => 1
+    const func = async () => 1
 
-    const revived : Function   = parse(stringify(func))
+    const revived : Function = parse(stringify(func))
 
     t.isInstanceOf(revived, AsyncFunction)
 
@@ -211,11 +211,11 @@ it('Serialization of native data structures should work - AsyncFunction', async 
 
 
 it('Serialization of crazy cyclic data structures should work - Map', async t => {
-    const crazyMap  = new Map()
+    const crazyMap = new Map()
 
     crazyMap.set(crazyMap, crazyMap)
 
-    const revived : Map<Map<unknown, unknown>, Map<unknown, unknown>>   = parse(stringify(crazyMap))
+    const revived : Map<Map<unknown, unknown>, Map<unknown, unknown>> = parse(stringify(crazyMap))
 
     t.isInstanceOf(revived, Map)
 
@@ -226,11 +226,11 @@ it('Serialization of crazy cyclic data structures should work - Map', async t =>
 
 
 it('Serialization of crazy cyclic data structures should work - Set', async t => {
-    const crazySet  = new Set()
+    const crazySet = new Set()
 
     crazySet.add(crazySet)
 
-    const revived : Set<unknown>   = parse(stringify(crazySet))
+    const revived : Set<unknown> = parse(stringify(crazySet))
 
     t.isInstanceOf(revived, Set)
 

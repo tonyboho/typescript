@@ -25,7 +25,7 @@ it("reports lazy initializer diagnostics at the original source property positio
         return
     }
 
-    const position = sourceFile.getLineAndCharacterOfPosition(typeError.start)
+    const position        = sourceFile.getLineAndCharacterOfPosition(typeError.start)
     const highlightedText = sourceFile.text.slice(typeError.start, typeError.start + (typeError.length ?? 0))
 
     t.equal(ts.flattenDiagnosticMessageText(typeError.messageText, "\n"), "Type 'number' is not assignable to type 'string'.")
@@ -36,7 +36,7 @@ it("reports lazy initializer diagnostics at the original source property positio
 })
 
 function getSemanticDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diagnostic[] {
-    const compilerOptions = {
+    const compilerOptions       = {
         target           : ts.ScriptTarget.ES2022,
         module           : ts.ModuleKind.ESNext,
         moduleResolution : ts.ModuleResolutionKind.Bundler,
@@ -48,8 +48,8 @@ function getSemanticDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diagnost
     const transformedSourceFile = transformSourceFile(ts, sourceFile, {
         preserveLazyDecorator : true
     })
-    const host = ts.createCompilerHost(compilerOptions, true)
-    const getSourceFile = host.getSourceFile.bind(host)
+    const host                  = ts.createCompilerHost(compilerOptions, true)
+    const getSourceFile         = host.getSourceFile.bind(host)
 
     host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
         if (fileName === sourceFileName) {

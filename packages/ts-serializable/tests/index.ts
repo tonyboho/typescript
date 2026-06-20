@@ -1,9 +1,9 @@
 import { Project } from "@bryntum/siesta/nodejs.js"
 
 const project = Project.new({
-    title                   : 'ts-serializable test suite',
+    title : 'ts-serializable test suite',
 
-    testDescriptor          : {}
+    testDescriptor : {}
 })
 
 project.plan(

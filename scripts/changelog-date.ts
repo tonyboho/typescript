@@ -10,7 +10,7 @@
 
 import { globSync, readFileSync, writeFileSync } from "node:fs"
 
-const date: string = new Date().toISOString().slice(0, 10)
+const date: string           = new Date().toISOString().slice(0, 10)
 const versionHeading: RegExp = /^## (\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/m
 
 for (const file of globSync("packages/*/CHANGELOG.md")) {

@@ -5,8 +5,8 @@ import ts from "typescript"
 import { createLazyPropertyCompilerHost } from "../src/index.js"
 import { formatTypeScriptDiagnostics, hasTypeScriptDiagnostic, trimIndent } from "./util.js"
 
-const sourceFileName = "source.ts"
-const lazyPropertyLine = 5
+const sourceFileName      = "source.ts"
+const lazyPropertyLine    = 5
 const regularPropertyLine = 7
 
 const validSourceText = trimIndent(`
@@ -67,12 +67,12 @@ function runStaleVersionFlow(
     fixedSourceText: string
 ): {
     fixedDiagnostics : readonly ts.Diagnostic[],
-    fixedFile : ts.SourceFile,
-    typoDiagnostics : readonly ts.Diagnostic[]
+    fixedFile        : ts.SourceFile,
+    typoDiagnostics  : readonly ts.Diagnostic[]
 } {
     let text = typoSourceText
 
-    const compilerOptions = {
+    const compilerOptions       = {
         target                 : ts.ScriptTarget.ES2022,
         module                 : ts.ModuleKind.ESNext,
         moduleResolution       : ts.ModuleResolutionKind.Bundler,
@@ -81,7 +81,7 @@ function runStaleVersionFlow(
         noEmit                 : true,
         experimentalDecorators : false
     }
-    const compilerHost = ts.createCompilerHost(compilerOptions, true)
+    const compilerHost          = ts.createCompilerHost(compilerOptions, true)
     const originalGetSourceFile = compilerHost.getSourceFile.bind(compilerHost)
 
     compilerHost.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {

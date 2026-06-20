@@ -29,14 +29,14 @@ it("skips node_modules source files with posix and windows path separators", asy
         "/project/node_modules/dependency/source.ts",
         "C:\\project\\node_modules\\dependency\\source.ts"
     ]) {
-        const sourceFile = ts.createSourceFile(
+        const sourceFile            = ts.createSourceFile(
             fileName,
             sourceText,
             ts.ScriptTarget.ES2022,
             true,
             ts.ScriptKind.TS
         )
-        const compilerHost = ts.createCompilerHost(compilerOptions, true)
+        const compilerHost          = ts.createCompilerHost(compilerOptions, true)
         const originalGetSourceFile = compilerHost.getSourceFile.bind(compilerHost)
 
         compilerHost.getSourceFile = (requestedFileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {

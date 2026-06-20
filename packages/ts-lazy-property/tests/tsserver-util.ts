@@ -2,46 +2,46 @@ import { fork } from "node:child_process"
 import path from "node:path"
 
 export type TsServerMessage = {
-    body? : unknown,
-    type? : string,
-    command? : string,
-    event? : string,
-    message? : string,
-    request_seq? : number
-    success? : boolean
+    body?        : unknown,
+    type?        : string,
+    command?     : string,
+    event?       : string,
+    message?     : string,
+    request_seq? : number,
+    success?     : boolean
 }
 
 export type TsServerResponse = TsServerMessage
 
 export type TsServerDiagnostic = {
     start : {
-        line : number,
+        line   : number,
         offset : number
     },
     end : {
-        line : number,
+        line   : number,
         offset : number
     },
-    text : string,
-    code : number,
+    text     : string,
+    code     : number,
     category : string,
-    source? : string
+    source?  : string
 }
 
 export type TypeScriptServerSession = {
     change : (args: {
-        file : string,
-        line : number,
-        offset : number,
-        endLine : number,
-        endOffset : number,
+        file         : string,
+        line         : number,
+        offset       : number,
+        endLine      : number,
+        endOffset    : number,
         insertString : string
     }) => Promise<void>,
-    close : () => Promise<void>,
+    close          : () => Promise<void>,
     getDiagnostics : (files: string[]) => Promise<TsServerDiagnostic[]>,
     open : (args: {
-        file : string,
-        fileContent : string,
+        file            : string,
+        fileContent     : string,
         projectRootPath : string
     }) => Promise<void>,
     request : (command: string, args: unknown) => Promise<TsServerResponse>
@@ -60,14 +60,14 @@ export async function runTypeScriptServerSession<T>(
         silent : true
     })
 
-    const pendingResponses = new Map<number, (response: TsServerResponse) => void>()
+    const pendingResponses   = new Map<number, (response: TsServerResponse) => void>()
     const pendingDiagnostics = new Map<number, {
-        files : Set<string>,
-        resolve : (diagnostics: TsServerDiagnostic[]) => void,
-        reject : (error: Error) => void,
+        files     : Set<string>,
+        resolve   : (diagnostics: TsServerDiagnostic[]) => void,
+        reject    : (error: Error) => void,
         collected : Map<string, TsServerDiagnostic[]>
     }>()
-    let sequence           = 0
+    let sequence             = 0
 
     server.on("message", (message: TsServerMessage) => {
         if (message.type === "event") {
@@ -163,7 +163,7 @@ export async function runTypeScriptServerSession<T>(
         }
 
         const body = message.body as {
-            file : string,
+            file        : string,
             diagnostics : TsServerDiagnostic[]
         } | undefined
 
@@ -183,7 +183,7 @@ export async function runTypeScriptServerSession<T>(
     }
 
     function completeDiagnosticsRequest(message: TsServerMessage): void {
-        const body = message.body as { request_seq? : number } | undefined
+        const body = message.body as { request_seq?: number } | undefined
         const seq  = body?.request_seq
 
         if (seq === undefined) {
@@ -248,9 +248,9 @@ export function replaceSubstring(
 }
 
 export function textRangeFromIndices(source: string, start: number, end: number): {
-    line : number,
-    offset : number,
-    endLine : number,
+    line      : number,
+    offset    : number,
+    endLine   : number,
     endOffset : number
 } {
     const startPosition = positionToLineOffset(source, start)
@@ -273,7 +273,7 @@ export async function runTypeScriptServerRequest(
     logFile = path.join(fixtureDirectory, "tsserver.log")
 ): Promise<TsServerResponse> {
     const tsserverFile = path.join(fixtureDirectory, "node_modules", "typescript", "lib", "tsserver.js")
-    const server = fork(tsserverFile, [
+    const server       = fork(tsserverFile, [
         "--logVerbosity",
         "verbose",
         "--logFile",

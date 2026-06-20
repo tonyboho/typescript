@@ -9,20 +9,20 @@ import { createTypeScriptFixture, trimIndent } from "./util.js"
 
 type ProbeSnapshot = {
     classMembers : ProbeNode[],
-    fileName : string,
+    fileName     : string,
     firstBacking : ProbeNode | undefined,
-    text : string,
-    textLength : number
+    text         : string,
+    textLength   : number
 }
 
 type ProbeNode = {
-    end : number,
+    end    : number,
     finish : number,
-    kind : string,
-    name : string,
-    pos : number,
-    start : number,
-    text : string
+    kind   : string,
+    name   : string,
+    pos    : number,
+    start  : number,
+    text   : string
 }
 
 const sourceText = trimIndent(`
@@ -44,7 +44,7 @@ const probePluginName = "ts-lazy-property-tsserver-test-probe"
 
 it("tsserver sees the original source text while using the transformed AST", async (t: Test) => {
     const fixture = await createTypeScriptFixture({
-        compilerPlugins       : [
+        compilerPlugins : [
             {
                 name : probePluginName
             }
@@ -65,7 +65,7 @@ it("tsserver sees the original source text while using the transformed AST", asy
             throw new Error("Missing fixture source file.")
         }
 
-        const snapshot = await runTypeScriptServerSnapshot(
+        const snapshot      = await runTypeScriptServerSnapshot(
             fixture.directory,
             sourceFile,
             sourceText
@@ -103,7 +103,7 @@ async function runTypeScriptServerSnapshot(
     const pluginDirectory = path.join(fixtureDirectory, "node_modules", probePluginName)
     const logFile         = path.join(fixtureDirectory, "tsserver.log")
 
-    await mkdir(pluginDirectory, { recursive : true })
+    await mkdir(pluginDirectory, { recursive: true })
     await writeFile(path.join(pluginDirectory, "package.json"), JSON.stringify({
         main : "index.cjs",
         name : probePluginName,

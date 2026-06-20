@@ -28,7 +28,7 @@ const sourceText     = trimIndent(`
 `)
 
 it("composes with a previous virtual program transformer layer", async (t: Test) => {
-    const compilerOptions = {
+    const compilerOptions      = {
         target                 : ts.ScriptTarget.ES2022,
         module                 : ts.ModuleKind.ESNext,
         moduleResolution       : ts.ModuleResolutionKind.Bundler,
@@ -37,17 +37,17 @@ it("composes with a previous virtual program transformer layer", async (t: Test)
         noEmit                 : true,
         experimentalDecorators : false
     }
-    const compilerHost = ts.createCompilerHost(compilerOptions, true)
-    const layeredHost = ts.createCompilerHost(compilerOptions, true)
+    const compilerHost         = ts.createCompilerHost(compilerOptions, true)
+    const layeredHost          = ts.createCompilerHost(compilerOptions, true)
     const layeredGetSourceFile = layeredHost.getSourceFile.bind(layeredHost)
-    const originalSourceFile    = ts.createSourceFile(
+    const originalSourceFile   = ts.createSourceFile(
         sourceFileName,
         sourceText,
         ts.ScriptTarget.ES2022,
         true,
         ts.ScriptKind.TS
     )
-    const layeredSourceFile = addPreviousVirtualProperty(originalSourceFile)
+    const layeredSourceFile    = addPreviousVirtualProperty(originalSourceFile)
 
     layeredHost.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
         if (fileName === sourceFileName) {

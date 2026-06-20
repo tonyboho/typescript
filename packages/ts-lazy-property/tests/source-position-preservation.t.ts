@@ -6,17 +6,17 @@ import { transformSourceFile } from "../src/index.js"
 import { trimIndent } from "./util.js"
 
 type SourceSpan = {
-    pos : number,
-    end : number,
-    start : number,
+    pos    : number,
+    end    : number,
+    start  : number,
     finish : number,
-    text : string
+    text   : string
 }
 
 type StableSignatureCollection = {
-    counts : Map<string, number>,
+    counts                          : Map<string, number>,
     syntheticOutsideGeneratedRanges : string[],
-    total : number
+    total                           : number
 }
 
 const sourceCases = [
@@ -135,9 +135,9 @@ function collectStableSignatures(
     sourceFile: ts.SourceFile,
     generatedRanges: SourceSpan[]
 ): StableSignatureCollection {
-    const counts                          = new Map<string, number>()
+    const counts                                     = new Map<string, number>()
     const syntheticOutsideGeneratedRanges : string[] = []
-    let total                             = 0
+    let total                                        = 0
 
     const visit = (node: ts.Node): void => {
         const span = sourceSpan(node, sourceFile)
@@ -219,7 +219,7 @@ function deduplicateRanges(ranges: SourceSpan[]): SourceSpan[] {
 }
 
 function mergeRanges(sourceFile: ts.SourceFile, ranges: SourceSpan[]): SourceSpan[] {
-    const sorted = [ ...ranges ].sort((left, right) => {
+    const sorted               = [ ...ranges ].sort((left, right) => {
         return left.pos - right.pos || left.end - right.end
     })
     const result: SourceSpan[] = []
@@ -260,7 +260,7 @@ function expandRangeToLeadingDecorators(sourceFile: ts.SourceFile, range: Source
 }
 
 function findLeadingDecoratorStart(text: string, position: number): number | undefined {
-    let lineStart      = text.lastIndexOf("\n", position - 1) + 1
+    let lineStart                           = text.lastIndexOf("\n", position - 1) + 1
     let decoratorStart : number | undefined = undefined
 
     while (lineStart > 0) {

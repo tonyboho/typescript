@@ -15,43 +15,43 @@ const execFileAsync = promisify(execFile)
 export const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 export type TypeScriptFixtureOptions = {
-    sourceFiles : TypeScriptFixtureSourceFile[],
+    sourceFiles            : TypeScriptFixtureSourceFile[],
     experimentalDecorators : boolean,
-    compilerOptions? : Record<string, unknown>,
-    compilerPlugins? : Record<string, unknown>[],
-    keep? : boolean
+    compilerOptions?       : Record<string, unknown>,
+    compilerPlugins?       : Record<string, unknown>[],
+    keep?                  : boolean
 }
 
 export type TypeScriptFixtureSourceFile = {
     fileName : string,
-    text : string,
+    text     : string
 }
 
 export type TypeScriptFixture = {
-    directory : string,
-    outputFiles : Map<string, string>,
+    directory       : string,
+    outputFiles     : Map<string, string>,
     packageJsonFile : string,
-    sourceFiles : Map<string, string>,
-    tsconfigFile : string,
-    build : () => Promise<TypeScriptFixtureCommandResult>,
-    dispose : () => Promise<void>,
-    runSiesta : (sourceFileName: string) => Promise<TypeScriptFixtureCommandResult>,
-    typecheck : () => Promise<TypeScriptFixtureCommandResult>
+    sourceFiles     : Map<string, string>,
+    tsconfigFile    : string,
+    build           : () => Promise<TypeScriptFixtureCommandResult>,
+    dispose         : () => Promise<void>,
+    runSiesta       : (sourceFileName: string) => Promise<TypeScriptFixtureCommandResult>,
+    typecheck       : () => Promise<TypeScriptFixtureCommandResult>
 }
 
 export type TypeScriptFixtureCommandResult = CommandResult
 
 export type CommandResult = {
-    command : string,
+    command  : string,
     exitCode : number,
-    stdout : string,
-    stderr : string,
+    stdout   : string,
+    stderr   : string
 }
 
 type ExecFileFailure = Error & {
-    code? : number | string,
+    code?   : number | string,
     stdout? : string | Buffer,
-    stderr? : string | Buffer,
+    stderr? : string | Buffer
 }
 
 export async function createTypeScriptFixture(options: TypeScriptFixtureOptions): Promise<TypeScriptFixture> {
@@ -72,7 +72,7 @@ export async function createTypeScriptFixture(options: TypeScriptFixtureOptions)
     for (const { fileName, text } of options.sourceFiles) {
         const sourceFilePath = path.join(directory, fileName)
 
-        await mkdir(path.dirname(sourceFilePath), { recursive : true })
+        await mkdir(path.dirname(sourceFilePath), { recursive: true })
         await writeFile(sourceFilePath, text)
     }
 
@@ -94,7 +94,7 @@ export async function createTypeScriptFixture(options: TypeScriptFixtureOptions)
                 return
             }
 
-            await rm(directory, { force : true, recursive : true })
+            await rm(directory, { force: true, recursive: true })
         },
 
         async runSiesta(sourceFileName: string) {
@@ -283,7 +283,7 @@ function createTsconfig(
                 ...extraCompilerOptionPlugins
             ],
             ...restCompilerOptions,
-            strict                  : true,
+            strict : true,
             experimentalDecorators
         },
         files : sourceFileNames
@@ -298,8 +298,8 @@ async function linkNodeModules(directory: string): Promise<void> {
     const nodeModules  = path.join(directory, "node_modules")
     const bryntumScope = path.join(nodeModules, "@bryntum")
 
-    await mkdir(nodeModules, { recursive : true })
-    await mkdir(bryntumScope, { recursive : true })
+    await mkdir(nodeModules, { recursive: true })
+    await mkdir(bryntumScope, { recursive: true })
     await symlink(packageRoot, path.join(nodeModules, "ts-lazy-property"), "dir")
     await symlink(path.join(packageRoot, "node_modules/typescript"), path.join(nodeModules, "typescript"), "dir")
     await symlink(path.join(packageRoot, "node_modules/@bryntum/siesta"), path.join(bryntumScope, "siesta"), "dir")
