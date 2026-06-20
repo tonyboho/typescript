@@ -1,6 +1,7 @@
 {
     "name": "ts-serializable",
     "version": "0.0.1",
+    "private": true,
     "description": "TypeScript serialization helpers with cyclic reference support.",
     "type": "module",
     "packageManager": "pnpm@11.7.0",
