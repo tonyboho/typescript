@@ -23,8 +23,10 @@
         "plugins": [
             {
                 "transform": "ts-mixin-class",
-                "transformProgram": true,
-                "allowUndefinedForRequiredProperties": true
+                "transformProgram": true
+            },
+            {
+                "name": "ts-mixin-class/language-service-plugin"
             }
         ]
     },

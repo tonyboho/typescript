@@ -152,7 +152,7 @@ export const parse = (text: string, options?: { mappingVisitSymbol?: symbol }): 
 }
 
 @mixin()
-export class Serializable extends Base {
+export class Serializable {
     $class : string
     $mode  : SerializationMode
 
