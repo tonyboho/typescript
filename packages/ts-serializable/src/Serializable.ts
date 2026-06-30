@@ -6,7 +6,6 @@ export type JsonReferenceId = number
 
 type DynamicRecord = Record<PropertyKey, any>
 type JsonReference = { $ref: JsonReferenceId }
-type JsonReferenceEntry = { $refId: JsonReferenceId, value: unknown }
 
 @mixin()
 export class Collapser extends Base implements Mapper {
@@ -151,31 +150,69 @@ export const parse = (text: string, options?: { mappingVisitSymbol?: symbol }): 
     return Expander.new(options).expand(decycled)
 }
 
+// Well-known metadata symbol shared between standard (TC39) decorators - where the compiler
+// assigns it to `Class[Symbol.metadata]` - and the legacy fallback below. Polyfilled into the
+// global `Symbol` so emitted standard-decorator code and this module agree on the same symbol.
+const SymbolMetadata: symbol =
+    (Symbol as { metadata?: symbol }).metadata ??
+    ((Symbol as { metadata?: symbol }).metadata = Symbol.for("Symbol.metadata"))
+
+type SerializableMetadata = {
+    $class?    : string
+    $mode?     : SerializationMode
+    $included? : DynamicRecord
+    $excluded? : DynamicRecord
+}
+
+type StandardDecoratorContext = { kind: string, name: string | symbol, metadata: SerializableMetadata }
+
+// A standard (TC39) decorator is invoked with a context object carrying `kind`; legacy decorators
+// receive a `propertyKey` (string | symbol) or nothing in its place. `symbol` is `typeof "symbol"`,
+// never `"object"`, so it never collides with a context.
+const isStandardContext = (context: unknown): context is StandardDecoratorContext =>
+    typeof context === "object" && context !== null && "kind" in context
+
+// Legacy decorators have no compiler-provided metadata. Synthesize an own metadata object on the
+// constructor, inheriting the base class's metadata so excluded/included sets compose like the
+// standard prototype-chained metadata does.
+const ensureOwnMetadata = (ctor: Function): SerializableMetadata => {
+    if (!Object.prototype.hasOwnProperty.call(ctor, SymbolMetadata)) {
+        const inherited = (ctor as DynamicRecord)[SymbolMetadata] as SerializableMetadata | undefined
+
+        Object.defineProperty(ctor, SymbolMetadata, {
+            value        : Object.create(inherited ?? null),
+            configurable : true,
+            writable     : true
+        })
+    }
+
+    return (ctor as DynamicRecord)[SymbolMetadata]
+}
+
+const metadataOf = (value: object): SerializableMetadata | undefined =>
+    (value.constructor as DynamicRecord)[SymbolMetadata]
+
 @mixin()
 export class Serializable {
-    $class : string
-    $mode  : SerializationMode
-
-    $includedProperties : DynamicRecord
-    $excludedProperties : DynamicRecord
-
     toJSON(key: string): unknown {
-        if (!this.$class) throw new Error(`Missing serializable class id: ${this.constructor}`)
+        const metadata = metadataOf(this)
+
+        if (!metadata?.$class) throw new Error(`Missing serializable class id: ${this.constructor}`)
 
         const json: DynamicRecord = {}
 
-        if (this.$mode === "optOut") {
+        if (metadata.$mode === "optOut") {
             for (const [ propertyKey, propValue ] of Object.entries(this)) {
-                if (!this.$excludedProperties || !this.$excludedProperties[propertyKey]) json[propertyKey] = propValue
+                if (!metadata.$excluded || !metadata.$excluded[propertyKey]) json[propertyKey] = propValue
             }
         }
-        else if (this.$includedProperties) {
-            for (const propertyKey in this.$includedProperties) {
+        else if (metadata.$included) {
+            for (const propertyKey in metadata.$included) {
                 json[propertyKey] = (this as DynamicRecord)[propertyKey]
             }
         }
 
-        json.$class = this.$class
+        json.$class = metadata.$class
 
         return json
     }
@@ -197,12 +234,7 @@ export class SerializableCustom extends Base implements Serializable {
 
 const serializableClasses = new Map<string, typeof Serializable>()
 
-const registerSerializableClass = (options: { id: string, mode: SerializationMode }, cls: typeof Serializable): void => {
-    const id = options.id
-
-    cls.prototype.$class = id
-    cls.prototype.$mode  = options.mode
-
+const registerSerializableClass = (id: string, cls: typeof Serializable): void => {
     if (serializableClasses.has(id) && serializableClasses.get(id) !== cls) {
         throw new Error(`Serializable class with id: [${id}] already registered`)
     }
@@ -230,40 +262,62 @@ const registerNativeSerializableClass = <T extends JSONObject, Class extends Any
 
 export type SerializationMode = "optIn" | "optOut"
 
-export const serializable = (opts?: { id?: string, mode?: SerializationMode }): ClassDecorator => {
-    return (<T extends typeof Serializable>(target: T): T => {
-        if (!(target.prototype instanceof Serializable)) {
-            throw new Error(`The class [${target.name}] is decorated with @serializable, but does not include the Serializable mixin.`)
+// Works as both a standard (TC39) and a legacy (experimental) class decorator. In both modes the
+// first argument is the constructor; the standard mode additionally passes a context whose
+// `metadata` the compiler exposes as `Class[Symbol.metadata]`, while legacy mode gets its metadata
+// synthesized on the constructor.
+export const serializable = (opts?: { id?: string, mode?: SerializationMode }) => {
+    // `any` target/return so the same factory is accepted in both decorator positions (standard and
+    // legacy) and stays identity-preserving on the decorated class type. Membership is enforced at
+    // runtime, which lets the guard reject classes that omit the `Serializable` mixin.
+    return (target: any, context?: unknown): any => {
+        const cls = target as typeof Serializable
+
+        if (!(cls.prototype instanceof Serializable)) {
+            throw new Error(`The class [${cls.name}] is decorated with @serializable, but does not include the Serializable mixin.`)
         }
 
-        registerSerializableClass(
-            { id: opts?.id ?? target.name, mode: opts?.mode ?? "optOut" },
-            target
-        )
+        const id       = opts?.id ?? cls.name
+        const metadata = isStandardContext(context) ? context.metadata : ensureOwnMetadata(cls)
+
+        metadata.$class = id
+        metadata.$mode  = opts?.mode ?? "optOut"
+
+        registerSerializableClass(id, cls)
 
         return target
-    }) as ClassDecorator
-}
-
-export const exclude = (): PropertyDecorator => {
-    return function(target: Serializable, propertyKey: string | symbol): void {
-        if (!Object.prototype.hasOwnProperty.call(target, "$excludedProperties")) {
-            target.$excludedProperties = Object.create(target.$excludedProperties || null)
-        }
-
-        target.$excludedProperties[propertyKey] = true
     }
 }
 
-export const include = (): PropertyDecorator => {
-    return function(target: Serializable, propertyKey: string | symbol): void {
-        if (!Object.prototype.hasOwnProperty.call(target, "$includedProperties")) {
-            target.$includedProperties = Object.create(target.$includedProperties || null)
+// Shared body for `@exclude`/`@include`. Standard mode receives a field context and writes into
+// `context.metadata`; legacy mode receives `(prototype, propertyKey)` and writes into the
+// constructor's synthesized metadata. Each bucket is prototype-chained off the inherited one so a
+// subclass extends, rather than replaces, its base's set.
+const markProperty = (bucket: "$excluded" | "$included") => {
+    return (target: unknown, context?: unknown): void => {
+        let metadata : SerializableMetadata
+        let key      : PropertyKey
+
+        if (isStandardContext(context)) {
+            metadata = context.metadata
+            key      = context.name
+        }
+        else {
+            metadata = ensureOwnMetadata((target as object).constructor)
+            key      = context as PropertyKey
         }
 
-        target.$includedProperties[propertyKey] = true
+        if (!Object.prototype.hasOwnProperty.call(metadata, bucket)) {
+            metadata[bucket] = Object.create(metadata[bucket] ?? null)
+        }
+
+        metadata[bucket]![key] = true
     }
 }
+
+export const exclude = () => markProperty("$excluded")
+
+export const include = () => markProperty("$included")
 
 export const reviver = function(key: string | number, value: number | string | boolean | ArbitraryObject): unknown {
     if (typeof value === "object" && value !== null) {

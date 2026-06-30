@@ -4,7 +4,7 @@ import { AsyncFunction } from "../src/Helpers.js"
 import { Collapser, Expander, parse, serializable, Serializable, stringify } from "../src/Serializable.js"
 
 it('Should be able to collapse cyclic structures', async t => {
-    const a = { a: undefined }
+    const a : any = { a: undefined }
     a.a     = a
 
     //---------------------
@@ -17,7 +17,7 @@ it('Should be able to collapse cyclic structures', async t => {
     )
 
     //---------------------
-    const b = []
+    const b : any[] = []
     b.push(b)
 
     t.isDeeply(
@@ -31,7 +31,7 @@ it('Should be able to collapse cyclic structures', async t => {
 
 
 it('Collapse/expand on cyclic structure should re-create it', async t => {
-    const a = { a: undefined }
+    const a : any = { a: undefined }
     a.a     = a
 
     const revived : typeof a = Expander.new().expand(Collapser.new().collapse(a)) as any
@@ -49,6 +49,8 @@ it('Should throw exception if `@serializable` class does not include Serializabl
             prop1 : number    = 1
             prop2 : string    = '2'
         }
+
+        void SomeClass
     })
 
 
@@ -134,12 +136,12 @@ it('Serialization of nested array property should work', async t => {
 it('Serialization of cyclic data structures should work', async t => {
     @serializable({ id: 'someclass111' })
     class SomeClass1 extends Serializable {
-        another : SomeClass2    = undefined
+        another : SomeClass2
     }
 
     @serializable({ id: 'someclass222' })
     class SomeClass2 extends Serializable {
-        another : SomeClass1    = undefined
+        another : SomeClass1
     }
 
     const someClass1 = new SomeClass1()
