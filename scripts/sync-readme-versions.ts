@@ -16,9 +16,9 @@
 
 import { readFileSync, writeFileSync } from "node:fs"
 
-const readme: string                 = "packages/ts-mixin-class/README.md"
-const pkg: { version: string }       = JSON.parse(readFileSync("packages/ts-mixin-class/package.json", "utf8"))
-const tsPatch: string | undefined    = readFileSync("pnpm-workspace.yaml", "utf8").match(/"ts-patch":\s*"([^"]+)"/)?.[1]
+const readme: string              = "packages/ts-mixin-class/README.md"
+const pkg: { version: string }    = JSON.parse(readFileSync("packages/ts-mixin-class/package.json", "utf8"))
+const tsPatch: string | undefined = readFileSync("pnpm-workspace.yaml", "utf8").match(/"ts-patch":\s*"([^"]+)"/)?.[1]
 
 function pin(text: string, dependency: string, version: string | undefined): string {
     return version === undefined
