@@ -6,7 +6,7 @@
     "scripts": {
         "changeset": "changeset",
         "prepare": "ts-patch install",
-        "bump": "changeset version && node scripts/changelog-date.ts",
+        "bump": "changeset version && node scripts/changelog-date.ts && node scripts/sync-readme-versions.ts",
         "clean": "pnpm --filter \"./packages/*\" --filter \"!ts-serializable\" run clean",
         "typecheck": "pnpm --filter \"./packages/*\" --filter \"!ts-serializable\" run typecheck && pnpm run typecheck:scripts",
         "typecheck:scripts": "tsc -p scripts/tsconfig.json",
