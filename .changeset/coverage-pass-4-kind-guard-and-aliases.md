@@ -9,12 +9,13 @@ helper aliases, and a batch of pins.
   members (a split pair keeps its distinct read/write types; a set-only accessor becomes a
   true set-only signature) instead of collapsing to a property signature.
 - **New native diagnostic TS990010** (the checker's own TS2610/TS2611 never fire through an
-  interface-typed base): a class FIELD shadowing a mixin ACCESSOR is rejected in both planes
-  under both class-field semantics; an ACCESSOR over a mixin FIELD is rejected **only under
-  define semantics** — a deliberate deviation from plain TS, because with
-  `useDefineForClassFields: false` the field assignment fires the overriding setter (the
-  reactive-property pattern). Covers mixin-vs-mixin overlaps in one `implements` list
-  (first-listed = nearest layer) and transitive local `extends` chains.
+  interface-typed base): kind-mismatched overrides across the chain — a class FIELD shadowing
+  a mixin ACCESSOR, an ACCESSOR over a mixin FIELD, and mixin-vs-mixin overlaps in one
+  `implements` list (first-listed = nearest layer), incl. transitive local `extends` chains —
+  are rejected in both planes, but **only under define semantics**. With
+  `useDefineForClassFields: false` both directions are sound (assignments flow through the
+  prototype accessors) and stay legal — a deliberate deviation from plain TS, which rejects
+  unconditionally.
 - **The runtime value helpers are imported under reserved local aliases**
   (`defineMixinClass as __defineMixinClass__`, `__mixinChain__`, `__mixinChainLinearized__`),
   so a user binding named like a helper can never collide with the injected import; the
