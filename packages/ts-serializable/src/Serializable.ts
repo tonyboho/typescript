@@ -158,9 +158,9 @@ const SymbolMetadata: symbol =
     ((Symbol as { metadata?: symbol }).metadata = Symbol.for("Symbol.metadata"))
 
 type SerializableMetadata = {
-    $class?    : string
-    $mode?     : SerializationMode
-    $included? : DynamicRecord
+    $class?    : string,
+    $mode?     : SerializationMode,
+    $included? : DynamicRecord,
     $excluded? : DynamicRecord
 }
 

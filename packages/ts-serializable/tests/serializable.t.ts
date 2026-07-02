@@ -5,7 +5,7 @@ import { Collapser, Expander, parse, serializable, Serializable, stringify } fro
 
 it('Should be able to collapse cyclic structures', async t => {
     const a : any = { a: undefined }
-    a.a     = a
+    a.a           = a
 
     //---------------------
     t.isDeeply(
@@ -32,7 +32,7 @@ it('Should be able to collapse cyclic structures', async t => {
 
 it('Collapse/expand on cyclic structure should re-create it', async t => {
     const a : any = { a: undefined }
-    a.a     = a
+    a.a           = a
 
     const revived : typeof a = Expander.new().expand(Collapser.new().collapse(a)) as any
 
